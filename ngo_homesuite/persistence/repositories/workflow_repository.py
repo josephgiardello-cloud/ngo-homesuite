@@ -13,6 +13,11 @@ class WorkflowRepository:
     """DB-backed workflow projection repository."""
 
     @staticmethod
+    def _assert_org_id(org_id: str) -> None:
+        if not str(org_id).strip():
+            raise PermissionError("Tenant isolation requires non-empty org_id")
+
+    @staticmethod
     def _to_record_history(history: list[dict]) -> str:
         redacted = []
         for item in history:
@@ -34,6 +39,7 @@ class WorkflowRepository:
         )
 
     def save(self, instance: WorkflowInstance) -> WorkflowInstance:
+        self._assert_org_id(instance.org_id)
         record = WorkflowInstanceRecord.query.filter_by(instance_id=instance.instance_id).first()
         history_json = self._to_record_history(instance.history)
         if record is None:
@@ -53,13 +59,26 @@ class WorkflowRepository:
         db.session.commit()
         return self._from_record(record)
 
-    def get(self, instance_id: str) -> WorkflowInstance | None:
-        record = WorkflowInstanceRecord.query.filter_by(instance_id=instance_id).first()
+    def get(
+        self,
+        instance_id: str,
+        *,
+        org_id: str | None = None,
+        allow_cross_tenant: bool = False,
+    ) -> WorkflowInstance | None:
+        if org_id is None and not allow_cross_tenant:
+            raise PermissionError("Unscoped instance reads require allow_cross_tenant=True")
+        query = WorkflowInstanceRecord.query.filter_by(instance_id=instance_id)
+        if org_id is not None:
+            self._assert_org_id(org_id)
+            query = query.filter_by(org_id=org_id)
+        record = query.first()
         if record is None:
             return None
         return self._from_record(record)
 
     def list_for_org(self, org_id: str) -> list[WorkflowInstance]:
+        self._assert_org_id(org_id)
         records = (
             WorkflowInstanceRecord.query.filter_by(org_id=org_id)
             .order_by(WorkflowInstanceRecord.created_at.asc())

@@ -45,6 +45,14 @@ def _map_role(role: str) -> str:
     return mapping.get(role, role)
 
 
+def _enforce_user_org_access(request_org_id: str) -> None:
+    user_org_id = getattr(current_user, "organization_id", None)
+    if user_org_id is None:
+        return
+    if str(user_org_id) != str(request_org_id):
+        raise PermissionError("User is not allowed to access another tenant org_id")
+
+
 @api_v1_bp.get("/workflows")
 @login_required
 def list_workflows():
@@ -66,6 +74,10 @@ def create_workflow_instance():
     role = _map_role(getattr(current_user, "role", ""))
     if role not in {"org_admin", "case_worker"}:
         return {"error": "Insufficient permissions to create workflow instances."}, 403
+    try:
+        _enforce_user_org_access(body.org_id)
+    except PermissionError as exc:
+        return {"error": str(exc)}, 403
 
     instance = _container().create_workflow_instance(org_id=body.org_id, workflow_type=body.workflow_type)
     return {
@@ -90,13 +102,16 @@ def apply_workflow_event(instance_id: str):
 
     tenant = TenantContext(org_id=body.org_id, user_id=body.actor_id, role=_map_role(body.role))
     try:
+        _enforce_user_org_access(body.org_id)
         instance = _container().dispatch_workflow_event(
             instance_id=instance_id,
             event_type=body.event_type,
             tenant=tenant,
             payload=redact_payload(body.payload),
         )
-    except (KeyError, PermissionError, ValueError, RuntimeError) as exc:
+    except PermissionError as exc:
+        return {"error": str(exc)}, 403
+    except (KeyError, ValueError, RuntimeError) as exc:
         return {"error": str(exc)}, 400
 
     return {
@@ -134,6 +149,10 @@ def list_audit_events():
     org_id = str(request.args.get("org_id", "")).strip()
     if not org_id:
         return {"error": "org_id query parameter is required."}, 400
+    try:
+        _enforce_user_org_access(org_id)
+    except PermissionError as exc:
+        return {"error": str(exc)}, 403
     events = _container().event_store.list_events(org_id=org_id)
     return {
         "ok": True,

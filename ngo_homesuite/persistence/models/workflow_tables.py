@@ -20,6 +20,7 @@ class WorkflowDefinitionRecord(db.Model):
 
     __table_args__ = (
         db.UniqueConstraint("workflow_type", "version", name="uq_workflow_type_version"),
+        db.CheckConstraint("LENGTH(workflow_type) > 0", name="ck_workflow_def_type_not_empty"),
     )
 
 
@@ -35,6 +36,11 @@ class WorkflowInstanceRecord(db.Model):
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    __table_args__ = (
+        db.CheckConstraint("LENGTH(org_id) > 0", name="ck_workflow_instance_org_not_empty"),
+        db.Index("ix_workflow_instances_org_workflow", "org_id", "workflow_type"),
+    )
+
 
 class WorkflowEventRecord(db.Model):
     __tablename__ = "workflow_events_v2"
@@ -47,3 +53,9 @@ class WorkflowEventRecord(db.Model):
     actor_id = db.Column(db.String(64), nullable=False)
     payload_json = db.Column(db.Text, nullable=False, default="{}")
     occurred_at = db.Column(db.String(64), nullable=False, index=True)
+
+    __table_args__ = (
+        db.CheckConstraint("LENGTH(org_id) > 0", name="ck_workflow_event_org_not_empty"),
+        db.Index("ix_workflow_events_org_occurred", "org_id", "occurred_at"),
+        db.Index("ix_workflow_events_org_aggregate", "org_id", "aggregate_id"),
+    )

@@ -9,7 +9,11 @@ from ngo_homesuite.workflow_engine import StepNode, TransitionRule, WorkflowDefi
 
 
 class WorkflowDefinitionRepository:
-    """DB-backed workflow definition repository with monotonic versioning."""
+    """DB-backed workflow definition repository with monotonic versioning.
+
+    Workflow definitions are intentionally global-scope metadata. Callers must explicitly
+    acknowledge this by passing allow_global_scope=True.
+    """
 
     @staticmethod
     def _serialize(definition: WorkflowDefinition) -> tuple[str, str]:
@@ -56,7 +60,9 @@ class WorkflowDefinitionRepository:
             transitions=transitions,
         )
 
-    def ensure_definition(self, definition: WorkflowDefinition) -> WorkflowDefinitionRecord:
+    def ensure_definition(self, definition: WorkflowDefinition, *, allow_global_scope: bool = False) -> WorkflowDefinitionRecord:
+        if not allow_global_scope:
+            raise PermissionError("Global-scope definition access requires allow_global_scope=True")
         definition_hash = self._hash(definition)
         latest = (
             WorkflowDefinitionRecord.query.filter_by(workflow_type=definition.workflow_type)
@@ -85,6 +91,8 @@ class WorkflowDefinitionRepository:
         db.session.commit()
         return record
 
-    def list_active_definitions(self) -> dict[str, WorkflowDefinition]:
+    def list_active_definitions(self, *, allow_global_scope: bool = False) -> dict[str, WorkflowDefinition]:
+        if not allow_global_scope:
+            raise PermissionError("Global-scope definition access requires allow_global_scope=True")
         records = WorkflowDefinitionRecord.query.filter_by(is_active=True).all()
         return {record.workflow_type: self._to_definition(record) for record in records}

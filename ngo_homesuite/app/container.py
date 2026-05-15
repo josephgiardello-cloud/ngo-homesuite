@@ -71,8 +71,8 @@ class AppContainer:
             ],
         )
 
-        workflow_definition_repository.ensure_definition(intake_flow)
-        workflow_definition_repository.ensure_definition(donation_flow)
+        workflow_definition_repository.ensure_definition(intake_flow, allow_global_scope=True)
+        workflow_definition_repository.ensure_definition(donation_flow, allow_global_scope=True)
 
         return cls(
             event_store=event_store,
@@ -81,10 +81,12 @@ class AppContainer:
             workflow_repository=workflow_repository,
             workflow_definition_repository=workflow_definition_repository,
             state_machine=state_machine,
-            workflow_definitions=workflow_definition_repository.list_active_definitions(),
+            workflow_definitions=workflow_definition_repository.list_active_definitions(allow_global_scope=True),
         )
 
     def create_workflow_instance(self, *, org_id: str, workflow_type: str) -> WorkflowInstance:
+        if not str(org_id).strip():
+            raise PermissionError("Tenant isolation requires non-empty org_id")
         definition = self.workflow_definitions.get(workflow_type)
         if definition is None:
             raise KeyError(f"Unknown workflow type: {workflow_type}")
@@ -106,7 +108,7 @@ class AppContainer:
         payload: dict | None = None,
     ) -> WorkflowInstance:
         payload = redact_payload(payload or {})
-        instance = self.workflow_repository.get(instance_id)
+        instance = self.workflow_repository.get(instance_id, org_id=tenant.org_id)
         if instance is None:
             raise KeyError(f"Unknown workflow instance: {instance_id}")
         definition = self.workflow_definitions[instance.workflow_type]

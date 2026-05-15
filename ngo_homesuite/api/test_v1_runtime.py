@@ -108,3 +108,38 @@ def test_v1_workflow_creation_enforces_permissions(client, app):
         json={"org_id": org_id, "workflow_type": "case_intake"},
     )
     assert create_instance.status_code == 403
+
+
+def test_v1_workflow_cross_tenant_access_is_blocked(client, app):
+    _ensure_user(app, "v2_staff", "v2_staff@test.local", "staff", "v2_staff_pass_123")
+    _login(client, "v2_staff", "v2_staff_pass_123")
+
+    with app.app_context():
+        primary_org = Organization.query.filter_by(is_active=True).first()
+        other_org = Organization.query.filter_by(slug="cross-tenant-org").first()
+        if other_org is None:
+            other_org = Organization(name="Cross Tenant Org", slug="cross-tenant-org", is_active=True)
+            db.session.add(other_org)
+            db.session.commit()
+
+        primary_org_id = str(primary_org.id)
+        other_org_id = str(other_org.id)
+
+    create_primary = client.post(
+        "/api/v1/workflows/instances",
+        json={"org_id": primary_org_id, "workflow_type": "case_intake"},
+    )
+    assert create_primary.status_code == 200
+    instance_id = create_primary.get_json()["instance"]["instance_id"]
+
+    cross_tenant_event = client.post(
+        f"/api/v1/workflows/instances/{instance_id}/events",
+        json={
+            "org_id": other_org_id,
+            "event_type": "intake_submit",
+            "actor_id": "u_staff",
+            "role": "case_worker",
+            "payload": {"email": "should-not-pass@example.org"},
+        },
+    )
+    assert cross_tenant_event.status_code == 403

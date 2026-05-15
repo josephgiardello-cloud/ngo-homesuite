@@ -46,6 +46,11 @@ class InMemoryEventStore:
 class DbEventStore:
     """DB-backed append-only event store for workflow runtime events."""
 
+    @staticmethod
+    def _assert_org_id(org_id: str) -> None:
+        if not str(org_id).strip():
+            raise PermissionError("Tenant isolation requires non-empty org_id")
+
     def append(self, event: AuditEvent) -> None:
         record = WorkflowEventRecord(
             event_id=event.event_id,
@@ -60,9 +65,18 @@ class DbEventStore:
         db.session.add(record)
         db.session.commit()
 
-    def list_events(self, *, org_id: str | None = None, aggregate_id: str | None = None) -> list[AuditEvent]:
+    def list_events(
+        self,
+        *,
+        org_id: str | None = None,
+        aggregate_id: str | None = None,
+        allow_cross_tenant: bool = False,
+    ) -> list[AuditEvent]:
+        if org_id is None and not allow_cross_tenant:
+            raise PermissionError("Unscoped event reads require allow_cross_tenant=True")
         query = WorkflowEventRecord.query
         if org_id is not None:
+            self._assert_org_id(org_id)
             query = query.filter_by(org_id=org_id)
         if aggregate_id is not None:
             query = query.filter_by(aggregate_id=aggregate_id)

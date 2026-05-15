@@ -18,6 +18,7 @@ from ngo_homesuite.flask_config import get_config
 from ngo_homesuite.models.core import db, User, Organization, Donor, Donation, Project, Fund, Volunteer, Expense
 from ngo_homesuite.errors import init_error_handlers
 from ngo_homesuite.app.container import AppContainer
+from ngo_homesuite.db.migrate import auto_migrate
 from ngo_homesuite.persistence.models.workflow_tables import WorkflowDefinitionRecord, WorkflowEventRecord, WorkflowInstanceRecord  # noqa: F401
 
 
@@ -62,6 +63,9 @@ def create_app(config=None):
     
     # Create app context and tables
     with app.app_context():
+        db_uri = str(app.config.get('SQLALCHEMY_DATABASE_URI', ''))
+        if db_uri.startswith('sqlite:///') and ':memory:' not in db_uri:
+            auto_migrate(db_uri.replace('sqlite:///', '', 1))
         db.create_all()
         seed_demo_data(app)
     
