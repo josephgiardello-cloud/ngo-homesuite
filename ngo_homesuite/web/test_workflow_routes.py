@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from datetime import datetime
+from datetime import datetime, UTC
 
 from ngo_homesuite.app_factory import create_app
 from ngo_homesuite.flask_config import TestingConfig
@@ -70,7 +70,7 @@ def test_workflow_api_runs(client, app):
                 donor_name="Workflow Seed Donor",
                 amount=123.45,
                 currency="USD",
-                donation_date=datetime.utcnow(),
+                donation_date=datetime.now(UTC),
                 status="received",
                 purpose="Workflow Test",
             )

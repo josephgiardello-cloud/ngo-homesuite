@@ -22,7 +22,7 @@ def trigger_seal_entries(log_path=None, entries=100, table_name="audit_log"):
     Write enough baseline entries to trigger a seal and S3 anchoring.
     Set INTEGRITY_LOG_SEAL_INTERVAL=100 (default) or override as needed.
     """
-    now = datetime.datetime.utcnow().replace(microsecond=0).isoformat() + 'Z'
+    now = datetime.datetime.now(datetime.UTC).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
     for i in range(entries):
         append_baseline_log(
             table_name=table_name,

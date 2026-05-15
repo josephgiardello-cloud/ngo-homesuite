@@ -77,7 +77,7 @@ LOCKOUT_BASE_MINUTES = 15
 MAX_LOCKOUT_MINUTES = 1440  # 24 hours
 
 def _now_iso():
-    return datetime.datetime.utcnow().replace(microsecond=0).isoformat()
+    return datetime.datetime.now(datetime.UTC).replace(microsecond=0).isoformat()
 
 def get_login_attempt(cur: sqlite3.Cursor, username: str) -> dict | None:
     cur.execute("SELECT username, failed_attempts, last_attempt_ts, lockout_until, ip_address FROM login_attempts WHERE username = ?", (username,))
@@ -105,7 +105,7 @@ def is_account_locked(cur: sqlite3.Cursor, username: str) -> tuple[bool, str | N
     if attempt and attempt["lockout_until"]:
         try:
             until = datetime.datetime.fromisoformat(attempt["lockout_until"])
-            if until > datetime.datetime.utcnow():
+            if until > datetime.datetime.now(datetime.UTC):
                 return True, attempt["lockout_until"]
         except Exception:
             pass
@@ -122,7 +122,7 @@ def record_failed_login(conn: sqlite3.Connection, cur: sqlite3.Cursor, username:
         if last_ts:
             try:
                 last_dt = datetime.datetime.fromisoformat(last_ts)
-                if (datetime.datetime.utcnow() - last_dt).total_seconds() > 3600:
+                if (datetime.datetime.now(datetime.UTC) - last_dt).total_seconds() > 3600:
                     fails = 1
                 else:
                     fails = attempt["failed_attempts"] + 1
@@ -132,7 +132,7 @@ def record_failed_login(conn: sqlite3.Connection, cur: sqlite3.Cursor, username:
             fails = attempt["failed_attempts"] + 1
         lockout_minutes = min(LOCKOUT_BASE_MINUTES * (2 ** max(0, fails - MAX_FAILED_ATTEMPTS)), MAX_LOCKOUT_MINUTES)
         if fails >= MAX_FAILED_ATTEMPTS:
-            lockout_until = (datetime.datetime.utcnow() + timedelta(minutes=lockout_minutes)).replace(microsecond=0).isoformat()
+            lockout_until = (datetime.datetime.now(datetime.UTC) + timedelta(minutes=lockout_minutes)).replace(microsecond=0).isoformat()
             audit("auth.lockout", entity_type="user", details={"username": username, "lockout_until": lockout_until, "fail_count": fails})
     set_login_attempt(cur, username, fails, now, lockout_until, ip_address)
     conn.commit()
