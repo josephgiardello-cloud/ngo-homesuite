@@ -9,7 +9,7 @@ Core entities:
 - Donation: Financial contribution to the organization
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
 from argon2 import PasswordHasher
@@ -18,6 +18,10 @@ from sqlalchemy.dialects.sqlite import JSON
 
 db = SQLAlchemy()
 password_hasher = PasswordHasher()
+
+def _utcnow_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 
 
 class User(UserMixin, db.Model):
@@ -44,8 +48,8 @@ class User(UserMixin, db.Model):
     organization = db.relationship('Organization', backref='users')
     
     # Timestamps
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
     last_login = db.Column(db.DateTime, nullable=True)
     
     def set_password(self, password):
@@ -101,8 +105,8 @@ class Organization(db.Model):
     metadata_json = db.Column('metadata', JSON, nullable=True)  # For additional custom fields
     
     # Timestamps
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
     
     # Relationships
     beneficiaries = db.relationship('Beneficiary', backref='organization', cascade='all, delete-orphan')
@@ -146,8 +150,8 @@ class Beneficiary(db.Model):
     notes = db.Column(db.Text, nullable=True)
     
     # Timestamps
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
     
     def __repr__(self):
         return f'<Beneficiary {self.first_name} {self.last_name}>'
@@ -179,8 +183,8 @@ class Project(db.Model):
     status = db.Column(db.String(50), default='planned', nullable=False)  # planned, active, paused, completed
     
     # Timestamps
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
     
     # Relationships
     donations = db.relationship('Donation', backref='project')
@@ -208,7 +212,7 @@ class Donation(db.Model):
     # Donation details
     amount = db.Column(db.Float, nullable=False)
     currency = db.Column(db.String(3), default='USD', nullable=False)
-    donation_date = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    donation_date = db.Column(db.DateTime, default=_utcnow_naive, nullable=False, index=True)
     
     # Payment info
     payment_method = db.Column(db.String(50), nullable=True)  # e.g., 'credit_card', 'bank_transfer', 'cash'
@@ -222,8 +226,8 @@ class Donation(db.Model):
     notes = db.Column(db.Text, nullable=True)
     
     # Timestamps
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
     
     def __repr__(self):
         return f'<Donation {self.amount} {self.currency}>'
@@ -246,8 +250,8 @@ class RecurringDonationPlan(db.Model):
     status = db.Column(db.String(20), default='active', nullable=False)  # active, paused, failed, cancelled
     fail_count = db.Column(db.Integer, default=0, nullable=False)
     last_error = db.Column(db.Text, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
 
     donor = db.relationship('Donor', backref='recurring_plans')
 
@@ -267,7 +271,7 @@ class DonationReceipt(db.Model):
     sent_to_email = db.Column(db.String(120), nullable=True)
     sent_at = db.Column(db.DateTime, nullable=True)
     error_message = db.Column(db.Text, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
 
     donation = db.relationship('Donation', backref='receipt')
 
@@ -287,8 +291,8 @@ class Donor(db.Model):
     phone = db.Column(db.String(20), nullable=True)
     donor_type = db.Column(db.String(50), default='individual', nullable=False)
     notes = db.Column(db.Text, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
 
     donations = db.relationship('Donation', backref='donor')
 
@@ -306,8 +310,8 @@ class Fund(db.Model):
     name = db.Column(db.String(200), nullable=False)
     description = db.Column(db.Text, nullable=True)
     is_active = db.Column(db.Boolean, default=True, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
 
     donations = db.relationship('Donation', backref='fund')
     expenses = db.relationship('Expense', backref='fund')
@@ -332,8 +336,8 @@ class Volunteer(db.Model):
     phone = db.Column(db.String(20), nullable=True)
     hours_logged = db.Column(db.Float, default=0.0, nullable=False)
     status = db.Column(db.String(50), default='active', nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
 
     def __repr__(self):
         return f'<Volunteer {self.name}>'
@@ -350,11 +354,11 @@ class Expense(db.Model):
     fund_id = db.Column(db.Integer, db.ForeignKey('funds.id'), nullable=True)
     amount = db.Column(db.Float, nullable=False)
     currency = db.Column(db.String(3), default='USD', nullable=False)
-    paid_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    paid_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
     payee = db.Column(db.String(200), nullable=True)
     description = db.Column(db.Text, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
 
     project = db.relationship('Project', backref='expenses')
 
@@ -373,7 +377,7 @@ class AIConversation(db.Model):
     organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=True, index=True)
     model = db.Column(db.String(100), nullable=True)
     tenant_id = db.Column(db.String(100), nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
 
     messages = db.relationship('AIMessage', backref='conversation', cascade='all, delete-orphan', order_by='AIMessage.id')
 
@@ -391,7 +395,7 @@ class AIMessage(db.Model):
     role = db.Column(db.String(16), nullable=False)   # 'user' or 'assistant'
     content = db.Column(db.Text, nullable=False)
     prompt_sha256 = db.Column(db.String(64), nullable=True)   # hash of user message for audit
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
 
     def __repr__(self):
         return f'<AIMessage {self.role} conv={self.conversation_id}>'

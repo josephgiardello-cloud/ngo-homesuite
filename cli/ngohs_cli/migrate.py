@@ -3,7 +3,7 @@ import os
 import sys
 import sqlite3
 import hashlib
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 MIGRATIONS_DIR = Path(__file__).parent.parent.parent / 'ngo_homesuite' / 'migrations'
@@ -31,7 +31,7 @@ def apply_migration(conn, version, sql_path):
     hash_val = hash_sql_file(sql_path)
     conn.executescript(sql)
     conn.execute('INSERT INTO schema_version (version, applied_at_utc, hash) VALUES (?, ?, ?)',
-                 (version, datetime.utcnow().isoformat() + 'Z', hash_val))
+                 (version, datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'), hash_val))
     conn.commit()
     print(f"Applied migration {version} ({sql_path.name}) with hash {hash_val}")
 

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from ngo_homesuite.models.core import db
+
+def _utcnow_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 
 
 class WorkflowDefinitionRecord(db.Model):
@@ -16,7 +20,7 @@ class WorkflowDefinitionRecord(db.Model):
     initial_step = db.Column(db.String(120), nullable=False)
     steps_json = db.Column(db.Text, nullable=False)
     transitions_json = db.Column(db.Text, nullable=False)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, nullable=False, default=_utcnow_naive)
 
     __table_args__ = (
         db.UniqueConstraint("workflow_type", "version", name="uq_workflow_type_version"),
@@ -34,8 +38,8 @@ class WorkflowInstanceRecord(db.Model):
     status = db.Column(db.String(32), nullable=False)
     version = db.Column(db.Integer, nullable=False, default=1)
     history_json = db.Column(db.Text, nullable=False, default="[]")
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, nullable=False, default=_utcnow_naive)
+    updated_at = db.Column(db.DateTime, nullable=False, default=_utcnow_naive, onupdate=_utcnow_naive)
 
     __table_args__ = (
         db.CheckConstraint("LENGTH(org_id) > 0", name="ck_workflow_instance_org_not_empty"),
