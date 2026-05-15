@@ -2,8 +2,10 @@
 
 # --- Standard library imports ---
 import argparse
+import hmac
 import logging
 import os
+import secrets
 import sys
 import uuid
 import datetime
@@ -271,7 +273,10 @@ class AuthError(Exception):
 def login():
     username = request.form.get('username')
     password = request.form.get('password')
-    if username == 'admin' and password == os.getenv('ADMIN_PASSWORD', 'admin'):
+    configured_admin_password = os.getenv('ADMIN_PASSWORD')
+    if not configured_admin_password:
+        raise AuthError("ADMIN_PASSWORD is not configured.")
+    if username == 'admin' and password and hmac.compare_digest(password, configured_admin_password):
         flask_session['user'] = username
         class User:
             name = username
@@ -331,7 +336,9 @@ from ngo_homesuite.db.migrate import auto_migrate
 app = Flask(__name__)
 app.config['LANGUAGES'] = ['en', 'es', 'fr', 'hi']
 app.config['BABEL_DEFAULT_LOCALE'] = 'en'
-app.secret_key = os.getenv('FLASK_SECRET_KEY', 'dev')
+app.secret_key = os.getenv('FLASK_SECRET_KEY') or secrets.token_hex(32)
+if not os.getenv('FLASK_SECRET_KEY'):
+    logger.warning("FLASK_SECRET_KEY is not set for legacy app context; using ephemeral in-memory secret key.")
 def get_locale():
     return request.accept_languages.best_match(app.config['LANGUAGES'])
 
@@ -459,7 +466,7 @@ def run_cli_menu():
     main_menu()
 
 def main(argv=None):
-    argv = argv if argv is not None else []
+    argv = argv if argv is not None else sys.argv[1:]
     compute_code_hash()
     config = load_config(argv)
     eff = _effective_settings(config)
