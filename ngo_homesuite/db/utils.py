@@ -51,7 +51,6 @@ def audit(
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (utc_now_iso(), user_id, username, role, action, entity_type, entity_id, details_json),
         )
-        conn.commit()
 
     try:
         run_db(op, write=True)
