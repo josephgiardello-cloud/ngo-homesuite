@@ -317,8 +317,8 @@ def create_p2p_page():
     data = _json_or_400(required=["donor_id", "title"])
     try:
         page = create_page(_org_id(), **data)
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+    except ValueError:
+        return jsonify({"error": "Invalid resource reference"}), 400
 
     return jsonify(_p2p_dict(page)), 201
 
@@ -357,8 +357,8 @@ def link_p2p_donation(page_id: int):
     data = _json_or_400(required=["donation_id"])
     try:
         link = link_donation(page_id, _org_id(), int(data["donation_id"]))
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+    except ValueError:
+        return jsonify({"error": "Invalid resource reference"}), 400
 
     return jsonify({"page_id": link.page_id, "donation_id": link.donation_id}), 201
 
@@ -367,7 +367,13 @@ def link_p2p_donation(page_id: int):
 @login_required
 def p2p_leaderboard():
     from ngo_homesuite.services.p2p_service import leaderboard
-    return jsonify(leaderboard(_org_id(), limit=request.args.get("limit", 10, type=int)))
+    return jsonify(
+        leaderboard(
+            _org_id(),
+            limit=request.args.get("limit", 10, type=int),
+            offset=request.args.get("offset", 0, type=int),
+        )
+    )
 
 
 def _p2p_dict(p) -> dict:

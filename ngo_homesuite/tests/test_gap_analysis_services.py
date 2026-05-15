@@ -258,6 +258,52 @@ class TestP2PFundraising:
         db.session.rollback()
         assert isinstance(result, list)
 
+    def test_progress_handles_anonymous_donation(self, ctx):
+        from ngo_homesuite.services.p2p_service import create_page, link_donation, get_progress
+
+        d = _make_donor(name="Anonymous P2P Owner")
+        page = create_page(1, d.id, "Anonymous Donations", goal_amount=100.0)
+
+        from datetime import datetime, UTC
+        anon = Donation(
+            organization_id=1,
+            donor_id=None,
+            donor_name="Anonymous",
+            amount=30.0,
+            currency="USD",
+            status="completed",
+            donation_date=datetime.now(UTC),
+        )
+        db.session.add(anon)
+        db.session.flush()
+
+        link_donation(page.id, 1, anon.id)
+        progress = get_progress(page.id, 1)
+        db.session.rollback()
+
+        assert progress["total_raised"] == 30.0
+        assert progress["donor_count"] == 0
+
+    def test_leaderboard_offset_paginates(self, ctx):
+        from ngo_homesuite.services.p2p_service import create_page, link_donation, leaderboard
+
+        d = _make_donor(name="Leaderboard Donor")
+        p1 = create_page(1, d.id, "LB One")
+        p2 = create_page(1, d.id, "LB Two")
+
+        d1 = _make_donation(1, d.id, 100.0)
+        d2 = _make_donation(1, d.id, 50.0)
+        link_donation(p1.id, 1, d1.id)
+        link_donation(p2.id, 1, d2.id)
+
+        first = leaderboard(1, limit=1, offset=0)
+        second = leaderboard(1, limit=1, offset=1)
+        db.session.rollback()
+
+        assert len(first) == 1
+        assert len(second) == 1
+        assert first[0]["page_id"] != second[0]["page_id"]
+
     def test_link_donation_rejects_cross_org_donation(self, ctx):
         from ngo_homesuite.services.p2p_service import create_page, link_donation
         from ngo_homesuite.models.core import Organization
@@ -272,7 +318,7 @@ class TestP2PFundraising:
         page = create_page(1, donor_org1.id, "Org1 Page", goal_amount=100.0)
         donation_org2 = _make_donation(org2.id, donor_org2.id, 75.0)
 
-        with pytest.raises(ValueError, match="same organization"):
+        with pytest.raises(ValueError, match="invalid resource reference"):
             link_donation(page.id, 1, donation_org2.id)
 
         db.session.rollback()

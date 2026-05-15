@@ -10,6 +10,8 @@ import re
 import unicodedata
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy import and_, func
+
 from ngo_homesuite.models.core import Donation, Donor, P2PPage, P2PPageDonation, db
 
 logger = logging.getLogger(__name__)
@@ -49,7 +51,7 @@ def create_page(
 ) -> P2PPage:
     donor = Donor.query.filter_by(id=donor_id, organization_id=organization_id).first()
     if donor is None:
-        raise ValueError("donor_id must belong to the same organization")
+        raise ValueError("invalid resource reference")
 
     public_slug = _unique_slug(slug or title)
     page = P2PPage(
@@ -64,6 +66,22 @@ def create_page(
     )
     db.session.add(page)
     db.session.commit()
+    try:
+        from ngo_homesuite.db.utils import audit
+
+        audit(
+            "p2p.page.create",
+            entity_type="p2p_page",
+            entity_id=page.id,
+            details={
+                "organization_id": organization_id,
+                "donor_id": donor_id,
+                "title": title,
+                "public_slug": page.public_slug,
+            },
+        )
+    except Exception:
+        pass
     return page
 
 
@@ -71,6 +89,17 @@ def publish_page(page_id: int, organization_id: int) -> P2PPage:
     page = P2PPage.query.filter_by(id=page_id, organization_id=organization_id).first_or_404()
     page.status = "active"
     db.session.commit()
+    try:
+        from ngo_homesuite.db.utils import audit
+
+        audit(
+            "p2p.page.publish",
+            entity_type="p2p_page",
+            entity_id=page.id,
+            details={"organization_id": organization_id, "status": page.status},
+        )
+    except Exception:
+        pass
     return page
 
 
@@ -78,6 +107,17 @@ def close_page(page_id: int, organization_id: int) -> P2PPage:
     page = P2PPage.query.filter_by(id=page_id, organization_id=organization_id).first_or_404()
     page.status = "closed"
     db.session.commit()
+    try:
+        from ngo_homesuite.db.utils import audit
+
+        audit(
+            "p2p.page.close",
+            entity_type="p2p_page",
+            entity_id=page.id,
+            details={"organization_id": organization_id, "status": page.status},
+        )
+    except Exception:
+        pass
     return page
 
 
@@ -134,7 +174,7 @@ def link_donation(page_id: int, organization_id: int, donation_id: int) -> P2PPa
     P2PPage.query.filter_by(id=page_id, organization_id=organization_id).first_or_404()
     donation = Donation.query.filter_by(id=donation_id, organization_id=organization_id).first()
     if donation is None:
-        raise ValueError("donation_id must belong to the same organization")
+        raise ValueError("invalid resource reference")
 
     existing = P2PPageDonation.query.filter_by(page_id=page_id, donation_id=donation_id).first()
     if existing:
@@ -142,6 +182,20 @@ def link_donation(page_id: int, organization_id: int, donation_id: int) -> P2PPa
     link = P2PPageDonation(page_id=page_id, donation_id=donation_id)
     db.session.add(link)
     db.session.commit()
+    try:
+        from ngo_homesuite.db.utils import audit
+
+        audit(
+            "p2p.page.link_donation",
+            entity_type="p2p_page",
+            entity_id=page_id,
+            details={
+                "organization_id": organization_id,
+                "donation_id": donation_id,
+            },
+        )
+    except Exception:
+        pass
     return link
 
 
@@ -190,24 +244,49 @@ def get_progress(page_id: int, organization_id: int) -> Dict[str, Any]:
     }
 
 
-def leaderboard(organization_id: int, campaign_slug: Optional[str] = None, limit: int = 10) -> List[Dict[str, Any]]:
+def leaderboard(
+    organization_id: int,
+    campaign_slug: Optional[str] = None,
+    limit: int = 10,
+    offset: int = 0,
+) -> List[Dict[str, Any]]:
     """Return top P2P pages by amount raised."""
-    pages = list_pages(organization_id, campaign_slug=campaign_slug, status="active")
-    results = []
-    for page in pages:
-        links = P2PPageDonation.query.filter_by(page_id=page.id).all()
-        if links:
-            total = sum(
-                d.amount
-                for d in Donation.query.filter(
-                    Donation.id.in_([l.donation_id for l in links]),
-                    Donation.organization_id == organization_id,
-                ).all()
-                if d.amount
-            )
-        else:
-            total = 0.0
-        results.append({"page_id": page.id, "title": page.title, "slug": page.public_slug, "raised": total})
+    safe_limit = max(1, min(int(limit), 100))
+    safe_offset = max(0, int(offset))
 
-    results.sort(key=lambda x: x["raised"], reverse=True)
-    return results[:limit]
+    q = (
+        db.session.query(
+            P2PPage.id.label("page_id"),
+            P2PPage.title.label("title"),
+            P2PPage.public_slug.label("slug"),
+            func.coalesce(func.sum(Donation.amount), 0.0).label("raised"),
+        )
+        .outerjoin(P2PPageDonation, P2PPageDonation.page_id == P2PPage.id)
+        .outerjoin(
+            Donation,
+            and_(
+                Donation.id == P2PPageDonation.donation_id,
+                Donation.organization_id == organization_id,
+            ),
+        )
+        .filter(P2PPage.organization_id == organization_id, P2PPage.status == "active")
+    )
+    if campaign_slug:
+        q = q.filter(P2PPage.campaign_slug == campaign_slug)
+
+    rows = (
+        q.group_by(P2PPage.id, P2PPage.title, P2PPage.public_slug)
+        .order_by(func.coalesce(func.sum(Donation.amount), 0.0).desc(), P2PPage.id.asc())
+        .offset(safe_offset)
+        .limit(safe_limit)
+        .all()
+    )
+    return [
+        {
+            "page_id": int(r.page_id),
+            "title": str(r.title),
+            "slug": str(r.slug),
+            "raised": float(r.raised or 0.0),
+        }
+        for r in rows
+    ]

@@ -111,4 +111,4 @@ def test_v2_p2p_link_rejects_cross_tenant_donation(client, app):
         json={"donation_id": foreign_donation_id},
     )
     assert rv.status_code == 400
-    assert "same organization" in (rv.get_json() or {}).get("error", "")
+    assert (rv.get_json() or {}).get("error") == "Invalid resource reference"

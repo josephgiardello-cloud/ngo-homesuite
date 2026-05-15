@@ -44,8 +44,8 @@ def create_page_route():
 
     try:
         page = create_page(_org_id(), **data)
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+    except ValueError:
+        return jsonify({"error": "Invalid resource reference"}), 400
 
     return jsonify({"id": page.id, "public_slug": page.public_slug, "status": page.status}), 201
 
@@ -118,5 +118,6 @@ def leaderboard_route():
     from ngo_homesuite.services.p2p_service import leaderboard
 
     limit = request.args.get("limit", 10, type=int)
+    offset = request.args.get("offset", 0, type=int)
     campaign_slug = request.args.get("campaign_slug")
-    return jsonify(leaderboard(_org_id(), campaign_slug=campaign_slug, limit=limit))
+    return jsonify(leaderboard(_org_id(), campaign_slug=campaign_slug, limit=limit, offset=offset))
