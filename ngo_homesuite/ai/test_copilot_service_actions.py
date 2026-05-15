@@ -19,9 +19,9 @@ class _StubTools:
             "search_donors": _StubTool("search_donors", requires_approval=False, mutates_state=False),
         }
 
-    def parse_tool_list(self, raw):
+    def parse_tool_list(self, raw, *, default_all=True):
         if raw is None:
-            return set(self._tools.keys())
+            return set(self._tools.keys()) if default_all else set()
         if isinstance(raw, str):
             vals = [p.strip() for p in raw.split(",") if p.strip()]
         else:
@@ -124,6 +124,24 @@ def test_pending_approval_action_is_not_executed_without_explicit_approval():
 
     assert any(a.get("status") == "pending_approval" for a in res.actions)
     assert "Pending approval" in res.answer
+
+
+def test_missing_approved_actions_does_not_grant_implicit_approval():
+    cp = _make_copilot(_StubClientPending())
+
+    res = cp.answer(
+        prompt="Create donor Jane Donor",
+        context={"active_page": "donors"},
+        runtime_ctx={
+            "tool_allowlist": ["create_donor"],
+            "organization_id": 1,
+            "actor": "tester",
+        },
+        allow_actions=True,
+        use_web=False,
+    )
+
+    assert any(a.get("status") == "pending_approval" for a in res.actions)
 
 
 def test_approved_action_executes_and_returns_executed_status():

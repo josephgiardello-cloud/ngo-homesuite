@@ -316,9 +316,22 @@ def copilot_chat() -> Response:
     allow_actions = bool(payload.get("allow_actions", False)) and role in {"admin", "staff"}
     use_web = bool(payload.get("use_web", False))
     approved_actions = _parse_tool_list(payload.get("approved_actions"))
+    route_allowlist_in_payload = "tool_allowlist" in payload
     route_allowlist = _parse_tool_list(payload.get("tool_allowlist"))
     config_allowlist = _parse_tool_list(current_app.config.get("COPILOT_TOOL_ALLOWLIST", ""))
-    tool_allowlist = route_allowlist or config_allowlist
+
+    if route_allowlist_in_payload:
+        if config_allowlist:
+            config_allow = set(config_allowlist)
+            tool_allowlist = [name for name in route_allowlist if name in config_allow]
+        else:
+            tool_allowlist = route_allowlist
+    else:
+        tool_allowlist = config_allowlist or None
+
+    if tool_allowlist is not None:
+        allowed_now = set(tool_allowlist)
+        approved_actions = [name for name in approved_actions if name in allowed_now]
 
     _audit_interaction(prompt, model, tenant_id)
 

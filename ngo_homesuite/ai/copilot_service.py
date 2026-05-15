@@ -158,11 +158,14 @@ class HomeSuiteCopilot:
         actions: list[dict[str, Any]] = []
 
         if allow_actions:
-            tool_allowlist = self.tools.parse_tool_list(runtime_ctx.get("tool_allowlist"))
-            approved_actions = self.tools.parse_tool_list(runtime_ctx.get("approved_actions"))
-
-            if not tool_allowlist:
-                tool_allowlist = set(tool.name for tool in self.tools.list_tools())
+            tool_allowlist = self.tools.parse_tool_list(
+                runtime_ctx.get("tool_allowlist", None),
+                default_all=True,
+            )
+            approved_actions = self.tools.parse_tool_list(
+                runtime_ctx.get("approved_actions", None),
+                default_all=False,
+            )
 
             tool_specs = self.tools.get_ollama_tool_specs(allowlist=tool_allowlist)
             first = self.client.chat(model=self.model, messages=messages, tools=tool_specs)

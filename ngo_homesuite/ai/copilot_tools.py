@@ -128,9 +128,14 @@ class CopilotToolRegistry:
     def get_tool(self, name: str) -> CopilotTool | None:
         return self._tools.get(name)
 
-    def parse_tool_list(self, raw: str | list[str] | tuple[str, ...] | set[str] | None) -> set[str]:
+    def parse_tool_list(
+        self,
+        raw: str | list[str] | tuple[str, ...] | set[str] | None,
+        *,
+        default_all: bool = True,
+    ) -> set[str]:
         if raw is None:
-            return set(self._tools.keys())
+            return set(self._tools.keys()) if default_all else set()
         if isinstance(raw, str):
             candidates = [p.strip() for p in raw.split(",") if p.strip()]
         else:

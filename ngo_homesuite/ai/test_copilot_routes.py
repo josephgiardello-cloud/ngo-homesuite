@@ -118,3 +118,32 @@ def test_copilot_chat_forwards_action_gating_inputs(client, app, monkeypatch):
     runtime_ctx = passed["runtime_ctx"]
     assert runtime_ctx["approved_actions"] == ["create_donor"]
     assert runtime_ctx["tool_allowlist"] == ["create_donor", "search_donors"]
+
+
+def test_copilot_chat_route_allowlist_is_constrained_by_config(client, app, monkeypatch):
+    _ensure_user(app, "copilot_staff_cfg", "copilot_staff_cfg@test.local", "staff", "staff_pass_cfg_123")
+    _login(client, "copilot_staff_cfg", "staff_pass_cfg_123")
+
+    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteCopilot.from_app", lambda: _FakeCopilot())
+
+    old_cfg = app.config.get("COPILOT_TOOL_ALLOWLIST")
+    app.config["COPILOT_TOOL_ALLOWLIST"] = "search_donors"
+    try:
+        rv = client.post(
+            "/ai/copilot/chat",
+            json={
+                "prompt": "Create a donor called Jane",
+                "allow_actions": True,
+                "approved_actions": ["create_donor", "search_donors"],
+                "tool_allowlist": ["create_donor", "search_donors"],
+            },
+        )
+        assert rv.status_code == 200
+
+        passed = _FakeCopilot.last_kwargs
+        assert passed is not None
+        runtime_ctx = passed["runtime_ctx"]
+        assert runtime_ctx["tool_allowlist"] == ["search_donors"]
+        assert runtime_ctx["approved_actions"] == ["search_donors"]
+    finally:
+        app.config["COPILOT_TOOL_ALLOWLIST"] = old_cfg
