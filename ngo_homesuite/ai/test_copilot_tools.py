@@ -111,3 +111,32 @@ def test_execute_donation_followup_workflow_creates_receipt(registry, app):
     with app.app_context():
         receipt = DonationReceipt.query.filter_by(donation_id=donation_id).first()
         assert receipt is not None
+
+
+def test_optional_relationship_counts_adds_org_filter_when_column_exists(registry, monkeypatch):
+    class _FakeInspector:
+        def get_table_names(self):
+            return ["interactions", "pledges", "registrations"]
+
+        def get_columns(self, table_name):
+            return [{"name": "organization_id"}, {"name": "donor_id"}]
+
+    captured: list[tuple[str, dict[str, int]]] = []
+
+    class _ScalarResult:
+        def scalar(self):
+            return 1
+
+    def _fake_execute(statement, params):
+        captured.append((str(statement), dict(params)))
+        return _ScalarResult()
+
+    monkeypatch.setattr("ngo_homesuite.ai.copilot_tools.inspect", lambda _engine: _FakeInspector())
+    monkeypatch.setattr("ngo_homesuite.ai.copilot_tools.db.session.execute", _fake_execute)
+
+    metrics = registry._optional_donor_relationship_counts(11, 42)
+
+    assert metrics == {"interactions": 1, "pledges": 1, "events": 1}
+    assert len(captured) == 3
+    assert all("organization_id = :org_id" in sql for sql, _ in captured)
+    assert all(params.get("org_id") == 42 for _, params in captured)

@@ -299,31 +299,29 @@ class CopilotToolRegistry:
             ),
         }
 
-    def _optional_donor_relationship_counts(self, donor_id: int) -> dict[str, int]:
+    def _optional_donor_relationship_counts(self, donor_id: int, org_id: int) -> dict[str, int]:
         inspector = inspect(db.engine)
         table_names = set(inspector.get_table_names())
         metrics = {"interactions": 0, "pledges": 0, "events": 0}
 
+        def _query_count(table_name: str) -> int:
+            params: dict[str, Any] = {"donor_id": donor_id}
+            sql = f"SELECT COUNT(*) FROM {table_name} WHERE donor_id = :donor_id"
+            columns = {str(col.get("name")) for col in inspector.get_columns(table_name)}
+            if "organization_id" in columns:
+                sql += " AND organization_id = :org_id"
+                params["org_id"] = org_id
+            row = db.session.execute(text(sql), params).scalar()
+            return int(row or 0)
+
         if "interactions" in table_names:
-            row = db.session.execute(
-                text("SELECT COUNT(*) FROM interactions WHERE donor_id = :donor_id"),
-                {"donor_id": donor_id},
-            ).scalar()
-            metrics["interactions"] = int(row or 0)
+            metrics["interactions"] = _query_count("interactions")
 
         if "pledges" in table_names:
-            row = db.session.execute(
-                text("SELECT COUNT(*) FROM pledges WHERE donor_id = :donor_id"),
-                {"donor_id": donor_id},
-            ).scalar()
-            metrics["pledges"] = int(row or 0)
+            metrics["pledges"] = _query_count("pledges")
 
         if "registrations" in table_names:
-            row = db.session.execute(
-                text("SELECT COUNT(*) FROM registrations WHERE donor_id = :donor_id"),
-                {"donor_id": donor_id},
-            ).scalar()
-            metrics["events"] = int(row or 0)
+            metrics["events"] = _query_count("registrations")
 
         return metrics
 
@@ -603,7 +601,7 @@ class CopilotToolRegistry:
             return {"error": f"donor {donor_id} not found"}
 
         metrics = self._compute_rfm_signals(donor, org_id)
-        related = self._optional_donor_relationship_counts(donor.id)
+        related = self._optional_donor_relationship_counts(donor.id, org_id)
         summary = self._insight_summary_text(donor, metrics, related)
 
         return {
@@ -693,7 +691,7 @@ class CopilotToolRegistry:
         ranked: list[dict[str, Any]] = []
         for donor in donors:
             metrics = self._compute_rfm_signals(donor, org_id)
-            related = self._optional_donor_relationship_counts(donor.id)
+            related = self._optional_donor_relationship_counts(donor.id, org_id)
             score = round(
                 (0.5 * metrics["predictions"]["giving_likelihood"]) +
                 (0.3 * metrics["predictions"]["major_gift_potential"]) +
@@ -950,7 +948,7 @@ class CopilotToolRegistry:
             return {"error": f"donor {donor_id} not found"}
 
         rfm = self._compute_rfm_signals(donor, org_id)
-        related = self._optional_donor_relationship_counts(donor.id)
+        related = self._optional_donor_relationship_counts(donor.id, org_id)
 
         # Enrich with persisted engagement score if available
         try:
@@ -1024,7 +1022,7 @@ class CopilotToolRegistry:
             for rec in records:
                 donor = db.session.get(Donor, rec.donor_id)
                 rfm = self._compute_rfm_signals(donor, org_id) if donor else {}
-                related = self._optional_donor_relationship_counts(rec.donor_id)
+                related = self._optional_donor_relationship_counts(rec.donor_id, org_id)
                 actions = self._recommended_actions(rfm, related) if rfm else []
                 result.append(
                     {
