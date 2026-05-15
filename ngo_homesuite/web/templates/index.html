@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block title %}Home - NGO HomeSuite{% endblock %}
+
+{% block content %}
+<div class="py-5 text-center">
+    <h1>Welcome to NGO HomeSuite</h1>
+    <p style="font-size: 1.25rem; color: #666; margin: 1rem 0;">
+        A comprehensive nonprofit management system for donors, donations, funds, and compliance tracking.
+    </p>
+    
+    <div style="margin: 2rem 0;">
+        <a href="{{ url_for('auth.login') }}" class="btn btn-primary" style="margin: 0 0.5rem;">Sign In</a>
+        <a href="{{ url_for('auth.register') }}" class="btn btn-success" style="margin: 0 0.5rem;">Create Account</a>
+    </div>
+</div>
+
+<div style="max-width: 800px; margin: 3rem auto;">
+    <h2 style="text-align: center;">Key Features</h2>
+    
+    <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); margin-top: 2rem;">
+        <div class="card">
+            <div class="card-title">💰 Financial Management</div>
+            <p class="card-text">Track donations, manage funds, and reconcile bank accounts with ease.</p>
+        </div>
+        
+        <div class="card">
+            <div class="card-title">👥 Relationship Management</div>
+            <p class="card-text">Maintain comprehensive donor profiles and track interactions.</p>
+        </div>
+        
+        <div class="card">
+            <div class="card-title">📊 Reporting & Analytics</div>
+            <p class="card-text">Generate powerful reports and gain insights into your organization's impact.</p>
+        </div>
+        
+        <div class="card">
+            <div class="card-title">🔒 Security & Compliance</div>
+            <p class="card-text">Built with security first - encryption, audit logs, and compliance tools.</p>
+        </div>
+        
+        <div class="card">
+            <div class="card-title">👔 Staff & Volunteers</div>
+            <p class="card-text">Manage payroll, volunteer hours, and access control.</p>
+        </div>
+        
+        <div class="card">
+            <div class="card-title">🌍 Internationalization</div>
+            <p class="card-text">Support for multiple languages to reach global audiences.</p>
+        </div>
+    </div>
+</div>
+
+<div style="background-color: #f8f9fa; padding: 3rem 2rem; margin-top: 3rem; border-radius: 4px;">
+    <h2 style="text-align: center;">Get Started</h2>
+    <div style="max-width: 600px; margin: 2rem auto; line-height: 1.8;">
+        <ol style="padding-left: 1.5rem;">
+            <li><strong>Create an account</strong> - Sign up to get started</li>
+            <li><strong>Set up your organization</strong> - Configure your NGO details</li>
+            <li><strong>Add beneficiaries</strong> - Start tracking impact</li>
+            <li><strong>Record donations</strong> - Monitor financial health</li>
+            <li><strong>Generate reports</strong> - Gain actionable insights</li>
+        </ol>
+    </div>
+</div>
+{% endblock %}

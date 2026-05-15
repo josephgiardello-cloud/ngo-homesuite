@@ -3,6 +3,9 @@
 venv/
 ENV/
 env/
+.env
+.env.local
+.env.*.local
 
 # Python
 __pycache__/
@@ -13,12 +16,17 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+*.egg
+.eggs/
 
 # Testing
 .pytest_cache/
 .tox/
 coverage.xml
 *.cover
+.coverage
+htmlcov/
+.hypothesis/
 
 # IDE
 .vscode/
@@ -26,11 +34,12 @@ coverage.xml
 *.swp
 *.swo
 *~
+*.sublime-project
+*.sublime-workspace
 
 # Environments and configs
-.env
-.env.local
 *.yaml.example
+ngo-homesuite.yaml.example
 
 # Database
 *.sqlite3
@@ -38,15 +47,19 @@ coverage.xml
 *.db-shm
 *.db-wal
 ngo_database.db*
+instance/
 
 # Logs and backups
 *.log
+logs/
 backups/
 *.backup
+*.bak
 
 # OS
 .DS_Store
 Thumbs.db
+.env.local
 
 # Dependencies and caches
 opentimestamps-client/
@@ -57,3 +70,20 @@ ngo-homesuite-backup-*/
 # Temp files
 *.tmp
 .cache/
+tmp/
+temp/
+
+# Flask
+instance/
+.webassets-cache
+
+# SQLAlchemy
+*.db-journal
+
+# Mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# IDEs - Local .ctags_associations
+.ctags_associations

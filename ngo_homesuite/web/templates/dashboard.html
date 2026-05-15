@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - NGO HomeSuite{% endblock %}
+
+{% block content %}
+<h1>Dashboard</h1>
+
+{% if stats.organization %}
+    <p class="text-muted">Organization: <strong>{{ stats.organization.name }}</strong></p>
+    
+    <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
+        <div class="card">
+            <div class="card-text">Active Beneficiaries</div>
+            <div class="card-value">{{ stats.beneficiary_count }}</div>
+        </div>
+        
+        <div class="card">
+            <div class="card-text">Active Projects</div>
+            <div class="card-value">{{ stats.project_count }}</div>
+        </div>
+        
+        <div class="card">
+            <div class="card-text">Total Donations</div>
+            <div class="card-value">${{ "%.2f"|format(stats.total_donations) }}</div>
+        </div>
+        
+        <div class="card">
+            <div class="card-text">Project Budget</div>
+            <div class="card-value">${{ "%.2f"|format(stats.total_budget) }}</div>
+        </div>
+    </div>
+    
+    {% if stats.recent_donations %}
+        <h2 style="margin-top: 2rem;">Recent Donations</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Donor</th>
+                    <th>Amount</th>
+                    <th>Date</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for donation in stats.recent_donations %}
+                    <tr>
+                        <td>{{ donation.donor_name }}</td>
+                        <td>{{ donation.currency }} {{ "%.2f"|format(donation.amount) }}</td>
+                        <td>{{ donation.donation_date.strftime('%Y-%m-%d') }}</td>
+                        <td><span style="padding: 0.25rem 0.75rem; border-radius: 20px; background-color: #d4edda; color: #155724;">{{ donation.status }}</span></td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% endif %}
+    
+    <div style="margin-top: 2rem;">
+        <a href="#" class="btn btn-primary">View All Donations</a>
+        <a href="#" class="btn btn-secondary">View Beneficiaries</a>
+        <a href="#" class="btn btn-secondary">Manage Projects</a>
+    </div>
+    
+{% else %}
+    <div class="card">
+        <h2>Welcome to NGO HomeSuite!</h2>
+        <p>Your account has been created successfully, but no organization has been assigned yet.</p>
+        <p class="text-muted">Please contact an administrator to assign your organization.</p>
+    </div>
+{% endif %}
+{% endblock %}

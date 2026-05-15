@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block title %}Sign In - NGO HomeSuite{% endblock %}
+
+{% block content %}
+<div style="max-width: 400px; margin: 3rem auto;">
+    <h2 class="text-center" style="margin-bottom: 2rem;">Sign In</h2>
+    
+    <form method="post" novalidate>
+        {{ form.hidden_tag() }}
+        
+        <div class="form-group {% if form.username.errors %}error{% endif %}">
+            {{ form.username.label }}
+            {{ form.username(class='form-control') }}
+            {% if form.username.errors %}
+                <div class="error-message">
+                    {% for error in form.username.errors %}
+                        <div>{{ error }}</div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        </div>
+        
+        <div class="form-group {% if form.password.errors %}error{% endif %}">
+            {{ form.password.label }}
+            {{ form.password(class='form-control') }}
+            {% if form.password.errors %}
+                <div class="error-message">
+                    {% for error in form.password.errors %}
+                        <div>{{ error }}</div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        </div>
+        
+        <div class="form-group checkbox-group">
+            {{ form.remember_me() }}
+            {{ form.remember_me.label(class_='') }}
+        </div>
+        
+        <div class="form-group">
+            {{ form.submit(class='btn btn-primary', style='width: 100%;') }}
+        </div>
+    </form>
+    
+    <div class="text-center mt-3">
+        <p>Don't have an account? <a href="{{ url_for('auth.register') }}">Register here</a></p>
+    </div>
+</div>
+{% endblock %}
