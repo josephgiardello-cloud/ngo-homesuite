@@ -81,6 +81,41 @@ def get_case_route(case_id: int):
     )
 
 
+@program_bp.patch("/cases/<int:case_id>")
+@login_required
+@roles_required("admin", "staff")
+def update_case_route(case_id: int):
+    from ngo_homesuite.services.program_impact_service import update_case_details
+
+    data = request.get_json(silent=True) or {}
+    if not data:
+        return jsonify({"error": "no fields provided"}), 400
+
+    case = update_case_details(case_id, _org_id(), **data)
+    return jsonify(
+        {
+            "id": case.id,
+            "title": case.title,
+            "status": case.status,
+            "case_type": case.case_type,
+            "intake_stage": case.intake_stage,
+            "risk_level": case.risk_level,
+            "progress_percent": case.progress_percent,
+            "target_outcome_value": case.target_outcome_value,
+        }
+    )
+
+
+@program_bp.delete("/cases/<int:case_id>")
+@login_required
+@roles_required("admin", "staff")
+def delete_case_route(case_id: int):
+    from ngo_homesuite.services.program_impact_service import delete_case
+
+    delete_case(case_id, _org_id())
+    return ("", 204)
+
+
 @program_bp.post("/cases/<int:case_id>/status")
 @login_required
 @roles_required("admin", "staff")
@@ -135,6 +170,92 @@ def update_intake_route(beneficiary_id: int):
             "status": beneficiary.status,
         }
     )
+
+
+@program_bp.post("/intake/beneficiaries")
+@login_required
+@roles_required("admin", "staff")
+def create_intake_beneficiary_route():
+    from ngo_homesuite.services.beneficiary_service import create_beneficiary
+
+    data = request.get_json(silent=True) or {}
+    if not data.get("first_name") or not data.get("last_name"):
+        return jsonify({"error": "first_name and last_name are required"}), 400
+
+    beneficiary = create_beneficiary(_org_id(), **data)
+    return jsonify(
+        {
+            "id": beneficiary.id,
+            "first_name": beneficiary.first_name,
+            "last_name": beneficiary.last_name,
+            "program": beneficiary.program,
+            "status": beneficiary.status,
+        }
+    ), 201
+
+
+@program_bp.get("/intake/beneficiaries")
+@login_required
+def list_intake_beneficiaries_route():
+    from ngo_homesuite.services.beneficiary_service import list_beneficiaries
+
+    beneficiaries = list_beneficiaries(
+        _org_id(),
+        program=request.args.get("program"),
+        status=request.args.get("status"),
+    )
+    return jsonify(
+        [
+            {
+                "id": b.id,
+                "first_name": b.first_name,
+                "last_name": b.last_name,
+                "email": b.email,
+                "phone": b.phone,
+                "city": b.city,
+                "program": b.program,
+                "status": b.status,
+                "created_at": b.created_at.isoformat() if b.created_at else None,
+            }
+            for b in beneficiaries
+        ]
+    )
+
+
+@program_bp.get("/intake/beneficiaries/<int:beneficiary_id>")
+@login_required
+def get_intake_beneficiary_route(beneficiary_id: int):
+    from ngo_homesuite.services.beneficiary_service import get_beneficiary
+
+    beneficiary = get_beneficiary(beneficiary_id, _org_id())
+    if beneficiary is None:
+        return jsonify({"error": "not found"}), 404
+
+    return jsonify(
+        {
+            "id": beneficiary.id,
+            "first_name": beneficiary.first_name,
+            "last_name": beneficiary.last_name,
+            "email": beneficiary.email,
+            "phone": beneficiary.phone,
+            "country": beneficiary.country,
+            "city": beneficiary.city,
+            "address": beneficiary.address,
+            "program": beneficiary.program,
+            "status": beneficiary.status,
+            "notes": beneficiary.notes,
+        }
+    )
+
+
+@program_bp.delete("/intake/beneficiaries/<int:beneficiary_id>")
+@login_required
+@roles_required("admin", "staff")
+def delete_intake_beneficiary_route(beneficiary_id: int):
+    from ngo_homesuite.services.beneficiary_service import delete_beneficiary
+
+    delete_beneficiary(beneficiary_id, _org_id())
+    return ("", 204)
 
 
 @program_bp.post("/cases/<int:case_id>/service-logs")

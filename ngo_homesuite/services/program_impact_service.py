@@ -6,7 +6,7 @@ and can track qualitative + quantitative outcomes.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from ngo_homesuite.models.core import (
@@ -35,6 +35,21 @@ def _coerce_datetime(value: Any) -> datetime:
             return parsed.astimezone(timezone.utc).replace(tzinfo=None)
         return parsed
     return _utcnow()
+
+
+def _coerce_date(value: Any) -> date:
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if not cleaned:
+            return _utcnow().date()
+        if "T" in cleaned:
+            return _coerce_datetime(cleaned).date()
+        return date.fromisoformat(cleaned)
+    return _utcnow().date()
 
 
 # ---------------------------------------------------------------------------
@@ -71,7 +86,7 @@ def create_case(
         intake_stage=intake_stage,
         risk_level=risk_level,
         intake_summary=intake_summary,
-        next_review_date=next_review_date,
+        next_review_date=_coerce_date(next_review_date) if next_review_date is not None else None,
         status="open",
     )
     db.session.add(case)
@@ -140,6 +155,58 @@ def update_case_status(
         new_status=new_status,
         actor_id=actor_id,
     )
+    db.session.commit()
+    return case
+
+
+def update_case_details(
+    case_id: int,
+    organization_id: int,
+    **fields,
+) -> ProgramCase:
+    case = ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    allowed = {
+        "title",
+        "case_type",
+        "priority",
+        "description",
+        "outcome",
+        "outcome_metric",
+        "outcome_value",
+        "target_outcome_value",
+        "intake_stage",
+        "risk_level",
+        "intake_summary",
+        "donor_id",
+        "project_id",
+        "grant_id",
+        "beneficiary_id",
+        "next_review_date",
+        "opened_date",
+        "closed_date",
+    }
+    changed: list[str] = []
+
+    for key, value in fields.items():
+        if key not in allowed:
+            continue
+        if key in {"next_review_date", "opened_date", "closed_date"}:
+            setattr(case, key, _coerce_date(value) if value is not None else None)
+        else:
+            setattr(case, key, value)
+        changed.append(key)
+
+    if "outcome_value" in changed or "target_outcome_value" in changed:
+        _recompute_case_progress(case)
+
+    if changed:
+        _log_activity(
+            case.id,
+            organization_id,
+            activity_type="case_update",
+            content=f"Case fields updated: {', '.join(sorted(changed))}",
+        )
+
     db.session.commit()
     return case
 

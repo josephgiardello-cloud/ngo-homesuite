@@ -81,6 +81,23 @@ def test_program_case_management_routes(client, app):
     assert create_rv.status_code == 201
     case_id = create_rv.get_json()["id"]
 
+    patch_rv = client.patch(
+        f"/programs/cases/{case_id}",
+        json={
+            "intake_stage": "active_service",
+            "risk_level": "high",
+            "target_outcome_value": 95,
+        },
+    )
+    assert patch_rv.status_code == 200
+    patch_payload = patch_rv.get_json()
+    assert patch_payload["intake_stage"] == "active_service"
+    assert patch_payload["risk_level"] == "high"
+
+    case_rv = client.get(f"/programs/cases/{case_id}")
+    assert case_rv.status_code == 200
+    assert case_rv.get_json()["risk_level"] == "high"
+
     service_rv = client.post(
         f"/programs/cases/{case_id}/service-logs",
         json={
@@ -113,7 +130,7 @@ def test_program_case_management_routes(client, app):
     assert progress_rv.status_code == 200
     progress_payload = progress_rv.get_json()
     assert progress_payload["service_count"] == 1
-    assert progress_payload["progress_percent"] == 80.0
+    assert progress_payload["progress_percent"] == pytest.approx(75.79, abs=0.01)
     assert len(progress_payload["metrics"]) == 1
     assert len(progress_payload["timeline"]) >= 2
 
@@ -128,6 +145,38 @@ def test_program_case_management_routes(client, app):
     assert intake_rv.status_code == 200
     intake_payload = intake_rv.get_json()
     assert intake_payload["id"] == beneficiary_id
+
+    create_beneficiary_rv = client.post(
+        "/programs/intake/beneficiaries",
+        json={
+            "first_name": "Jules",
+            "last_name": "Cortez",
+            "program": "Education",
+            "status": "active",
+        },
+    )
+    assert create_beneficiary_rv.status_code == 201
+    intake_beneficiary_id = create_beneficiary_rv.get_json()["id"]
+
+    list_beneficiary_rv = client.get("/programs/intake/beneficiaries?program=Education")
+    assert list_beneficiary_rv.status_code == 200
+    assert any(item["id"] == intake_beneficiary_id for item in list_beneficiary_rv.get_json())
+
+    get_beneficiary_rv = client.get(f"/programs/intake/beneficiaries/{intake_beneficiary_id}")
+    assert get_beneficiary_rv.status_code == 200
+    assert get_beneficiary_rv.get_json()["first_name"] == "Jules"
+
+    delete_beneficiary_rv = client.delete(f"/programs/intake/beneficiaries/{intake_beneficiary_id}")
+    assert delete_beneficiary_rv.status_code == 204
+
+    missing_beneficiary_rv = client.get(f"/programs/intake/beneficiaries/{intake_beneficiary_id}")
+    assert missing_beneficiary_rv.status_code == 404
+
+    delete_case_rv = client.delete(f"/programs/cases/{case_id}")
+    assert delete_case_rv.status_code == 204
+
+    missing_case_rv = client.get(f"/programs/cases/{case_id}")
+    assert missing_case_rv.status_code == 404
 
 
 
@@ -158,3 +207,9 @@ def test_program_route_input_validation(client, app):
 
     rv_outcome_2 = client.post(f"/programs/cases/{case_id}/outcomes", json={"metric_name": "attendance"})
     assert rv_outcome_2.status_code == 400
+
+    rv_patch = client.patch(f"/programs/cases/{case_id}", json={})
+    assert rv_patch.status_code == 400
+
+    rv_beneficiary_create = client.post("/programs/intake/beneficiaries", json={"first_name": "Only"})
+    assert rv_beneficiary_create.status_code == 400

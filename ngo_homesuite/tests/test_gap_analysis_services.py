@@ -293,6 +293,29 @@ class TestProgramCases:
         assert updated.city == "Austin"
         assert "intake" in updated.notes.lower()
 
+    def test_update_case_details_recomputes_progress(self, ctx):
+        from ngo_homesuite.services.program_impact_service import create_case, update_case_details
+
+        case = create_case(
+            1,
+            "Outcome Progress Case",
+            outcome_metric="housing_days",
+            target_outcome_value=20.0,
+        )
+
+        updated = update_case_details(
+            case.id,
+            1,
+            outcome_value=10.0,
+            intake_stage="active_service",
+            risk_level="medium",
+        )
+        db.session.rollback()
+
+        assert updated.progress_percent == 50.0
+        assert updated.intake_stage == "active_service"
+        assert updated.risk_level == "medium"
+
 
 # ============================================================
 # P2P Fundraising
