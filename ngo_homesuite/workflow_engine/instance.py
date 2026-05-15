@@ -21,12 +21,13 @@ class WorkflowInstance:
     history: list[dict] = field(default_factory=list)
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
-    def record_transition(self, *, event_type: str, from_step: str, to_step: str) -> None:
+    def record_transition(self, *, event_type: str, from_step: str, to_step: str, payload: dict | None = None) -> None:
         self.history.append(
             {
                 "event_type": event_type,
                 "from_step": from_step,
                 "to_step": to_step,
+                "payload": payload or {},
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
         )

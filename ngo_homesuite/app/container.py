@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ngo_homesuite.audit import InMemoryEventStore
+from ngo_homesuite.audit import DbEventStore
 from ngo_homesuite.integration_fabric import ConnectorRegistry
 from ngo_homesuite.observability import WorkflowTracer
-from ngo_homesuite.persistence.repositories import WorkflowRepository
-from ngo_homesuite.shared_kernel import new_id
+from ngo_homesuite.persistence.repositories import WorkflowDefinitionRepository, WorkflowRepository
+from ngo_homesuite.shared_kernel import new_id, redact_payload
 from ngo_homesuite.tenant import TenantContext
 from ngo_homesuite.workflow_engine import (
     DeterministicStateMachine,
@@ -20,18 +20,20 @@ from ngo_homesuite.workflow_engine.event_bus import EventEmitter
 
 @dataclass
 class AppContainer:
-    event_store: InMemoryEventStore
+    event_store: DbEventStore
     tracer: WorkflowTracer
     connector_registry: ConnectorRegistry
     workflow_repository: WorkflowRepository
+    workflow_definition_repository: WorkflowDefinitionRepository
     state_machine: DeterministicStateMachine
     workflow_definitions: dict[str, WorkflowDefinition]
 
     @classmethod
     def build_default(cls) -> "AppContainer":
-        event_store = InMemoryEventStore()
+        event_store = DbEventStore()
         tracer = WorkflowTracer()
         workflow_repository = WorkflowRepository()
+        workflow_definition_repository = WorkflowDefinitionRepository()
         connector_registry = ConnectorRegistry()
         emitter = EventEmitter(event_store)
         state_machine = DeterministicStateMachine(event_emitter=emitter, tracer=tracer)
@@ -69,16 +71,17 @@ class AppContainer:
             ],
         )
 
+        workflow_definition_repository.ensure_definition(intake_flow)
+        workflow_definition_repository.ensure_definition(donation_flow)
+
         return cls(
             event_store=event_store,
             tracer=tracer,
             connector_registry=connector_registry,
             workflow_repository=workflow_repository,
+            workflow_definition_repository=workflow_definition_repository,
             state_machine=state_machine,
-            workflow_definitions={
-                intake_flow.workflow_type: intake_flow,
-                donation_flow.workflow_type: donation_flow,
-            },
+            workflow_definitions=workflow_definition_repository.list_active_definitions(),
         )
 
     def create_workflow_instance(self, *, org_id: str, workflow_type: str) -> WorkflowInstance:
@@ -102,6 +105,7 @@ class AppContainer:
         tenant: TenantContext,
         payload: dict | None = None,
     ) -> WorkflowInstance:
+        payload = redact_payload(payload or {})
         instance = self.workflow_repository.get(instance_id)
         if instance is None:
             raise KeyError(f"Unknown workflow instance: {instance_id}")

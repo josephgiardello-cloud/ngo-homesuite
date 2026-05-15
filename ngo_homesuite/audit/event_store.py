@@ -4,6 +4,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+import json
+
+from ngo_homesuite.models.core import db
+from ngo_homesuite.persistence.models.workflow_tables import WorkflowEventRecord
+from ngo_homesuite.shared_kernel import redact_payload
+
 
 @dataclass(frozen=True)
 class AuditEvent:
@@ -35,3 +41,43 @@ class InMemoryEventStore:
         if aggregate_id is not None:
             events = [e for e in events if e.aggregate_id == aggregate_id]
         return list(events)
+
+
+class DbEventStore:
+    """DB-backed append-only event store for workflow runtime events."""
+
+    def append(self, event: AuditEvent) -> None:
+        record = WorkflowEventRecord(
+            event_id=event.event_id,
+            org_id=event.org_id,
+            event_type=event.event_type,
+            aggregate_type=event.aggregate_type,
+            aggregate_id=event.aggregate_id,
+            actor_id=event.actor_id,
+            payload_json=json.dumps(redact_payload(event.payload), sort_keys=True),
+            occurred_at=event.occurred_at,
+        )
+        db.session.add(record)
+        db.session.commit()
+
+    def list_events(self, *, org_id: str | None = None, aggregate_id: str | None = None) -> list[AuditEvent]:
+        query = WorkflowEventRecord.query
+        if org_id is not None:
+            query = query.filter_by(org_id=org_id)
+        if aggregate_id is not None:
+            query = query.filter_by(aggregate_id=aggregate_id)
+
+        records = query.order_by(WorkflowEventRecord.occurred_at.asc()).all()
+        return [
+            AuditEvent(
+                event_id=record.event_id,
+                org_id=record.org_id,
+                event_type=record.event_type,
+                aggregate_type=record.aggregate_type,
+                aggregate_id=record.aggregate_id,
+                actor_id=record.actor_id,
+                payload=json.loads(record.payload_json or "{}"),
+                occurred_at=record.occurred_at,
+            )
+            for record in records
+        ]

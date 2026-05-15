@@ -5,6 +5,7 @@ import pytest
 from ngo_homesuite.app_factory import create_app
 from ngo_homesuite.flask_config import TestingConfig
 from ngo_homesuite.models.core import Organization, User, db
+from ngo_homesuite.persistence.models.workflow_tables import WorkflowDefinitionRecord, WorkflowEventRecord, WorkflowInstanceRecord
 
 
 @pytest.fixture(scope="module")
@@ -64,11 +65,18 @@ def test_v1_workflow_runtime_happy_path(client, app):
             "event_type": "intake_submit",
             "actor_id": "u_admin",
             "role": "org_admin",
-            "payload": {"case_id": "CASE-001"},
+            "payload": {
+                "case_id": "CASE-001",
+                "email": "beneficiary@example.org",
+                "phone": "+1-555-0142",
+            },
         },
     )
     assert submit.status_code == 200
     assert submit.get_json()["instance"]["current_step"] == "verification"
+    history = submit.get_json()["instance"]["history"]
+    assert history[0]["payload"]["email"].startswith("[REDACTED")
+    assert history[0]["payload"]["phone"].startswith("[REDACTED")
 
     trace = client.get(f"/api/v1/workflows/instances/{instance_id}/trace")
     assert trace.status_code == 200
@@ -76,7 +84,15 @@ def test_v1_workflow_runtime_happy_path(client, app):
 
     audit = client.get(f"/api/v1/audit/events?org_id={org_id}")
     assert audit.status_code == 200
-    assert len(audit.get_json()["events"]) >= 1
+    events = audit.get_json()["events"]
+    assert len(events) >= 1
+    assert events[-1]["payload"]["email"].startswith("[REDACTED")
+    assert events[-1]["payload"]["phone"].startswith("[REDACTED")
+
+    with app.app_context():
+        assert WorkflowDefinitionRecord.query.filter_by(is_active=True).count() >= 2
+        assert WorkflowInstanceRecord.query.filter_by(instance_id=instance_id).count() == 1
+        assert WorkflowEventRecord.query.filter_by(aggregate_id=instance_id).count() >= 1
 
 
 def test_v1_workflow_creation_enforces_permissions(client, app):

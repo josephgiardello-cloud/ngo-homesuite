@@ -5,6 +5,7 @@ from flask_login import current_user, login_required
 from pydantic import BaseModel, Field, ValidationError
 
 from ngo_homesuite.app.container import AppContainer
+from ngo_homesuite.shared_kernel import redact_payload
 from ngo_homesuite.tenant import TenantContext
 
 
@@ -93,7 +94,7 @@ def apply_workflow_event(instance_id: str):
             instance_id=instance_id,
             event_type=body.event_type,
             tenant=tenant,
-            payload=body.payload,
+            payload=redact_payload(body.payload),
         )
     except (KeyError, PermissionError, ValueError, RuntimeError) as exc:
         return {"error": str(exc)}, 400
@@ -144,7 +145,7 @@ def list_audit_events():
                 "aggregate_type": event.aggregate_type,
                 "aggregate_id": event.aggregate_id,
                 "actor_id": event.actor_id,
-                "payload": event.payload,
+                "payload": redact_payload(event.payload),
                 "occurred_at": event.occurred_at,
             }
             for event in events

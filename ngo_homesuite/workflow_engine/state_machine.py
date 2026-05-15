@@ -41,7 +41,12 @@ class DeterministicStateMachine:
 
         from_step = instance.current_step
         instance.current_step = rule.to_step
-        instance.record_transition(event_type=event_type, from_step=from_step, to_step=rule.to_step)
+        instance.record_transition(
+            event_type=event_type,
+            from_step=from_step,
+            to_step=rule.to_step,
+            payload=payload or {},
+        )
         target_node = definition.steps.get(rule.to_step)
         if target_node and target_node.terminal:
             instance.status = WorkflowStatus.COMPLETED
