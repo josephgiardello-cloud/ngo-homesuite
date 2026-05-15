@@ -1,0 +1,215 @@
+{% extends 'base.html' %}
+
+{% block title %}Mobile Intake | NGO HomeSuite{% endblock %}
+
+{% block extra_css %}
+<style>
+.mobile-hero {
+    display: grid;
+    gap: 0.7rem;
+    margin-bottom: 1rem;
+    padding: 1rem;
+    border-radius: 14px;
+    border: 1px solid var(--border);
+    background: linear-gradient(135deg, rgba(20, 118, 212, 0.11), rgba(16, 36, 61, 0.03));
+}
+
+.mobile-hero h1 {
+    margin: 0;
+    font-size: 1.3rem;
+}
+
+.mobile-hero p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.92rem;
+}
+
+.intake-grid {
+    display: grid;
+    gap: 0.9rem;
+}
+
+.intake-card {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+    padding: 0.95rem;
+}
+
+.intake-card h2 {
+    margin-top: 0;
+    margin-bottom: 0.65rem;
+    font-size: 1.05rem;
+}
+
+.row-two {
+    display: grid;
+    gap: 0.65rem;
+}
+
+.recent-grid {
+    display: grid;
+    gap: 0.7rem;
+    margin-top: 1rem;
+}
+
+.recent-item {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.6rem;
+    background: var(--surface-soft);
+}
+
+.recent-item strong {
+    display: block;
+    font-size: 0.92rem;
+}
+
+.recent-item span {
+    color: var(--muted);
+    font-size: 0.84rem;
+}
+
+.quick-submit {
+    width: 100%;
+    justify-content: center;
+}
+
+@media (min-width: 760px) {
+    .intake-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .recent-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .row-two {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .quick-submit {
+        width: auto;
+    }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<section class="mobile-hero">
+    <h1>Mobile Intake and Volunteer Check-In</h1>
+    <p>Fast field capture for staff and volunteers. Designed for one-hand phone use with minimal required fields.</p>
+</section>
+
+<section class="intake-grid">
+    <article class="intake-card">
+        <h2>Quick Beneficiary Intake</h2>
+        <form method="post">
+            <input type="hidden" name="action" value="beneficiary">
+            <div class="row-two">
+                <div class="form-group">
+                    <label for="first_name">First Name</label>
+                    <input id="first_name" name="first_name" type="text" autocomplete="given-name" required>
+                </div>
+                <div class="form-group">
+                    <label for="last_name">Last Name</label>
+                    <input id="last_name" name="last_name" type="text" autocomplete="family-name" required>
+                </div>
+            </div>
+            <div class="row-two">
+                <div class="form-group">
+                    <label for="phone">Phone</label>
+                    <input id="phone" name="phone" type="text" autocomplete="tel">
+                </div>
+                <div class="form-group">
+                    <label for="city">City</label>
+                    <input id="city" name="city" type="text" autocomplete="address-level2">
+                </div>
+            </div>
+            <div class="row-two">
+                <div class="form-group">
+                    <label for="program">Program</label>
+                    <input id="program" name="program" type="text" placeholder="Education, Housing, Health">
+                </div>
+                <div class="form-group">
+                    <label for="status">Status</label>
+                    <select id="status" name="status">
+                        <option value="active" selected>Active</option>
+                        <option value="follow_up">Follow Up</option>
+                        <option value="completed">Completed</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="notes">Field Notes</label>
+                <textarea id="notes" name="notes" rows="2" placeholder="Quick context from intake interview"></textarea>
+            </div>
+            <button class="btn btn-primary quick-submit" type="submit">Save Beneficiary Intake</button>
+        </form>
+    </article>
+
+    <article class="intake-card">
+        <h2>Volunteer Quick Registration</h2>
+        <form method="post">
+            <input type="hidden" name="action" value="volunteer">
+            <div class="form-group">
+                <label for="volunteer_name">Full Name</label>
+                <input id="volunteer_name" name="volunteer_name" type="text" autocomplete="name" required>
+            </div>
+            <div class="row-two">
+                <div class="form-group">
+                    <label for="volunteer_email">Email</label>
+                    <input id="volunteer_email" name="volunteer_email" type="email" autocomplete="email">
+                </div>
+                <div class="form-group">
+                    <label for="volunteer_phone">Phone</label>
+                    <input id="volunteer_phone" name="volunteer_phone" type="text" autocomplete="tel">
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="volunteer_status">Status</label>
+                <select id="volunteer_status" name="volunteer_status">
+                    <option value="active" selected>Active</option>
+                    <option value="onboarding">Onboarding</option>
+                    <option value="inactive">Inactive</option>
+                </select>
+            </div>
+            <button class="btn btn-primary quick-submit" type="submit">Save Volunteer</button>
+        </form>
+    </article>
+</section>
+
+<section class="mt-3">
+    <h2>Recent Captures</h2>
+    <div class="recent-grid">
+        <article class="intake-card">
+            <h3 class="mb-2">Beneficiaries</h3>
+            {% if beneficiaries %}
+                {% for b in beneficiaries %}
+                    <div class="recent-item">
+                        <strong>{{ b.first_name }} {{ b.last_name }}</strong>
+                        <span>{{ b.program or 'No program' }} • {{ b.status }}</span>
+                    </div>
+                {% endfor %}
+            {% else %}
+                <p class="text-muted">No intake records yet.</p>
+            {% endif %}
+        </article>
+
+        <article class="intake-card">
+            <h3 class="mb-2">Volunteers</h3>
+            {% if volunteers %}
+                {% for v in volunteers %}
+                    <div class="recent-item">
+                        <strong>{{ v.name }}</strong>
+                        <span>{{ v.status }}{% if v.email %} • {{ v.email }}{% endif %}</span>
+                    </div>
+                {% endfor %}
+            {% else %}
+                <p class="text-muted">No volunteer captures yet.</p>
+            {% endif %}
+        </article>
+    </div>
+</section>
+{% endblock %}

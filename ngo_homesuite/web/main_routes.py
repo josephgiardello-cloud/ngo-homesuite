@@ -17,7 +17,7 @@ from io import BytesIO
 from openpyxl import Workbook
 
 from ngo_homesuite.models.core import (
-    Organization, Beneficiary, Project, Donation, Donor, Fund, Expense, DonationReceipt, P2PPage, RecurringDonationPlan, db
+    Organization, Beneficiary, Project, Donation, Donor, Fund, Expense, DonationReceipt, P2PPage, RecurringDonationPlan, Volunteer, db
 )
 from ngo_homesuite.domain import (
     BeneficiaryEntity,
@@ -796,6 +796,85 @@ def dashboard():
         'total_funds': stats['total_funds'],
     }
     return render_template('dashboard.html', stats=stats, active_page='dashboard', ai_context=ai_context)
+
+
+@main_bp.route('/mobile/intake', methods=['GET', 'POST'])
+@login_required
+@roles_required('admin', 'staff', 'volunteer')
+def mobile_intake():
+    org = _current_org()
+    if not org:
+        flash('No organization found for your account.', 'error')
+        return redirect(url_for('main.dashboard'))
+
+    if request.method == 'POST':
+        action = (request.form.get('action') or '').strip().lower()
+        if action == 'beneficiary':
+            first_name = (request.form.get('first_name') or '').strip()
+            last_name = (request.form.get('last_name') or '').strip()
+            if not first_name or not last_name:
+                flash('Beneficiary first and last name are required.', 'error')
+            else:
+                beneficiary = Beneficiary(
+                    organization_id=org.id,
+                    first_name=first_name,
+                    last_name=last_name,
+                    phone=(request.form.get('phone') or '').strip() or None,
+                    city=(request.form.get('city') or '').strip() or None,
+                    program=(request.form.get('program') or '').strip() or None,
+                    status=(request.form.get('status') or 'active').strip() or 'active',
+                    notes=(request.form.get('notes') or '').strip() or None,
+                )
+                db.session.add(beneficiary)
+                db.session.commit()
+                flash('Beneficiary intake captured.', 'success')
+                return redirect(url_for('main.mobile_intake'))
+        elif action == 'volunteer':
+            name = (request.form.get('volunteer_name') or '').strip()
+            if not name:
+                flash('Volunteer name is required.', 'error')
+            else:
+                volunteer = Volunteer(
+                    organization_id=org.id,
+                    name=name,
+                    email=(request.form.get('volunteer_email') or '').strip() or None,
+                    phone=(request.form.get('volunteer_phone') or '').strip() or None,
+                    status=(request.form.get('volunteer_status') or 'active').strip() or 'active',
+                    hours_logged=0.0,
+                )
+                db.session.add(volunteer)
+                db.session.commit()
+                flash('Volunteer quick registration captured.', 'success')
+                return redirect(url_for('main.mobile_intake'))
+        else:
+            flash('Unsupported intake action.', 'error')
+
+    recent_beneficiaries = (
+        Beneficiary.query.filter_by(organization_id=org.id)
+        .order_by(Beneficiary.created_at.desc())
+        .limit(8)
+        .all()
+    )
+    recent_volunteers = (
+        Volunteer.query.filter_by(organization_id=org.id)
+        .order_by(Volunteer.created_at.desc())
+        .limit(8)
+        .all()
+    )
+
+    ai_context = {
+        'active_page': 'mobile_intake',
+        'organization': org.name,
+        'recent_beneficiaries': len(recent_beneficiaries),
+        'recent_volunteers': len(recent_volunteers),
+    }
+    return render_template(
+        'mobile_intake.html',
+        active_page='mobile_intake',
+        beneficiaries=recent_beneficiaries,
+        volunteers=recent_volunteers,
+        ai_context=ai_context,
+    )
 
 
 @main_bp.route('/p2p/manage', methods=['GET', 'POST'])
