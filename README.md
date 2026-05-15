@@ -2,6 +2,16 @@
 
 A comprehensive nonprofit management system for managing donors, donations, funds, staff, volunteers, and compliance tracking. Built with Flask, SQLAlchemy, and security-first principles.
 
+![Status](https://img.shields.io/badge/status-active-success)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![License](https://img.shields.io/badge/license-MIT-lightgrey)
+
+## Project Metadata
+
+- Description: Local-first nonprofit operations suite with integrated AI Copilot (RAG + internal tools)
+- Primary topics: nonprofit, flask, donations, donor-management, reporting, ai-copilot, rag
+- Screenshots: add screenshots to `docs/screenshots/` and link them in this section
+
 ## Features
 
 ### 💰 Financial Management
@@ -32,6 +42,12 @@ A comprehensive nonprofit management system for managing donors, donations, fund
 - Fund performance reports
 - Integrity drift detection for data consistency
 - OpenTimestamps integration for audit trail immutability
+
+### 🤖 HomeSuite Copilot
+- Local-first AI assistant endpoint at `/ai/copilot/chat`
+- RAG indexing for source/docs/models via `homesuite reindex`
+- Role-aware tool execution for internal actions (report generation, donor search, donation lookup)
+- Optional web tooling is disabled by default and can be enabled explicitly
 
 ### 🔒 Security & Compliance
 - SQLCipher encryption support (optional)
@@ -138,7 +154,7 @@ The Flask application will be available at `http://localhost:5000` (default).
 
 ### Run All Tests
 ```bash
-pytest --maxfail=10 -v
+python -m pytest
 ```
 
 ### Run Specific Test Suite
@@ -171,10 +187,9 @@ pytest ngo_homesuite/utils --maxfail=10 -v
   ```
 
 ### Current Test Status
-- **Passing**: 20 tests
-- **Skipped**: 1 test
-- **Coverage**: Auth models, DB hardening, integrity drift, connection tests
-- **Known Issue**: Two auth tests require SQLCipher when DB key is set
+- First-party test suite runs from `ngo_homesuite/` by default via `pytest.ini`
+- Includes AI hardening, copilot routes, auth models, DB hardening, integrity drift, and web sprint tests
+- Bundled third-party test trees outside `ngo_homesuite/` are excluded from default project test runs
 
 ## Configuration
 

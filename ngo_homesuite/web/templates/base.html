@@ -751,6 +751,87 @@
                         { page: window.location.pathname },
                         window.ngoAiContext || {}
                     );
-                    const response = await fetch('{{ url_for("ai.stream_chat") }}', {
+                    const response = await fetch('{{ url_for("ai.copilot_chat") }}', {
                         method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            prompt: promptText,
+                            context: mergedContext,
+                            allow_actions: false,
+                            use_web: false
+                        })
+                    });
+
+                    if (!response.ok) {
+                        throw new Error('Copilot is unavailable right now.');
+                    }
+
+                    const data = await response.json();
+                    const assistantEl = addMessage('', 'assistant');
+
+                    if (data.error) {
+                        assistantEl.className = 'ai-msg error';
+                        assistantEl.textContent = data.error;
+                        return;
+                    }
+
+                    const reply = (data && data.response) ? String(data.response) : 'No response content was returned by Copilot.';
+                    assistantEl.innerHTML = renderMarkdown(reply);
+
+                    if (Array.isArray(data.sources) && data.sources.length > 0) {
+                        const sourcesEl = document.createElement('div');
+                        sourcesEl.className = 'ai-hint';
+                        const names = data.sources
+                            .map(function(src) { return src && src.source ? String(src.source) : ''; })
+                            .filter(Boolean)
+                            .slice(0, 3)
+                            .join(' | ');
+                        if (names) {
+                            sourcesEl.textContent = 'Sources: ' + names;
+                            assistantEl.appendChild(sourcesEl);
+                        }
+                    }
+
+                    aiMessages.scrollTop = aiMessages.scrollHeight;
+                }
+
+                aiFab.addEventListener('click', function() {
+                    togglePanel();
+                });
+
+                if (aiCloseBtn) {
+                    aiCloseBtn.addEventListener('click', function() {
+                        togglePanel(false);
+                    });
+                }
+
+                aiForm.addEventListener('submit', async function(event) {
+                    event.preventDefault();
+                    const text = aiPrompt.value.trim();
+                    if (!text) {
+                        return;
+                    }
+
+                    addMessage(text, 'user');
+                    aiPrompt.value = '';
+                    aiSendBtn.disabled = true;
+                    aiSendBtn.textContent = 'Thinking...';
+
+                    try {
+                        await streamAssistantReply(text);
+                    } catch (error) {
+                        addMessage(error.message || 'Unexpected assistant error.', 'error');
+                    } finally {
+                        aiSendBtn.disabled = false;
+                        aiSendBtn.textContent = 'Send';
+                    }
+                });
+            }
+        })();
+    </script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>
 
