@@ -469,6 +469,56 @@
             color: var(--danger);
         }
 
+        .ai-action-card {
+            margin-top: 0.55rem;
+            padding: 0.55rem 0.62rem;
+            border: 1px dashed var(--border);
+            border-radius: 9px;
+            background: var(--surface);
+        }
+
+        .ai-action-title {
+            font-size: 0.76rem;
+            color: var(--muted);
+            margin-bottom: 0.3rem;
+            font-weight: 600;
+        }
+
+        .ai-action-row {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.45rem;
+            margin-top: 0.35rem;
+        }
+
+        .ai-action-label {
+            font-size: 0.82rem;
+            font-family: Consolas, "Courier New", monospace;
+            color: var(--text);
+        }
+
+        .ai-approve-btn {
+            background: var(--primary);
+            color: #fff;
+            border: 1px solid var(--primary);
+            border-radius: 999px;
+            font-size: 0.75rem;
+            padding: 0.22rem 0.6rem;
+            cursor: pointer;
+        }
+
+        .ai-approve-btn:hover {
+            background: var(--primary-hover);
+            border-color: var(--primary-hover);
+        }
+
+        .ai-approve-btn:disabled {
+            opacity: 0.65;
+            cursor: default;
+        }
+
         .ai-input-wrap {
             border-top: 1px solid var(--border);
             padding: 0.65rem;
@@ -637,6 +687,7 @@
     {% endif %}
     <script>
         window.ngoAiContext = {{ ai_context | default({}) | tojson | safe }};
+        window.ngoAiUserRole = "{{ current_user.role if current_user.is_authenticated else '' }}";
     </script>
     
     <footer>
@@ -680,6 +731,8 @@
             const aiPrompt = document.getElementById('aiPrompt');
             const aiMessages = document.getElementById('aiMessages');
             const aiSendBtn = document.getElementById('aiSendBtn');
+            const aiRole = String(window.ngoAiUserRole || '').toLowerCase();
+            const canRequestActions = aiRole === 'admin' || aiRole === 'staff';
 
             if (aiFab && aiPanel && aiForm && aiPrompt && aiMessages && aiSendBtn) {
                 // -- Quick-action chips per page --
@@ -746,7 +799,61 @@
                     return el;
                 }
 
-                async function streamAssistantReply(promptText) {
+                function renderPendingActions(container, pendingActions, promptText) {
+                    if (!Array.isArray(pendingActions) || pendingActions.length === 0 || !canRequestActions) {
+                        return;
+                    }
+
+                    const card = document.createElement('div');
+                    card.className = 'ai-action-card';
+
+                    const title = document.createElement('div');
+                    title.className = 'ai-action-title';
+                    title.textContent = 'Approval required before executing:';
+                    card.appendChild(title);
+
+                    pendingActions.forEach(function(actionItem) {
+                        const toolName = String((actionItem && actionItem.tool) || '').trim();
+                        if (!toolName) {
+                            return;
+                        }
+
+                        const row = document.createElement('div');
+                        row.className = 'ai-action-row';
+
+                        const label = document.createElement('div');
+                        label.className = 'ai-action-label';
+                        label.textContent = toolName;
+
+                        const btn = document.createElement('button');
+                        btn.type = 'button';
+                        btn.className = 'ai-approve-btn';
+                        btn.textContent = 'Approve & re-run';
+                        btn.addEventListener('click', async function() {
+                            btn.disabled = true;
+                            btn.textContent = 'Running...';
+                            addMessage('Approved action: ' + toolName, 'user');
+                            try {
+                                await streamAssistantReply(promptText, [toolName]);
+                            } catch (err) {
+                                addMessage((err && err.message) ? err.message : 'Approval execution failed.', 'error');
+                            } finally {
+                                btn.disabled = false;
+                                btn.textContent = 'Approve & re-run';
+                            }
+                        });
+
+                        row.appendChild(label);
+                        row.appendChild(btn);
+                        card.appendChild(row);
+                    });
+
+                    if (card.childNodes.length > 1) {
+                        container.appendChild(card);
+                    }
+                }
+
+                async function streamAssistantReply(promptText, approvedActions) {
                     const mergedContext = Object.assign(
                         { page: window.location.pathname },
                         window.ngoAiContext || {}
@@ -759,7 +866,8 @@
                         body: JSON.stringify({
                             prompt: promptText,
                             context: mergedContext,
-                            allow_actions: false,
+                            allow_actions: canRequestActions,
+                            approved_actions: Array.isArray(approvedActions) ? approvedActions : [],
                             use_web: false
                         })
                     });
@@ -793,6 +901,13 @@
                             assistantEl.appendChild(sourcesEl);
                         }
                     }
+
+                    const pendingActions = Array.isArray(data.actions)
+                        ? data.actions.filter(function(item) {
+                            return item && item.status === 'pending_approval';
+                        })
+                        : [];
+                    renderPendingActions(assistantEl, pendingActions, promptText);
 
                     aiMessages.scrollTop = aiMessages.scrollHeight;
                 }
