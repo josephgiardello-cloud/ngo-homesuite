@@ -21,6 +21,16 @@ from ngo_homesuite.web.rbac import roles_required
 ai_bp = Blueprint("ai", __name__, url_prefix="/ai")
 
 
+def _parse_tool_list(raw: Any) -> list[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return [p.strip() for p in raw.split(",") if p.strip()]
+    if isinstance(raw, list):
+        return [str(p).strip() for p in raw if str(p).strip()]
+    return []
+
+
 def _audit_db_path() -> str:
     uri = str(current_app.config.get("SQLALCHEMY_DATABASE_URI", "sqlite:///ngo_homesuite.db"))
     if uri.startswith("sqlite:///"):
@@ -305,6 +315,10 @@ def copilot_chat() -> Response:
     role = str(getattr(current_user, "role", "viewer"))
     allow_actions = bool(payload.get("allow_actions", False)) and role in {"admin", "staff"}
     use_web = bool(payload.get("use_web", False))
+    approved_actions = _parse_tool_list(payload.get("approved_actions"))
+    route_allowlist = _parse_tool_list(payload.get("tool_allowlist"))
+    config_allowlist = _parse_tool_list(current_app.config.get("COPILOT_TOOL_ALLOWLIST", ""))
+    tool_allowlist = route_allowlist or config_allowlist
 
     _audit_interaction(prompt, model, tenant_id)
 
@@ -316,6 +330,8 @@ def copilot_chat() -> Response:
             "actor": getattr(current_user, "username", "copilot"),
             "organization_id": getattr(current_user, "organization_id", None),
             "user_id": getattr(current_user, "id", None),
+            "approved_actions": approved_actions,
+            "tool_allowlist": tool_allowlist,
         },
         allow_actions=allow_actions,
         use_web=use_web,

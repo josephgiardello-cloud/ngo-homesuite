@@ -77,6 +77,10 @@ class Config:
     COPILOT_INDEX_DIR = os.environ.get('COPILOT_INDEX_DIR', 'data/copilot_index')
     COPILOT_RAG_K = int(os.environ.get('COPILOT_RAG_K', 6))
     COPILOT_ALLOW_WEB_TOOLS = os.environ.get('COPILOT_ALLOW_WEB_TOOLS', 'False') == 'True'
+    COPILOT_TOOL_ALLOWLIST = os.environ.get(
+        'COPILOT_TOOL_ALLOWLIST',
+        'list_recent_donations,search_donors,organization_financial_summary,generate_report,create_donor,export_donors_snapshot',
+    )
 
 
 class DevelopmentConfig(Config):

@@ -18,7 +18,10 @@ class _FakeResponse:
 
 
 class _FakeCopilot:
+    last_kwargs = None
+
     def answer(self, **kwargs):
+        _FakeCopilot.last_kwargs = kwargs
         return _FakeResponse(
             answer="Copilot response",
             sources=[{"source": "docs/sprint1_backlog.md", "text": "demo"}],
@@ -91,3 +94,27 @@ def test_copilot_reindex_admin_only(client, app, monkeypatch):
     data = rv.get_json()
     assert data["ok"] is True
     assert data["chunks_indexed"] == 42
+
+
+def test_copilot_chat_forwards_action_gating_inputs(client, app, monkeypatch):
+    _ensure_user(app, "copilot_staff", "copilot_staff@test.local", "staff", "staff_pass_123")
+    _login(client, "copilot_staff", "staff_pass_123")
+
+    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteCopilot.from_app", lambda: _FakeCopilot())
+
+    rv = client.post(
+        "/ai/copilot/chat",
+        json={
+            "prompt": "Create a donor called Jane",
+            "allow_actions": True,
+            "approved_actions": ["create_donor"],
+            "tool_allowlist": ["create_donor", "search_donors"],
+        },
+    )
+    assert rv.status_code == 200
+
+    passed = _FakeCopilot.last_kwargs
+    assert passed is not None
+    runtime_ctx = passed["runtime_ctx"]
+    assert runtime_ctx["approved_actions"] == ["create_donor"]
+    assert runtime_ctx["tool_allowlist"] == ["create_donor", "search_donors"]

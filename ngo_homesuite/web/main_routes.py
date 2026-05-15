@@ -1,11 +1,12 @@
 """Main web routes, dashboards, and Phase 1 CRUD interfaces."""
 
 import csv
+import json
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from typing import Optional as TypingOptional
 
-from flask import Blueprint, render_template, redirect, url_for, request, flash, send_file
+from flask import Blueprint, render_template, redirect, url_for, request, flash, send_file, current_app
 from flask_login import login_required, current_user
 from flask_wtf import FlaskForm
 from wtforms import BooleanField, FloatField, SelectField, StringField, SubmitField, TextAreaField
@@ -19,6 +20,7 @@ from ngo_homesuite.models.core import (
 from sqlalchemy import func
 from ngo_homesuite.web.rbac import roles_required
 from ngo_homesuite.utils.receipt_pdf import generate_receipt_pdf_bytes
+from ngo_homesuite.compliance.evidence_pack import build_compliance_evidence
 
 main_bp = Blueprint('main', __name__)
 
@@ -1320,6 +1322,32 @@ def reports_page():
             'net_balance': net_total,
         },
     )
+
+
+@main_bp.route('/reports/compliance/evidence')
+@login_required
+@roles_required('admin', 'staff')
+def reports_compliance_evidence():
+    org = _current_org()
+    scope = request.args.get('scope', 'org').strip().lower()
+    organization_id = None if scope == 'global' else (org.id if org else None)
+
+    payload = build_compliance_evidence(
+        app=current_app,
+        organization_id=organization_id,
+    )
+
+    as_download = request.args.get('download', '0').strip().lower() in {'1', 'true', 'yes', 'on'}
+    if as_download:
+        body = json.dumps(payload, indent=2, ensure_ascii=False).encode('utf-8')
+        filename = f"compliance-evidence-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}.json"
+        return send_file(
+            BytesIO(body),
+            mimetype='application/json',
+            as_attachment=True,
+            download_name=filename,
+        )
+    return payload
 
 
 @main_bp.route('/about')

@@ -6,6 +6,17 @@
 <h1>Reports</h1>
 <p class="text-muted">Starter reporting dashboard for quick operational visibility.</p>
 
+<div class="card mb-3" style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:0.8rem;">
+    <div>
+        <h2 style="margin-bottom:0.2rem;">Compliance Evidence</h2>
+        <p class="text-muted" style="margin:0;">Export a signed evidence packet for audit and grant review workflows.</p>
+    </div>
+    <div class="actions-row" style="margin:0;">
+        <a href="{{ url_for('main.reports_compliance_evidence', scope='org') }}" class="btn btn-secondary">View Org Evidence</a>
+        <a href="{{ url_for('main.reports_compliance_evidence', scope='org', download=1) }}" class="btn btn-primary">Download JSON</a>
+    </div>
+</div>
+
 <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));">
     <div class="card">
         <div class="card-text">Total Donations</div>

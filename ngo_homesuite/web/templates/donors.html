@@ -6,6 +6,21 @@
 <h1>Donors</h1>
 <p class="text-muted">Manage donor records and contact information.</p>
 
+<div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); margin-bottom: 1rem;">
+    <div class="card">
+        <div class="card-text">Visible Donors</div>
+        <div class="card-value">{{ donors|length }}</div>
+    </div>
+    <div class="card">
+        <div class="card-text">Filter Query</div>
+        <div class="card-value" style="font-size: 1rem;">{{ filter_q or 'None' }}</div>
+    </div>
+    <div class="card">
+        <div class="card-text">Donor Type</div>
+        <div class="card-value" style="font-size: 1rem; text-transform: capitalize;">{{ filter_donor_type or 'All' }}</div>
+    </div>
+</div>
+
 <div class="mb-3 mt-2">
     <a href="{{ url_for('main.donor_create') }}" class="btn btn-primary">Add Donor</a>
     <a href="{{ url_for('main.donor_dedupe') }}" class="btn btn-secondary">Find Duplicates</a>

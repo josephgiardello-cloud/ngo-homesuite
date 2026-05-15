@@ -158,16 +158,58 @@ class HomeSuiteCopilot:
         actions: list[dict[str, Any]] = []
 
         if allow_actions:
-            tool_specs = self.tools.get_ollama_tool_specs()
+            tool_allowlist = self.tools.parse_tool_list(runtime_ctx.get("tool_allowlist"))
+            approved_actions = self.tools.parse_tool_list(runtime_ctx.get("approved_actions"))
+
+            if not tool_allowlist:
+                tool_allowlist = set(tool.name for tool in self.tools.list_tools())
+
+            tool_specs = self.tools.get_ollama_tool_specs(allowlist=tool_allowlist)
             first = self.client.chat(model=self.model, messages=messages, tools=tool_specs)
             tool_calls = self._extract_tool_calls(first)
 
             if tool_calls:
                 messages.append({"role": "assistant", "content": self._extract_content(first)})
+                executed_any = False
                 for call in tool_calls:
                     name, args = self._tool_call_parts(call)
+                    tool = self.tools.get_tool(name)
+
+                    if tool is None:
+                        actions.append({
+                            "tool": name,
+                            "args": args,
+                            "status": "blocked",
+                            "reason": "unknown_tool",
+                        })
+                        continue
+
+                    if name not in tool_allowlist:
+                        actions.append({
+                            "tool": name,
+                            "args": args,
+                            "status": "blocked",
+                            "reason": "not_allowlisted",
+                        })
+                        continue
+
+                    if tool.requires_approval and name not in approved_actions:
+                        actions.append({
+                            "tool": name,
+                            "args": args,
+                            "status": "pending_approval",
+                            "reason": "explicit_approval_required",
+                        })
+                        continue
+
                     result = self.tools.execute(name, args, runtime_ctx)
-                    actions.append({"tool": name, "args": args})
+                    executed_any = True
+                    actions.append({
+                        "tool": name,
+                        "args": args,
+                        "status": "executed",
+                        "mutates_state": bool(tool.mutates_state),
+                    })
                     messages.append(
                         {
                             "role": "tool",
@@ -176,8 +218,19 @@ class HomeSuiteCopilot:
                         }
                     )
 
-                final_resp = self.client.chat(model=self.model, messages=messages)
-                answer = self._extract_content(final_resp)
+                if executed_any:
+                    final_resp = self.client.chat(model=self.model, messages=messages)
+                    answer = self._extract_content(final_resp)
+                else:
+                    answer = self._extract_content(first).strip()
+                    pending_names = [a["tool"] for a in actions if a.get("status") == "pending_approval"]
+                    if pending_names:
+                        approval_note = (
+                            "Pending approval before execution: "
+                            + ", ".join(sorted(set(pending_names)))
+                            + ". Resend with approved_actions including these tool names."
+                        )
+                        answer = f"{answer}\n\n{approval_note}" if answer else approval_note
             else:
                 answer = self._extract_content(first)
         else:

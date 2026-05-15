@@ -40,10 +40,6 @@ START_CWD = Path.cwd()
 # This table records all entity changes (insert, update, delete) for auditability.
 # It is append-only: no update or delete logic is provided for audit_log entries.
 
-from sqlalchemy import Column, Integer, String, DateTime, Text
-from sqlalchemy.ext.declarative import declarative_base
-
-
 from sqlalchemy import event
 Base = declarative_base()
 
@@ -78,6 +74,7 @@ def should_block_auditlog_write(tablename, op, readonly_mode=None):
     """
     if readonly_mode is None:
         readonly_mode = os.getenv("NGO_AUDIT_READONLY", "0").lower() in ("1", "true", "yes", "on")
+    tablename = str(tablename).lower()
     # Block UPDATE/DELETE on audit_log if read-only
     if readonly_mode and tablename == "audit_log" and op in ("before_update", "before_delete"):
         return True, f"audit_log is read-only (NGO_AUDIT_READONLY=1); {op.upper()} forbidden"
@@ -86,29 +83,28 @@ def should_block_auditlog_write(tablename, op, readonly_mode=None):
         return True, f"Direct {op.upper()} is forbidden for critical entity {tablename}"
     return False, None
 
-def _enforce_auditlog_immutability(mapper, connection, target):
-    # Use SQLAlchemy event arguments for operation type
+def _enforce_auditlog_immutability(mapper, connection, target, op):
     tablename = getattr(target, '__tablename__', type(target).__name__)
-    # Try to get the event name from the call stack (fragile fallback)
-    import inspect
-    frame = inspect.currentframe()
-    op = None
-    while frame:
-        code = frame.f_code.co_name
-        if code in ("before_insert", "before_update", "before_delete"):
-            op = code
-            break
-        frame = frame.f_back
-    if not op:
-        op = "unknown"
     block, reason = should_block_auditlog_write(tablename, op)
     if block:
         logger.warning("Blocked attempt on %s: %s", tablename, target)
         raise AuditLogReadonlyError(f"{reason}: {target}")
 
+
+def _enforce_before_insert(mapper, connection, target):
+    _enforce_auditlog_immutability(mapper, connection, target, "before_insert")
+
+
+def _enforce_before_update(mapper, connection, target):
+    _enforce_auditlog_immutability(mapper, connection, target, "before_update")
+
+
+def _enforce_before_delete(mapper, connection, target):
+    _enforce_auditlog_immutability(mapper, connection, target, "before_delete")
+
 import threading
 _last_cross_hash_time = [0]
-_cross_hash_lock = threading.Lock()
+_cross_hash_lock = threading.RLock()
 
 def log_audit(session, entity, entity_id, action, actor=None, details=None):
     """Append an audit log entry for an entity change with hash chaining. Optionally log cross-table hash periodically (non-blocking)."""
@@ -130,30 +126,32 @@ def log_audit(session, entity, entity_id, action, actor=None, details=None):
     )
     session.add(entry)
     # Optionally log cross-table hash periodically (if NGO_CROSS_HASH_PERIOD_SEC is set), non-blocking
-    import os, time, threading
-    period = float(os.getenv("NGO_CROSS_HASH_PERIOD_SEC", "0"))
+    import os, time
+    period_raw = os.getenv("NGO_CROSS_HASH_PERIOD_SEC", "0")
+    try:
+        period = float(period_raw)
+    except (TypeError, ValueError):
+        logger.warning("Invalid NGO_CROSS_HASH_PERIOD_SEC=%r; disabling periodic cross-table hash.", period_raw)
+        period = 0.0
     if period > 0:
         now = time.time()
-        def _background_cross_hash():
-            with _cross_hash_lock:
-                compute_cross_table_hash(session)
-                _last_cross_hash_time[0] = now
         if now - _last_cross_hash_time[0] >= period:
-            t = threading.Thread(target=_background_cross_hash, daemon=True)
-            t.start()
+            # Use the current thread/session. SQLAlchemy sessions are not thread-safe.
+            compute_cross_table_hash(session)
+            _last_cross_hash_time[0] = now
 
 
 # --- Enforce audit_log and critical entity immutability with unified handler (loop version) ---
 for cls in [AuditLog]:
-    event.listen(cls, 'before_insert', _enforce_auditlog_immutability)
-    event.listen(cls, 'before_update', _enforce_auditlog_immutability)
-    event.listen(cls, 'before_delete', _enforce_auditlog_immutability)
+    event.listen(cls, 'before_insert', _enforce_before_insert)
+    event.listen(cls, 'before_update', _enforce_before_update)
+    event.listen(cls, 'before_delete', _enforce_before_delete)
 
 try:
     from ngo_homesuite.db.models import Donor, Donation
     for cls in [Donor, Donation]:
-        event.listen(cls, 'before_update', _enforce_auditlog_immutability)
-        event.listen(cls, 'before_delete', _enforce_auditlog_immutability)
+        event.listen(cls, 'before_update', _enforce_before_update)
+        event.listen(cls, 'before_delete', _enforce_before_delete)
 except ImportError:
     pass  # Models may not be available at main.py import time
 
@@ -284,7 +282,6 @@ def main_menu():
     print("[Main menu placeholder]")
 
 def _ensure_db_parent_dir(db_path: str) -> None:
-    import stat
     raw = db_path.strip()
     if not raw:
         return
@@ -300,15 +297,9 @@ def _ensure_db_parent_dir(db_path: str) -> None:
     # Canonicalize parent and allowed roots
     try:
         parent_real = parent.resolve(strict=False)
-        # Use os.fstat for symlink safety
-        parent_fd = os.open(str(parent_real), os.O_RDONLY)
-        try:
-            st = os.fstat(parent_fd)
-            if hasattr(stat, 'S_IFLNK') and stat.S_IFMT(st.st_mode) == stat.S_IFLNK:
-                raise PermissionError(f"Database directory {parent_real} is a symlink (os.fstat), which is forbidden.")
-        finally:
-            os.close(parent_fd)
-        if parent.is_symlink():
+        # Use lstat/is_symlink for cross-platform symlink checks.
+        # Windows/OneDrive can deny os.open on directories even when path is valid.
+        if parent_real.is_symlink() or parent.is_symlink():
             raise PermissionError(f"Database directory {parent} is a symlink, which is forbidden.")
         allowed_real = [Path(root).expanduser().resolve(strict=False) for root in allowed_roots]
         if not any(parent_real == ar or str(parent_real).startswith(str(ar) + os.sep) for ar in allowed_real):

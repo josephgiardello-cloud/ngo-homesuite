@@ -16,6 +16,8 @@ class CopilotTool:
     description: str
     schema: dict[str, Any]
     handler: Callable[[dict[str, Any], dict[str, Any]], Any]
+    requires_approval: bool = False
+    mutates_state: bool = False
 
 
 class CopilotToolRegistry:
@@ -65,14 +67,52 @@ class CopilotToolRegistry:
                 },
                 handler=self._generate_report,
             ),
+            "create_donor": CopilotTool(
+                name="create_donor",
+                description="Create a donor profile in the current organization.",
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "email": {"type": "string"},
+                        "phone": {"type": "string"},
+                        "donor_type": {
+                            "type": "string",
+                            "enum": ["individual", "corporate", "foundation", "anonymous"],
+                            "default": "individual",
+                        },
+                        "notes": {"type": "string"},
+                    },
+                    "required": ["name"],
+                },
+                handler=self._create_donor,
+                requires_approval=True,
+                mutates_state=True,
+            ),
+            "export_donors_snapshot": CopilotTool(
+                name="export_donors_snapshot",
+                description="Prepare a CSV snapshot payload of donors in the current organization.",
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 100}
+                    },
+                },
+                handler=self._export_donors_snapshot,
+                requires_approval=True,
+                mutates_state=False,
+            ),
         }
 
     def list_tools(self) -> list[CopilotTool]:
         return list(self._tools.values())
 
-    def get_ollama_tool_specs(self) -> list[dict[str, Any]]:
+    def get_ollama_tool_specs(self, allowlist: set[str] | None = None) -> list[dict[str, Any]]:
         specs = []
+        allowed = set(allowlist or self._tools.keys())
         for tool in self._tools.values():
+            if tool.name not in allowed:
+                continue
             specs.append(
                 {
                     "type": "function",
@@ -84,6 +124,18 @@ class CopilotToolRegistry:
                 }
             )
         return specs
+
+    def get_tool(self, name: str) -> CopilotTool | None:
+        return self._tools.get(name)
+
+    def parse_tool_list(self, raw: str | list[str] | tuple[str, ...] | set[str] | None) -> set[str]:
+        if raw is None:
+            return set(self._tools.keys())
+        if isinstance(raw, str):
+            candidates = [p.strip() for p in raw.split(",") if p.strip()]
+        else:
+            candidates = [str(p).strip() for p in raw if str(p).strip()]
+        return {name for name in candidates if name in self._tools}
 
     def execute(self, name: str, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
         tool = self._tools.get(name)
@@ -175,3 +227,58 @@ class CopilotToolRegistry:
             return self.reporting_service.generate_report(report_type, params=params, actor=actor)
         except Exception as exc:
             return {"error": str(exc), "report_type": report_type}
+
+    def _create_donor(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
+        org_id = self._org_filter(runtime_ctx)
+        if org_id is None:
+            return {"error": "organization_id is required in runtime context"}
+
+        name = str(args.get("name", "")).strip()
+        if not name:
+            return {"error": "name is required"}
+
+        donor = Donor(
+            organization_id=org_id,
+            name=name,
+            email=(str(args.get("email", "")).strip() or None),
+            phone=(str(args.get("phone", "")).strip() or None),
+            donor_type=str(args.get("donor_type", "individual")).strip() or "individual",
+            notes=(str(args.get("notes", "")).strip() or None),
+        )
+        db.session.add(donor)
+        db.session.commit()
+
+        return {
+            "id": donor.id,
+            "name": donor.name,
+            "email": donor.email,
+            "phone": donor.phone,
+            "donor_type": donor.donor_type,
+            "created": True,
+        }
+
+    def _export_donors_snapshot(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
+        org_id = self._org_filter(runtime_ctx)
+        if org_id is None:
+            return {"error": "organization_id is required in runtime context"}
+
+        limit = max(1, min(int(args.get("limit", 100)), 500))
+        rows = (
+            Donor.query.filter_by(organization_id=org_id)
+            .order_by(Donor.name.asc())
+            .limit(limit)
+            .all()
+        )
+
+        header = "id,name,email,phone,donor_type"
+        body = [
+            f'{d.id},"{(d.name or "").replace("\"", "\"\"")}","{(d.email or "").replace("\"", "\"\"")}","{(d.phone or "").replace("\"", "\"\"")}","{(d.donor_type or "").replace("\"", "\"\"")}"'
+            for d in rows
+        ]
+        csv_payload = "\n".join([header] + body)
+        return {
+            "row_count": len(rows),
+            "content_type": "text/csv",
+            "filename": "donors_snapshot.csv",
+            "csv": csv_payload,
+        }
