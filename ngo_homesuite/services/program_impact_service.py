@@ -6,7 +6,10 @@ and can track qualitative + quantitative outcomes.
 from __future__ import annotations
 
 import logging
+import os
+import smtplib
 from datetime import date, datetime, timezone
+from email.message import EmailMessage
 from typing import Any, Dict, List, Optional
 
 from ngo_homesuite.models.core import (
@@ -1010,6 +1013,19 @@ def list_case_documents(
     return q.order_by(ProgramCaseDocument.created_at.desc()).all()
 
 
+def get_case_document(
+    document_id: int,
+    case_id: int,
+    organization_id: int,
+) -> ProgramCaseDocument:
+    ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    return ProgramCaseDocument.query.filter_by(
+        id=document_id,
+        case_id=case_id,
+        organization_id=organization_id,
+    ).first_or_404()
+
+
 # ---------------------------------------------------------------------------
 # Follow-up workflow (reminder/escalation aware)
 # ---------------------------------------------------------------------------
@@ -1023,6 +1039,7 @@ def create_followup(
     description: Optional[str] = None,
     follow_up_type: str = "general",
     status: str = "scheduled",
+    reminder_channel: str = "auto",
     reminder_at: Optional[Any] = None,
     assigned_to_user_id: Optional[int] = None,
     created_by_user_id: Optional[int] = None,
@@ -1041,6 +1058,7 @@ def create_followup(
         status=status,
         due_at=_coerce_datetime(due_at),
         reminder_at=_coerce_datetime(reminder_at) if reminder_at is not None else None,
+        reminder_channel=reminder_channel,
         notes=notes,
     )
 
@@ -1092,6 +1110,7 @@ def update_followup(
         "status",
         "due_at",
         "reminder_at",
+        "reminder_channel",
         "assigned_to_user_id",
         "notes",
     }
@@ -1115,6 +1134,125 @@ def update_followup(
     _log_activity(case_id, organization_id, "followup_updated", f"Follow-up updated: {followup.title}")
     db.session.commit()
     return followup
+
+
+def _send_followup_email(
+    *,
+    to_email: str,
+    beneficiary_name: str,
+    followup_title: str,
+    due_at_iso: str,
+    case_id: int,
+) -> bool:
+    smtp_host = os.getenv("SMTP_HOST")
+    smtp_user = os.getenv("SMTP_USER")
+    smtp_password = os.getenv("SMTP_PASSWORD")
+    from_email = os.getenv("EMAIL_FROM")
+    if not smtp_host or not from_email or not to_email:
+        return False
+
+    msg = EmailMessage()
+    msg["Subject"] = f"Reminder: {followup_title}"
+    msg["From"] = from_email
+    msg["To"] = to_email
+    msg.set_content(
+        f"Hello {beneficiary_name},\n\n"
+        f"This is a reminder for follow-up '{followup_title}' (case #{case_id}) due at {due_at_iso}.\n"
+        "Please contact your case worker if this needs to be rescheduled.\n"
+    )
+    try:
+        with smtplib.SMTP(smtp_host, int(os.getenv("SMTP_PORT", "587"))) as server:
+            server.starttls()
+            if smtp_user and smtp_password:
+                server.login(smtp_user, smtp_password)
+            server.send_message(msg)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Follow-up reminder email failed for %s: %s", to_email, exc)
+        return False
+
+
+def dispatch_followup_reminders(
+    case_id: int,
+    organization_id: int,
+    *,
+    channel: str = "auto",
+    only_overdue: bool = False,
+) -> Dict[str, Any]:
+    case = ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    now = _utcnow()
+
+    q = ProgramCaseFollowUp.query.filter_by(case_id=case_id, organization_id=organization_id)
+    q = q.filter(ProgramCaseFollowUp.status.in_(["scheduled", "in_progress", "missed"]))
+    if only_overdue:
+        q = q.filter(ProgramCaseFollowUp.due_at < now)
+    else:
+        q = q.filter(ProgramCaseFollowUp.reminder_at.isnot(None)).filter(ProgramCaseFollowUp.reminder_at <= now)
+
+    followups = q.all()
+    sent = 0
+    failed = 0
+    skipped = 0
+    ids_sent: List[int] = []
+    from ngo_homesuite.utils.sms_service import send_sms
+
+    for item in followups:
+        beneficiary_name = "beneficiary"
+        email = None
+        phone = None
+        beneficiary = Beneficiary.query.filter_by(id=case.beneficiary_id).first()
+        if beneficiary is not None:
+            beneficiary_name = f"{beneficiary.first_name} {beneficiary.last_name}".strip()
+            email = beneficiary.email
+            phone = beneficiary.phone
+
+        use_channel = (channel or item.reminder_channel or "auto").lower()
+        ok = False
+
+        if use_channel in {"auto", "email"} and email:
+            ok = _send_followup_email(
+                to_email=email,
+                beneficiary_name=beneficiary_name,
+                followup_title=item.title,
+                due_at_iso=item.due_at.isoformat(),
+                case_id=case_id,
+            )
+
+        if not ok and use_channel in {"auto", "sms"} and phone:
+            ok = send_sms(
+                phone,
+                (
+                    f"Reminder: {beneficiary_name}, follow-up '{item.title}' "
+                    f"for case #{case_id} is due at {item.due_at.isoformat()}."
+                ),
+            )
+
+        if ok:
+            item.last_reminder_sent_at = now
+            item.last_reminder_error = None
+            item.reminder_sent_count = int(item.reminder_sent_count or 0) + 1
+            item.reminder_channel = use_channel
+            sent += 1
+            ids_sent.append(item.id)
+        else:
+            if not email and not phone:
+                skipped += 1
+                item.last_reminder_error = "No deliverable email/phone"
+            else:
+                failed += 1
+                item.last_reminder_error = f"Reminder dispatch failed via {use_channel}"
+
+    if sent:
+        _log_activity(case_id, organization_id, "followup_reminder_sent", f"Follow-up reminders sent: {sent}")
+    db.session.commit()
+    return {
+        "case_id": case_id,
+        "considered": len(followups),
+        "sent": sent,
+        "failed": failed,
+        "skipped": skipped,
+        "followup_ids_sent": ids_sent,
+    }
 
 
 def escalate_overdue_followups(

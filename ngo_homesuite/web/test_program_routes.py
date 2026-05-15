@@ -22,6 +22,10 @@ def _login(client, username: str, password: str) -> None:
     client.post("/auth/login", data={"username": username, "password": password})
 
 
+def _logout(client) -> None:
+    client.get("/auth/logout")
+
+
 
 def _ensure_user(app, username: str, email: str, role: str, password: str):
     with app.app_context():
@@ -442,6 +446,8 @@ def test_case_documents_and_followup_workflow_routes(client, app):
             "last_name": "Ramos",
             "program": "Health",
             "status": "active",
+            "email": "elena.ramos@test.local",
+            "phone": "+15555550123",
         },
     )
     assert create_beneficiary_rv.status_code == 201
@@ -473,10 +479,61 @@ def test_case_documents_and_followup_workflow_routes(client, app):
     assert add_doc_rv.status_code == 201
     document_id = add_doc_rv.get_json()["id"]
 
+    add_public_doc_rv = client.post(
+        f"/programs/cases/{case_id}/documents",
+        json={
+            "title": "Care plan summary",
+            "category": "plan",
+            "file_name": "care-plan.txt",
+            "mime_type": "text/plain",
+            "storage_key": "cases/health/care-plan.txt",
+        },
+    )
+    assert add_public_doc_rv.status_code == 201
+    public_document_id = add_public_doc_rv.get_json()["id"]
+
     list_docs_rv = client.get(f"/programs/cases/{case_id}/documents?category=consent")
     assert list_docs_rv.status_code == 200
     docs = list_docs_rv.get_json()
     assert any(d["id"] == document_id for d in docs)
+
+    # Viewer can see non-sensitive docs only and cannot sign sensitive docs
+    _ensure_user(app, "program_docs_viewer", "program_docs_viewer@test.local", "viewer", "program_docs_viewer_pass_123")
+    _logout(client)
+    _login(client, "program_docs_viewer", "program_docs_viewer_pass_123")
+
+    viewer_docs_rv = client.get(f"/programs/cases/{case_id}/documents")
+    assert viewer_docs_rv.status_code == 200
+    viewer_docs = viewer_docs_rv.get_json()
+    assert any(d["id"] == public_document_id for d in viewer_docs)
+    assert all(d["category"] not in ("consent", "assessment", "evidence") for d in viewer_docs)
+
+    viewer_sensitive_sign_rv = client.post(f"/programs/cases/{case_id}/documents/{document_id}/signed-download", json={})
+    assert viewer_sensitive_sign_rv.status_code == 403
+
+    viewer_public_sign_rv = client.post(
+        f"/programs/cases/{case_id}/documents/{public_document_id}/signed-download",
+        json={"expires_seconds": 120},
+    )
+    assert viewer_public_sign_rv.status_code == 200
+    public_token = viewer_public_sign_rv.get_json()["token"]
+    signed_download_rv = client.get(f"/programs/documents/download/{public_token}")
+    assert signed_download_rv.status_code == 200
+    assert signed_download_rv.get_json()["id"] == public_document_id
+
+    # Back to staff for follow-up workflow
+    _logout(client)
+    _login(client, "program_docs_followups", "program_docs_followups_pass_123")
+
+    staff_sensitive_sign_rv = client.post(
+        f"/programs/cases/{case_id}/documents/{document_id}/signed-download",
+        json={"expires_seconds": 120},
+    )
+    assert staff_sensitive_sign_rv.status_code == 200
+    sensitive_token = staff_sensitive_sign_rv.get_json()["token"]
+    sensitive_download_rv = client.get(f"/programs/documents/download/{sensitive_token}")
+    assert sensitive_download_rv.status_code == 200
+    assert sensitive_download_rv.get_json()["id"] == document_id
 
     # Follow-up create/list/update/escalate/summary
     due_at = (datetime.now(UTC) - timedelta(days=1)).isoformat()
@@ -489,6 +546,7 @@ def test_case_documents_and_followup_workflow_routes(client, app):
             "due_at": due_at,
             "reminder_at": reminder_at,
             "status": "scheduled",
+            "reminder_channel": "auto",
             "notes": "Initial reminder sent",
         },
     )
@@ -499,12 +557,33 @@ def test_case_documents_and_followup_workflow_routes(client, app):
     assert list_followups_rv.status_code == 200
     assert any(f["id"] == followup_id for f in list_followups_rv.get_json())
 
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr("ngo_homesuite.services.program_impact_service._send_followup_email", lambda **kwargs: True)
+    monkeypatch.setattr("ngo_homesuite.utils.sms_service.send_sms", lambda *args, **kwargs: True)
+    try:
+        dispatch_rv = client.post(
+            f"/programs/cases/{case_id}/followups/dispatch-reminders",
+            json={"channel": "auto", "only_overdue": False},
+        )
+        assert dispatch_rv.status_code == 200
+        dispatch_payload = dispatch_rv.get_json()
+        assert dispatch_payload["sent"] >= 1
+        assert followup_id in dispatch_payload["followup_ids_sent"]
+    finally:
+        monkeypatch.undo()
+
     patch_followup_rv = client.patch(
         f"/programs/cases/{case_id}/followups/{followup_id}",
         json={"status": "in_progress"},
     )
     assert patch_followup_rv.status_code == 200
     assert patch_followup_rv.get_json()["status"] == "in_progress"
+
+    followups_after_dispatch_rv = client.get(f"/programs/cases/{case_id}/followups")
+    assert followups_after_dispatch_rv.status_code == 200
+    updated_followup = next(f for f in followups_after_dispatch_rv.get_json() if f["id"] == followup_id)
+    assert updated_followup["reminder_sent_count"] >= 1
+    assert updated_followup["last_reminder_sent_at"] is not None
 
     escalate_rv = client.post(
         f"/programs/cases/{case_id}/followups/escalate-overdue",
@@ -552,6 +631,9 @@ def test_case_document_followup_validation(client, app):
 
     missing_doc_title_rv = client.post(f"/programs/cases/{case_id}/documents", json={})
     assert missing_doc_title_rv.status_code == 400
+
+    invalid_token_rv = client.get("/programs/documents/download/not-a-real-token")
+    assert invalid_token_rv.status_code == 400
 
     missing_followup_title_rv = client.post(f"/programs/cases/{case_id}/followups", json={"due_at": datetime.now(UTC).isoformat()})
     assert missing_followup_title_rv.status_code == 400

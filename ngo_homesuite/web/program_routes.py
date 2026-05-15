@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-from flask import Blueprint, jsonify, request
+import time
+
+from flask import Blueprint, current_app, jsonify, request, url_for
 from flask_login import current_user, login_required
+from itsdangerous import BadSignature, URLSafeTimedSerializer
 
 from ngo_homesuite.web.rbac import roles_required
 
@@ -11,6 +14,18 @@ program_bp = Blueprint("program", __name__, url_prefix="/programs")
 
 def _org_id() -> int:
     return int(current_user.organization_id)
+
+
+_SENSITIVE_DOCUMENT_CATEGORIES = {"consent", "assessment", "evidence"}
+
+
+def _is_staff_or_admin() -> bool:
+    return bool(current_user.has_role("admin", "staff"))
+
+
+def _serializer() -> URLSafeTimedSerializer:
+    secret = str(current_app.config.get("SECRET_KEY") or "ngohs-dev-secret")
+    return URLSafeTimedSerializer(secret, salt="program-case-document")
 
 
 @program_bp.get("/cases")
@@ -330,7 +345,14 @@ def add_case_document_route(case_id: int):
 def list_case_documents_route(case_id: int):
     from ngo_homesuite.services.program_impact_service import list_case_documents
 
-    docs = list_case_documents(case_id, _org_id(), category=request.args.get("category"))
+    category = request.args.get("category")
+    if not _is_staff_or_admin() and category in _SENSITIVE_DOCUMENT_CATEGORIES:
+        return jsonify({"error": "forbidden"}), 403
+
+    docs = list_case_documents(case_id, _org_id(), category=category)
+    if not _is_staff_or_admin():
+        docs = [d for d in docs if d.category not in _SENSITIVE_DOCUMENT_CATEGORIES]
+
     return jsonify(
         [
             {
@@ -346,6 +368,68 @@ def list_case_documents_route(case_id: int):
             }
             for d in docs
         ]
+    )
+
+
+@program_bp.post("/cases/<int:case_id>/documents/<int:document_id>/signed-download")
+@login_required
+def create_signed_document_link_route(case_id: int, document_id: int):
+    from ngo_homesuite.services.program_impact_service import get_case_document
+
+    doc = get_case_document(document_id, case_id, _org_id())
+    if doc.category in _SENSITIVE_DOCUMENT_CATEGORIES and not _is_staff_or_admin():
+        return jsonify({"error": "forbidden"}), 403
+
+    data = request.get_json(silent=True) or {}
+    expires_seconds = int(data.get("expires_seconds", 900))
+    expires_seconds = max(60, min(expires_seconds, 24 * 60 * 60))
+    payload = {
+        "org_id": _org_id(),
+        "case_id": case_id,
+        "document_id": document_id,
+        "exp": int(time.time()) + expires_seconds,
+    }
+    token = _serializer().dumps(payload)
+    return jsonify(
+        {
+            "token": token,
+            "expires_seconds": expires_seconds,
+            "download_url": url_for("program.download_case_document_signed_route", token=token, _external=False),
+        }
+    )
+
+
+@program_bp.get("/documents/download/<token>")
+def download_case_document_signed_route(token: str):
+    from ngo_homesuite.services.program_impact_service import get_case_document
+
+    try:
+        payload = _serializer().loads(token)
+    except BadSignature:
+        return jsonify({"error": "invalid or tampered token"}), 400
+
+    exp = int(payload.get("exp", 0))
+    if exp <= int(time.time()):
+        return jsonify({"error": "token expired"}), 410
+
+    org_id = int(payload.get("org_id", 0))
+    case_id = int(payload.get("case_id", 0))
+    document_id = int(payload.get("document_id", 0))
+    if not org_id or not case_id or not document_id:
+        return jsonify({"error": "invalid token payload"}), 400
+
+    doc = get_case_document(document_id, case_id, org_id)
+    return jsonify(
+        {
+            "id": doc.id,
+            "case_id": doc.case_id,
+            "title": doc.title,
+            "category": doc.category,
+            "file_name": doc.file_name,
+            "mime_type": doc.mime_type,
+            "storage_key": doc.storage_key,
+            "external_url": doc.external_url,
+        }
     )
 
 
@@ -401,6 +485,10 @@ def list_followups_route(case_id: int):
                 "follow_up_type": f.follow_up_type,
                 "due_at": f.due_at.isoformat() if f.due_at else None,
                 "reminder_at": f.reminder_at.isoformat() if f.reminder_at else None,
+                "reminder_channel": f.reminder_channel,
+                "reminder_sent_count": f.reminder_sent_count,
+                "last_reminder_sent_at": f.last_reminder_sent_at.isoformat() if f.last_reminder_sent_at else None,
+                "last_reminder_error": f.last_reminder_error,
                 "escalation_level": f.escalation_level,
                 "escalation_reason": f.escalation_reason,
                 "escalated_at": f.escalated_at.isoformat() if f.escalated_at else None,
@@ -411,6 +499,22 @@ def list_followups_route(case_id: int):
             for f in items
         ]
     )
+
+
+@program_bp.post("/cases/<int:case_id>/followups/dispatch-reminders")
+@login_required
+@roles_required("admin", "staff")
+def dispatch_followup_reminders_route(case_id: int):
+    from ngo_homesuite.services.program_impact_service import dispatch_followup_reminders
+
+    data = request.get_json(silent=True) or {}
+    payload = dispatch_followup_reminders(
+        case_id,
+        _org_id(),
+        channel=str(data.get("channel", "auto")),
+        only_overdue=bool(data.get("only_overdue", False)),
+    )
+    return jsonify(payload)
 
 
 @program_bp.patch("/cases/<int:case_id>/followups/<int:followup_id>")

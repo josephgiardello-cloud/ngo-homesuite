@@ -833,6 +833,10 @@ class ProgramCaseFollowUp(db.Model):
     follow_up_type = db.Column(db.String(50), default='general', nullable=False)
     due_at = db.Column(db.DateTime, nullable=False, index=True)
     reminder_at = db.Column(db.DateTime, nullable=True, index=True)
+    reminder_channel = db.Column(db.String(20), default='auto', nullable=False)  # auto, email, sms
+    reminder_sent_count = db.Column(db.Integer, default=0, nullable=False)
+    last_reminder_sent_at = db.Column(db.DateTime, nullable=True)
+    last_reminder_error = db.Column(db.Text, nullable=True)
     escalation_level = db.Column(db.Integer, default=0, nullable=False)
     escalation_reason = db.Column(db.Text, nullable=True)
     escalated_at = db.Column(db.DateTime, nullable=True)
