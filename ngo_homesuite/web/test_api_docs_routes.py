@@ -34,6 +34,8 @@ def _ensure_user(app, username: str, email: str, role: str, password: str):
 def test_api_docs_requires_auth(client):
     rv = client.get("/api/docs", follow_redirects=False)
     assert rv.status_code in (302, 303)
+    swagger_rv = client.get("/api/swagger", follow_redirects=False)
+    assert swagger_rv.status_code in (302, 303)
 
 
 def test_api_docs_and_openapi_endpoints_return_content(client, app):
@@ -45,9 +47,17 @@ def test_api_docs_and_openapi_endpoints_return_content(client, app):
     body = docs_rv.get_data(as_text=True)
     assert "NGO HomeSuite API Docs" in body
     assert "/api/openapi.yaml" in body
+    assert "/api/swagger" in body
+
+    swagger_rv = client.get("/api/swagger")
+    assert swagger_rv.status_code == 200
+    swagger_body = swagger_rv.get_data(as_text=True)
+    assert "SwaggerUIBundle" in swagger_body
+    assert "/api/openapi.yaml" in swagger_body
 
     spec_rv = client.get("/api/openapi.yaml")
     assert spec_rv.status_code == 200
     spec_text = spec_rv.get_data(as_text=True)
     assert "openapi: 3.0.3" in spec_text
     assert "/ai/copilot/chat" in spec_text
+    assert "/api/swagger" in spec_text

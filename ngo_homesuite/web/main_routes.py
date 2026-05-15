@@ -262,6 +262,7 @@ def api_openapi_spec():
 @roles_required('admin', 'staff', 'viewer')
 def api_docs_index():
     spec_url = url_for('main.api_openapi_spec')
+    swagger_url = url_for('main.api_swagger_ui')
     html = (
         '<!doctype html>'
         '<html><head><meta charset="utf-8"><title>NGO HomeSuite API Docs</title>'
@@ -270,9 +271,46 @@ def api_docs_index():
         '<h1>NGO HomeSuite API Docs</h1>'
         '<p>Starter API contract for beta integrations.</p>'
         f'<p>OpenAPI spec: <a href="{spec_url}">{spec_url}</a></p>'
+        f'<p>Interactive Swagger UI: <a href="{swagger_url}">{swagger_url}</a></p>'
         '<p>Use this spec with Swagger Editor or Redoc for interactive review.</p>'
         '</body></html>'
     )
+    return Response(html, mimetype='text/html')
+
+
+@main_bp.route('/api/swagger', methods=['GET'])
+@login_required
+@roles_required('admin', 'staff', 'viewer')
+def api_swagger_ui():
+    spec_url = url_for('main.api_openapi_spec')
+    html = f"""<!doctype html>
+<html>
+    <head>
+        <meta charset=\"utf-8\" />
+        <title>NGO HomeSuite Swagger UI</title>
+        <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+        <link rel=\"stylesheet\" href=\"https://unpkg.com/swagger-ui-dist@5/swagger-ui.css\" />
+        <style>
+            body {{ margin: 0; background: #f6f8fb; }}
+            .topbar {{ display: none; }}
+        </style>
+    </head>
+    <body>
+        <div id=\"swagger-ui\"></div>
+        <script src=\"https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js\"></script>
+        <script>
+            window.addEventListener('load', function() {{
+                SwaggerUIBundle({{
+                    url: '{spec_url}',
+                    dom_id: '#swagger-ui',
+                    deepLinking: true,
+                    docExpansion: 'list',
+                    defaultModelsExpandDepth: 1,
+                }});
+            }});
+        </script>
+    </body>
+</html>"""
     return Response(html, mimetype='text/html')
 
 

@@ -15,6 +15,13 @@ paths:
       responses:
         '200':
           description: HTML docs landing page
+  /api/swagger:
+    get:
+      summary: Interactive Swagger UI page
+      tags: [Docs]
+      responses:
+        '200':
+          description: Swagger UI HTML page
   /api/openapi.yaml:
     get:
       summary: OpenAPI specification

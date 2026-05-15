@@ -62,6 +62,7 @@ A comprehensive nonprofit management system for managing donors, donations, fund
 ### 🧭 API Docs
 - OpenAPI starter spec available at `/api/openapi.yaml`
 - In-app docs landing page at `/api/docs`
+- Interactive Swagger UI at `/api/swagger`
 - Source spec file is maintained in `docs/openapi.yaml`
 
 ### 🔒 Security & Compliance
