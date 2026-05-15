@@ -64,6 +64,31 @@ class CopilotToolRegistry:
                 },
                 handler=self._donor_profile_insights,
             ),
+            "summarize_donor": CopilotTool(
+                name="summarize_donor",
+                description="Generate a natural-language donor summary with risk flags and next best action.",
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "donor_id": {"type": "integer", "minimum": 1},
+                    },
+                    "required": ["donor_id"],
+                },
+                handler=self._summarize_donor,
+            ),
+            "find_similar_donors": CopilotTool(
+                name="find_similar_donors",
+                description="Find donors with similar giving behavior and profile signals to a reference donor.",
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "donor_id": {"type": "integer", "minimum": 1},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
+                    },
+                    "required": ["donor_id"],
+                },
+                handler=self._find_similar_donors,
+            ),
             "rank_donors_for_outreach": CopilotTool(
                 name="rank_donors_for_outreach",
                 description="Return next donors to call ranked by predicted value and risk.",
@@ -74,6 +99,17 @@ class CopilotToolRegistry:
                     },
                 },
                 handler=self._rank_donors_for_outreach,
+            ),
+            "suggest_outreach_targets": CopilotTool(
+                name="suggest_outreach_targets",
+                description="Suggest top donor outreach targets with concise rationale and next-step recommendations.",
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 10},
+                    },
+                },
+                handler=self._suggest_outreach_targets,
             ),
             "draft_personalized_appeal": CopilotTool(
                 name="draft_personalized_appeal",
@@ -331,6 +367,35 @@ class CopilotToolRegistry:
             actions.append("Send a stewardship update and confirm next engagement milestone.")
         return actions
 
+    def _risk_flags(self, metrics: dict[str, Any], related: dict[str, int]) -> list[str]:
+        flags: list[str] = []
+        if metrics["recency_days"] > 180:
+            flags.append("No gift in over 180 days")
+        if metrics["predictions"]["churn_risk"] >= 65:
+            flags.append("Elevated churn risk")
+        if metrics["frequency_12m"] <= 1:
+            flags.append("Low giving frequency in last 12 months")
+        if related["interactions"] == 0:
+            flags.append("No recorded interactions")
+        return flags
+
+    def _similarity_score(
+        self,
+        anchor: Donor,
+        anchor_metrics: dict[str, Any],
+        candidate: Donor,
+        candidate_metrics: dict[str, Any],
+    ) -> float:
+        recency_delta = abs(anchor_metrics["recency_days"] - candidate_metrics["recency_days"])
+        frequency_delta = abs(anchor_metrics["frequency_12m"] - candidate_metrics["frequency_12m"])
+        monetary_delta = abs(anchor_metrics["monetary_12m"] - candidate_metrics["monetary_12m"])
+        type_bonus = 8.0 if (anchor.donor_type or "") == (candidate.donor_type or "") else 0.0
+
+        recency_component = max(0.0, 35.0 - min(35.0, recency_delta / 5.0))
+        frequency_component = max(0.0, 30.0 - min(30.0, frequency_delta * 4.0))
+        monetary_component = max(0.0, 27.0 - min(27.0, monetary_delta / 150.0))
+        return round(min(100.0, recency_component + frequency_component + monetary_component + type_bonus), 1)
+
     def list_tools(self) -> list[CopilotTool]:
         return list(self._tools.values())
 
@@ -478,6 +543,68 @@ class CopilotToolRegistry:
             "insight_summary": summary,
         }
 
+    def _summarize_donor(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
+        profile = self._donor_profile_insights(args, runtime_ctx)
+        if isinstance(profile, dict) and profile.get("error"):
+            return profile
+
+        metrics = profile["metrics"]
+        related = profile["activity"]
+        actions = profile["recommended_actions"]
+        risk_flags = self._risk_flags(metrics, related)
+        return {
+            "donor": profile["donor"],
+            "summary": profile["insight_summary"],
+            "risk_flags": risk_flags,
+            "next_best_action": actions[0] if actions else "Send a stewardship update and confirm next engagement milestone.",
+            "recommended_actions": actions,
+            "signals": metrics["predictions"],
+        }
+
+    def _find_similar_donors(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
+        org_id = self._org_filter(runtime_ctx)
+        donor_id = int(args.get("donor_id", 0) or 0)
+        limit = max(1, min(int(args.get("limit", 5) or 5), 20))
+        if org_id is None:
+            return {"error": "organization_id is required in runtime context"}
+        if donor_id <= 0:
+            return {"error": "donor_id is required"}
+
+        anchor = Donor.query.filter_by(organization_id=org_id, id=donor_id).first()
+        if anchor is None:
+            return {"error": f"donor {donor_id} not found"}
+
+        anchor_metrics = self._compute_rfm_signals(anchor, org_id)
+        candidates = (
+            Donor.query.filter_by(organization_id=org_id)
+            .filter(Donor.id != anchor.id)
+            .order_by(Donor.created_at.asc())
+            .all()
+        )
+
+        scored: list[dict[str, Any]] = []
+        for candidate in candidates:
+            candidate_metrics = self._compute_rfm_signals(candidate, org_id)
+            score = self._similarity_score(anchor, anchor_metrics, candidate, candidate_metrics)
+            scored.append(
+                {
+                    "donor_id": candidate.id,
+                    "donor_name": candidate.name,
+                    "donor_type": candidate.donor_type,
+                    "similarity_score": score,
+                    "last_donation_at": candidate_metrics["last_donation_at"],
+                    "lifetime_total": candidate_metrics["lifetime_total"],
+                    "frequency_12m": candidate_metrics["frequency_12m"],
+                }
+            )
+
+        scored.sort(key=lambda item: item["similarity_score"], reverse=True)
+        return {
+            "anchor_donor": {"id": anchor.id, "name": anchor.name},
+            "matches": scored[:limit],
+            "count": min(limit, len(scored)),
+        }
+
     def _rank_donors_for_outreach(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
         org_id = self._org_filter(runtime_ctx)
         if org_id is None:
@@ -511,6 +638,36 @@ class CopilotToolRegistry:
 
         ranked.sort(key=lambda item: item["priority_score"], reverse=True)
         return {"recommended": ranked[:limit], "count": min(limit, len(ranked))}
+
+    def _suggest_outreach_targets(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
+        ranking = self._rank_donors_for_outreach(args, runtime_ctx)
+        if isinstance(ranking, dict) and ranking.get("error"):
+            return ranking
+
+        targets: list[dict[str, Any]] = []
+        for item in ranking["recommended"]:
+            rationale_parts: list[str] = []
+            if item["giving_likelihood"] >= 70:
+                rationale_parts.append("high near-term giving likelihood")
+            if item["churn_risk"] >= 60:
+                rationale_parts.append("elevated churn risk")
+            if item["major_gift_potential"] >= 70:
+                rationale_parts.append("major-gift potential")
+            if not rationale_parts:
+                rationale_parts.append("balanced engagement opportunity")
+
+            targets.append(
+                {
+                    **item,
+                    "rationale": ", ".join(rationale_parts),
+                }
+            )
+
+        return {
+            "targets": targets,
+            "count": ranking["count"],
+            "summary": f"Prepared {ranking['count']} outreach targets ranked by value, urgency, and relationship momentum.",
+        }
 
     def _draft_personalized_appeal(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
         org_id = self._org_filter(runtime_ctx)

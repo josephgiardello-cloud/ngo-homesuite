@@ -52,6 +52,33 @@ def test_rank_donors_for_outreach_returns_prioritized_list(registry):
     assert "suggested_next_action" in first
 
 
+def test_summarize_donor_returns_risk_and_next_action(registry):
+    payload = registry.execute("summarize_donor", {"donor_id": 1}, _runtime_ctx())
+
+    assert payload["donor"]["id"] == 1
+    assert isinstance(payload["summary"], str) and payload["summary"]
+    assert "next_best_action" in payload
+    assert isinstance(payload["risk_flags"], list)
+
+
+def test_find_similar_donors_returns_ranked_matches(registry):
+    payload = registry.execute("find_similar_donors", {"donor_id": 1, "limit": 3}, _runtime_ctx())
+
+    assert payload["anchor_donor"]["id"] == 1
+    assert payload["count"] >= 1
+    assert len(payload["matches"]) >= 1
+    assert "similarity_score" in payload["matches"][0]
+
+
+def test_suggest_outreach_targets_returns_rationale(registry):
+    payload = registry.execute("suggest_outreach_targets", {"limit": 2}, _runtime_ctx())
+
+    assert payload["count"] >= 1
+    assert len(payload["targets"]) >= 1
+    assert "rationale" in payload["targets"][0]
+    assert isinstance(payload["summary"], str) and payload["summary"]
+
+
 def test_draft_personalized_appeal_uses_donor_context(registry):
     payload = registry.execute(
         "draft_personalized_appeal",

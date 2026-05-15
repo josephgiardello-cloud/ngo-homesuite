@@ -2,6 +2,7 @@
 
 import csv
 import json
+from ngo_homesuite.ai.copilot_tools import CopilotToolRegistry
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -783,6 +784,21 @@ def donor_detail(donor_id: int):
         'donation_total': float(total_amount or 0.0),
     }
 
+    donor_ai_insights = None
+    try:
+        donor_ai_insights = CopilotToolRegistry().execute(
+            "summarize_donor",
+            {"donor_id": donor.id},
+            {
+                "organization_id": org.id,
+                "actor": getattr(current_user, "username", "web"),
+            },
+        )
+        if isinstance(donor_ai_insights, dict) and donor_ai_insights.get("error"):
+            donor_ai_insights = None
+    except Exception:
+        donor_ai_insights = None
+
     return render_template(
         'donor_detail.html',
         donor=donor,
@@ -792,6 +808,7 @@ def donor_detail(donor_id: int):
         recurring_plans=recurring_plans,
         active_page='donors',
         ai_context=ai_context,
+        donor_ai_insights=donor_ai_insights,
     )
 
 

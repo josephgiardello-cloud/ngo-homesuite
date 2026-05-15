@@ -42,6 +42,32 @@
 </div>
 
 <div class="card" style="margin-bottom: 1rem;">
+    <h3>AI Donor Insights</h3>
+    {% if donor_ai_insights %}
+    <p style="margin-bottom: 0.75rem;">{{ donor_ai_insights.summary }}</p>
+    <p><strong>Next Best Action:</strong> {{ donor_ai_insights.next_best_action }}</p>
+    {% if donor_ai_insights.risk_flags %}
+    <p style="margin-top: 0.75rem;"><strong>Risk Flags</strong></p>
+    <ul style="margin-top: 0.35rem;">
+        {% for risk_flag in donor_ai_insights.risk_flags %}
+        <li>{{ risk_flag }}</li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+    {% if donor_ai_insights.recommended_actions %}
+    <p style="margin-top: 0.75rem;"><strong>Suggested Actions</strong></p>
+    <ul style="margin-top: 0.35rem;">
+        {% for action in donor_ai_insights.recommended_actions %}
+        <li>{{ action }}</li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+    {% else %}
+    <p class="text-muted">AI insights are currently unavailable for this donor.</p>
+    {% endif %}
+</div>
+
+<div class="card" style="margin-bottom: 1rem;">
     <h3>Recent Donations</h3>
     {% if recent_donations %}
     <div class="table-wrap">

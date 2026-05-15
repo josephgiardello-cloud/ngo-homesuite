@@ -197,5 +197,7 @@ def test_donor_detail_page_shows_profile_metrics(client, app):
     body = rv.get_data(as_text=True)
     assert "Detail Donor" in body
     assert "Long-time supporter" in body
+    assert "AI Donor Insights" in body
+    assert "Next Best Action:" in body
     assert "Recent Donations" in body
     assert "Recurring Plans" in body
