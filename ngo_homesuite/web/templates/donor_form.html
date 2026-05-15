@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block title %}{{ 'Edit Donor' if is_edit else 'Add Donor' }} - NGO HomeSuite{% endblock %}
+
+{% block content %}
+<h1>{{ 'Edit Donor' if is_edit else 'Add Donor' }}</h1>
+
+<form method="post" class="mt-2">
+    {{ form.hidden_tag() }}
+
+    <div class="form-group {% if form.name.errors %}error{% endif %}">
+        {{ form.name.label }}
+        {{ form.name() }}
+        {% for error in form.name.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+    </div>
+
+    <div class="form-group {% if form.email.errors %}error{% endif %}">
+        {{ form.email.label }}
+        {{ form.email() }}
+        {% for error in form.email.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+    </div>
+
+    <div class="form-group {% if form.phone.errors %}error{% endif %}">
+        {{ form.phone.label }}
+        {{ form.phone() }}
+        {% for error in form.phone.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+    </div>
+
+    <div class="form-group {% if form.donor_type.errors %}error{% endif %}">
+        {{ form.donor_type.label }}
+        {{ form.donor_type() }}
+        {% for error in form.donor_type.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+    </div>
+
+    <div class="form-group {% if form.notes.errors %}error{% endif %}">
+        {{ form.notes.label }}
+        {{ form.notes(rows=4) }}
+        {% for error in form.notes.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+    </div>
+
+    {{ form.submit(class_='btn btn-primary') }}
+    <a href="{{ url_for('main.donors_list') }}" class="btn btn-secondary">Cancel</a>
+</form>
+{% endblock %}

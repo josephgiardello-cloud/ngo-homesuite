@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block title %}Projects - NGO HomeSuite{% endblock %}
+
+{% block content %}
+<h1>Projects</h1>
+<p class="text-muted">Simple project dashboard for active program visibility.</p>
+
+<div class="mb-3 mt-2">
+    <a href="{{ url_for('main.project_create') }}" class="btn btn-primary">Add Project</a>
+</div>
+
+{% if projects %}
+<table>
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Program</th>
+            <th>Status</th>
+            <th>Budget</th>
+            <th>Spent</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for project in projects %}
+        <tr>
+            <td>{{ project.name }}</td>
+            <td>{{ project.program or '-' }}</td>
+            <td>{{ project.status }}</td>
+            <td>{{ project.currency }} {{ '%.2f'|format(project.budget) }}</td>
+            <td>{{ project.currency }} {{ '%.2f'|format(project.spent) }}</td>
+            <td><a href="{{ url_for('main.project_edit', project_id=project.id) }}" class="btn btn-secondary">Edit</a></td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="card">
+    <p>No projects are available yet.</p>
+</div>
+{% endif %}
+{% endblock %}

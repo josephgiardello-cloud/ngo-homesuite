@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}Donors - NGO HomeSuite{% endblock %}
+
+{% block content %}
+<h1>Donors</h1>
+<p class="text-muted">Manage donor records and contact information.</p>
+
+<div class="mb-3 mt-2">
+    <a href="{{ url_for('main.donor_create') }}" class="btn btn-primary">Add Donor</a>
+</div>
+
+{% if donors %}
+<table>
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Phone</th>
+            <th>Type</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for donor in donors %}
+        <tr>
+            <td>{{ donor.name }}</td>
+            <td>{{ donor.email or '-' }}</td>
+            <td>{{ donor.phone or '-' }}</td>
+            <td>{{ donor.donor_type }}</td>
+            <td>
+                <a href="{{ url_for('main.donor_edit', donor_id=donor.id) }}" class="btn btn-secondary">Edit</a>
+                <form method="post" action="{{ url_for('main.donor_delete', donor_id=donor.id) }}" style="display:inline-block; margin-left: 0.4rem;" onsubmit="return confirm('Delete this donor? This cannot be undone.');">
+                    {{ delete_form.hidden_tag() }}
+                    {{ delete_form.submit(class_='btn btn-danger') }}
+                </form>
+            </td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="card">
+    <p>No donors yet. Add your first donor to get started.</p>
+</div>
+{% endif %}
+{% endblock %}

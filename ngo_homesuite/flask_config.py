@@ -95,8 +95,6 @@ class ProductionConfig(Config):
     
     # Production database
     SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL')
-    if not SQLALCHEMY_DATABASE_URI:
-        raise ValueError('DATABASE_URL environment variable must be set in production')
 
 
 # Configuration mapping
@@ -111,4 +109,7 @@ config = {
 def get_config():
     """Get configuration based on FLASK_ENV."""
     env = os.environ.get('FLASK_ENV', 'development')
-    return config.get(env, DevelopmentConfig)
+    selected = config.get(env, DevelopmentConfig)
+    if selected is ProductionConfig and not os.environ.get('DATABASE_URL'):
+        raise ValueError('DATABASE_URL environment variable must be set in production')
+    return selected

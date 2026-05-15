@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block title %}{{ 'Edit Project' if is_edit else 'Add Project' }} - NGO HomeSuite{% endblock %}
+
+{% block content %}
+<h1>{{ 'Edit Project' if is_edit else 'Add Project' }}</h1>
+
+<form method="post" class="mt-2">
+    {{ form.hidden_tag() }}
+
+    <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));">
+        <div class="form-group {% if form.name.errors %}error{% endif %}">
+            {{ form.name.label }}
+            {{ form.name() }}
+            {% for error in form.name.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        </div>
+
+        <div class="form-group {% if form.program.errors %}error{% endif %}">
+            {{ form.program.label }}
+            {{ form.program() }}
+            {% for error in form.program.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        </div>
+
+        <div class="form-group {% if form.status.errors %}error{% endif %}">
+            {{ form.status.label }}
+            {{ form.status() }}
+            {% for error in form.status.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        </div>
+
+        <div class="form-group {% if form.currency.errors %}error{% endif %}">
+            {{ form.currency.label }}
+            {{ form.currency() }}
+            {% for error in form.currency.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        </div>
+
+        <div class="form-group {% if form.budget.errors %}error{% endif %}">
+            {{ form.budget.label }}
+            {{ form.budget() }}
+            {% for error in form.budget.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        </div>
+
+        <div class="form-group {% if form.spent.errors %}error{% endif %}">
+            {{ form.spent.label }}
+            {{ form.spent() }}
+            {% for error in form.spent.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        </div>
+    </div>
+
+    <div class="form-group {% if form.description.errors %}error{% endif %}">
+        {{ form.description.label }}
+        {{ form.description(rows=4) }}
+        {% for error in form.description.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+    </div>
+
+    {{ form.submit(class_='btn btn-primary') }}
+    <a href="{{ url_for('main.projects_dashboard') }}" class="btn btn-secondary">Cancel</a>
+</form>
+{% endblock %}

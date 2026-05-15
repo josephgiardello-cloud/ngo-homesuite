@@ -1,17 +1,95 @@
-"""
-Main routes for NGO HomeSuite.
+"""Main web routes, dashboards, and Phase 1 CRUD interfaces."""
 
-Home page, dashboard, and main application routes.
-"""
+from datetime import datetime
+from typing import Optional as TypingOptional
 
-from flask import Blueprint, render_template, redirect, url_for
+from flask import Blueprint, render_template, redirect, url_for, request, flash, send_file
 from flask_login import login_required, current_user
+from flask_wtf import FlaskForm
+from wtforms import StringField, SelectField, TextAreaField, FloatField, SubmitField
+from wtforms.validators import DataRequired, Optional as WTOptional, NumberRange, Email
+from io import BytesIO
+
 from ngo_homesuite.models.core import (
-    Organization, Beneficiary, Project, Donation, db
+    Organization, Beneficiary, Project, Donation, Donor, Fund, Expense, db
 )
 from sqlalchemy import func
+from ngo_homesuite.web.rbac import roles_required
+from ngo_homesuite.utils.receipt_pdf import generate_receipt_pdf_bytes
 
 main_bp = Blueprint('main', __name__)
+
+
+class DonorForm(FlaskForm):
+    name = StringField('Name', validators=[DataRequired()])
+    email = StringField('Email', validators=[WTOptional(), Email()])
+    phone = StringField('Phone', validators=[WTOptional()])
+    donor_type = SelectField(
+        'Donor Type',
+        choices=[
+            ('individual', 'Individual'),
+            ('corporate', 'Corporate'),
+            ('foundation', 'Foundation'),
+            ('anonymous', 'Anonymous'),
+        ],
+        validators=[DataRequired()],
+    )
+    notes = TextAreaField('Notes', validators=[WTOptional()])
+    submit = SubmitField('Save Donor')
+
+
+class DonationForm(FlaskForm):
+    donor_id = SelectField('Donor', coerce=int, validators=[DataRequired()])
+    project_id = SelectField('Project', coerce=int, validators=[WTOptional()])
+    fund_id = SelectField('Fund', coerce=int, validators=[WTOptional()])
+    amount = FloatField('Amount', validators=[DataRequired(), NumberRange(min=0.01)])
+    currency = SelectField('Currency', choices=[('USD', 'USD'), ('EUR', 'EUR'), ('GBP', 'GBP')], validators=[DataRequired()])
+    payment_method = SelectField(
+        'Payment Method',
+        choices=[('cash', 'Cash'), ('bank_transfer', 'Bank Transfer'), ('credit_card', 'Credit Card')],
+        validators=[DataRequired()],
+    )
+    purpose = StringField('Purpose', validators=[WTOptional()])
+    reference_number = StringField('Reference Number', validators=[WTOptional()])
+    notes = TextAreaField('Notes', validators=[WTOptional()])
+    submit = SubmitField('Record Donation')
+
+
+class ProjectForm(FlaskForm):
+    name = StringField('Project Name', validators=[DataRequired()])
+    description = TextAreaField('Description', validators=[WTOptional()])
+    program = StringField('Program', validators=[WTOptional()])
+    budget = FloatField('Budget', validators=[DataRequired(), NumberRange(min=0)])
+    spent = FloatField('Spent', validators=[DataRequired(), NumberRange(min=0)])
+    currency = SelectField('Currency', choices=[('USD', 'USD'), ('EUR', 'EUR'), ('GBP', 'GBP')], validators=[DataRequired()])
+    status = SelectField(
+        'Status',
+        choices=[('planned', 'Planned'), ('active', 'Active'), ('paused', 'Paused'), ('completed', 'Completed')],
+        validators=[DataRequired()],
+    )
+    submit = SubmitField('Save Project')
+
+
+class FundForm(FlaskForm):
+    name = StringField('Fund Name', validators=[DataRequired()])
+    description = TextAreaField('Description', validators=[WTOptional()])
+    is_active = SelectField(
+        'Status',
+        choices=[('true', 'Active'), ('false', 'Inactive')],
+        validators=[DataRequired()],
+    )
+    submit = SubmitField('Save Fund')
+
+
+class ConfirmDeleteForm(FlaskForm):
+    submit = SubmitField('Delete')
+
+
+def _current_org() -> TypingOptional[Organization]:
+    """Pick assigned org first, then fallback to first active org for seeded demo users."""
+    if current_user.organization:
+        return current_user.organization
+    return Organization.query.filter_by(is_active=True).first()
 
 
 @main_bp.route('/')
@@ -26,50 +104,339 @@ def index():
 @login_required
 def dashboard():
     """User dashboard with summary cards."""
-    
-    # Get stats based on user's organization (if assigned)
-    org = current_user.organization
+
+    org = _current_org()
     if org:
-        # Get counts for dashboard cards
         beneficiary_count = Beneficiary.query.filter_by(organization_id=org.id, status='active').count()
         project_count = Project.query.filter_by(organization_id=org.id, status='active').count()
+        donor_count = Donor.query.filter_by(organization_id=org.id).count()
         total_donations = db.session.query(func.sum(Donation.amount)).filter_by(organization_id=org.id).scalar() or 0
-        
-        # Get recent donations
+
         recent_donations = Donation.query.filter_by(organization_id=org.id).order_by(Donation.donation_date.desc()).limit(5).all()
-        
-        # Get total project budget
+
         total_budget = db.session.query(func.sum(Project.budget)).filter_by(organization_id=org.id).scalar() or 0
+        total_expenses = db.session.query(func.sum(Expense.amount)).filter_by(organization_id=org.id).scalar() or 0
+        total_funds = Fund.query.filter_by(organization_id=org.id, is_active=True).count()
         
         stats = {
             'organization': org,
             'beneficiary_count': beneficiary_count,
             'project_count': project_count,
+            'donor_count': donor_count,
             'total_donations': total_donations,
             'total_budget': total_budget,
+            'total_expenses': total_expenses,
+            'total_funds': total_funds,
             'recent_donations': recent_donations,
         }
     else:
-        # No organization assigned - show empty state
         stats = {
             'organization': None,
             'beneficiary_count': 0,
             'project_count': 0,
+            'donor_count': 0,
             'total_donations': 0,
             'total_budget': 0,
+            'total_expenses': 0,
+            'total_funds': 0,
             'recent_donations': [],
         }
     
-    return render_template('dashboard.html', stats=stats)
+    return render_template('dashboard.html', stats=stats, active_page='dashboard')
+
+
+@main_bp.route('/donors')
+@login_required
+def donors_list():
+    org = _current_org()
+    donors = Donor.query.filter_by(organization_id=org.id).order_by(Donor.name.asc()).all() if org else []
+    delete_form = ConfirmDeleteForm()
+    return render_template('donors.html', donors=donors, delete_form=delete_form, active_page='donors')
+
+
+@main_bp.route('/donors/new', methods=['GET', 'POST'])
+@login_required
+@roles_required('admin', 'staff')
+def donor_create():
+    org = _current_org()
+    if not org:
+        flash('No organization is available. Please seed data first.', 'error')
+        return redirect(url_for('main.dashboard'))
+
+    form = DonorForm()
+    if form.validate_on_submit():
+        donor = Donor(
+            organization_id=org.id,
+            name=form.name.data,
+            email=form.email.data,
+            phone=form.phone.data,
+            donor_type=form.donor_type.data,
+            notes=form.notes.data,
+        )
+        db.session.add(donor)
+        db.session.commit()
+        flash('Donor created successfully.', 'success')
+        return redirect(url_for('main.donors_list'))
+
+    return render_template('donor_form.html', form=form, is_edit=False, active_page='donors')
+
+
+@main_bp.route('/donors/<int:donor_id>/edit', methods=['GET', 'POST'])
+@login_required
+@roles_required('admin', 'staff')
+def donor_edit(donor_id: int):
+    org = _current_org()
+    donor = Donor.query.filter_by(id=donor_id, organization_id=org.id).first_or_404()
+    form = DonorForm(obj=donor)
+
+    if form.validate_on_submit():
+        donor.name = form.name.data
+        donor.email = form.email.data
+        donor.phone = form.phone.data
+        donor.donor_type = form.donor_type.data
+        donor.notes = form.notes.data
+        donor.updated_at = datetime.utcnow()
+        db.session.commit()
+        flash('Donor updated successfully.', 'success')
+        return redirect(url_for('main.donors_list'))
+
+    return render_template('donor_form.html', form=form, is_edit=True, donor=donor, active_page='donors')
+
+
+@main_bp.route('/donors/<int:donor_id>/delete', methods=['POST'])
+@login_required
+@roles_required('admin', 'staff')
+def donor_delete(donor_id: int):
+    form = ConfirmDeleteForm()
+    if not form.validate_on_submit():
+        flash('Invalid delete request.', 'error')
+        return redirect(url_for('main.donors_list'))
+
+    org = _current_org()
+    donor = Donor.query.filter_by(id=donor_id, organization_id=org.id).first_or_404()
+    donation_count = Donation.query.filter_by(donor_id=donor.id).count()
+    if donation_count > 0:
+        flash('Cannot delete donor with existing donations. Edit donor instead.', 'error')
+        return redirect(url_for('main.donors_list'))
+
+    db.session.delete(donor)
+    db.session.commit()
+    flash('Donor deleted successfully.', 'success')
+    return redirect(url_for('main.donors_list'))
+
+
+@main_bp.route('/donations/new', methods=['GET', 'POST'])
+@login_required
+@roles_required('admin', 'staff')
+def donation_create():
+    org = _current_org()
+    if not org:
+        flash('No organization is available. Please seed data first.', 'error')
+        return redirect(url_for('main.dashboard'))
+
+    donor_options = [(0, 'Select a donor')] + [(d.id, d.name) for d in Donor.query.filter_by(organization_id=org.id).order_by(Donor.name.asc()).all()]
+    project_options = [(0, 'General / None')] + [(p.id, p.name) for p in Project.query.filter_by(organization_id=org.id).order_by(Project.name.asc()).all()]
+    fund_options = [(0, 'General / None')] + [(f.id, f.name) for f in Fund.query.filter_by(organization_id=org.id, is_active=True).order_by(Fund.name.asc()).all()]
+
+    form = DonationForm()
+    form.donor_id.choices = donor_options
+    form.project_id.choices = project_options
+    form.fund_id.choices = fund_options
+
+    if form.validate_on_submit():
+        donor = Donor.query.filter_by(id=form.donor_id.data, organization_id=org.id).first()
+        if donor is None:
+            flash('Please select a valid donor.', 'error')
+            return render_template('donation_form.html', form=form, active_page='donations')
+
+        donation = Donation(
+            organization_id=org.id,
+            donor_id=donor.id,
+            donor_name=donor.name,
+            donor_email=donor.email,
+            donor_phone=donor.phone,
+            amount=form.amount.data,
+            currency=form.currency.data,
+            payment_method=form.payment_method.data,
+            purpose=form.purpose.data,
+            reference_number=form.reference_number.data or None,
+            notes=form.notes.data,
+            project_id=form.project_id.data or None,
+            fund_id=form.fund_id.data or None,
+        )
+        db.session.add(donation)
+        db.session.commit()
+        flash('Donation recorded successfully.', 'success')
+        return redirect(url_for('main.dashboard'))
+
+    return render_template('donation_form.html', form=form, active_page='donations')
+
+
+@main_bp.route('/donations/<int:donation_id>/receipt')
+@login_required
+def donation_receipt(donation_id: int):
+    org = _current_org()
+    donation = Donation.query.filter_by(id=donation_id, organization_id=org.id).first_or_404()
+    donor = donation.donor
+
+    donation_payload = {
+        'amount_cents': int(round(float(donation.amount) * 100)),
+        'currency': donation.currency,
+        'received_at': donation.donation_date.strftime('%Y-%m-%d'),
+    }
+    donor_payload = {
+        'name': donor.name if donor else donation.donor_name,
+        'address': '',
+    }
+
+    pdf_data = generate_receipt_pdf_bytes(donation_payload, donor_payload)
+    file_name = f"receipt-{donation.id}.pdf"
+    return send_file(
+        BytesIO(pdf_data),
+        mimetype='application/pdf',
+        as_attachment=True,
+        download_name=file_name,
+    )
+
+
+@main_bp.route('/projects')
+@login_required
+def projects_dashboard():
+    org = _current_org()
+    projects = Project.query.filter_by(organization_id=org.id).order_by(Project.name.asc()).all() if org else []
+    return render_template('projects.html', projects=projects, active_page='projects')
+
+
+@main_bp.route('/projects/new', methods=['GET', 'POST'])
+@login_required
+@roles_required('admin', 'staff')
+def project_create():
+    org = _current_org()
+    if not org:
+        flash('No organization is available. Please seed data first.', 'error')
+        return redirect(url_for('main.dashboard'))
+
+    form = ProjectForm()
+    if form.validate_on_submit():
+        project = Project(
+            organization_id=org.id,
+            name=form.name.data,
+            description=form.description.data,
+            program=form.program.data,
+            budget=form.budget.data,
+            spent=form.spent.data,
+            currency=form.currency.data,
+            status=form.status.data,
+        )
+        db.session.add(project)
+        db.session.commit()
+        flash('Project created successfully.', 'success')
+        return redirect(url_for('main.projects_dashboard'))
+
+    return render_template('project_form.html', form=form, is_edit=False, active_page='projects')
+
+
+@main_bp.route('/projects/<int:project_id>/edit', methods=['GET', 'POST'])
+@login_required
+@roles_required('admin', 'staff')
+def project_edit(project_id: int):
+    org = _current_org()
+    project = Project.query.filter_by(id=project_id, organization_id=org.id).first_or_404()
+    form = ProjectForm(obj=project)
+    if form.validate_on_submit():
+        project.name = form.name.data
+        project.description = form.description.data
+        project.program = form.program.data
+        project.budget = form.budget.data
+        project.spent = form.spent.data
+        project.currency = form.currency.data
+        project.status = form.status.data
+        project.updated_at = datetime.utcnow()
+        db.session.commit()
+        flash('Project updated successfully.', 'success')
+        return redirect(url_for('main.projects_dashboard'))
+
+    return render_template('project_form.html', form=form, is_edit=True, project=project, active_page='projects')
+
+
+@main_bp.route('/funds')
+@login_required
+def funds_list():
+    org = _current_org()
+    funds = Fund.query.filter_by(organization_id=org.id).order_by(Fund.name.asc()).all() if org else []
+    return render_template('funds.html', funds=funds, active_page='funds')
+
+
+@main_bp.route('/funds/new', methods=['GET', 'POST'])
+@login_required
+@roles_required('admin', 'staff')
+def fund_create():
+    org = _current_org()
+    if not org:
+        flash('No organization is available. Please seed data first.', 'error')
+        return redirect(url_for('main.dashboard'))
+
+    form = FundForm()
+    if form.validate_on_submit():
+        fund = Fund(
+            organization_id=org.id,
+            name=form.name.data,
+            description=form.description.data,
+            is_active=form.is_active.data == 'true',
+        )
+        db.session.add(fund)
+        db.session.commit()
+        flash('Fund created successfully.', 'success')
+        return redirect(url_for('main.funds_list'))
+
+    return render_template('fund_form.html', form=form, is_edit=False, active_page='funds')
+
+
+@main_bp.route('/funds/<int:fund_id>/edit', methods=['GET', 'POST'])
+@login_required
+@roles_required('admin', 'staff')
+def fund_edit(fund_id: int):
+    org = _current_org()
+    fund = Fund.query.filter_by(id=fund_id, organization_id=org.id).first_or_404()
+    form = FundForm(obj=fund)
+    if request.method == 'GET':
+        form.is_active.data = 'true' if fund.is_active else 'false'
+
+    if form.validate_on_submit():
+        fund.name = form.name.data
+        fund.description = form.description.data
+        fund.is_active = form.is_active.data == 'true'
+        fund.updated_at = datetime.utcnow()
+        db.session.commit()
+        flash('Fund updated successfully.', 'success')
+        return redirect(url_for('main.funds_list'))
+
+    return render_template('fund_form.html', form=form, is_edit=True, fund=fund, active_page='funds')
+
+
+@main_bp.route('/reports')
+@login_required
+def reports_page():
+    org = _current_org()
+    total_donations = db.session.query(func.sum(Donation.amount)).filter_by(organization_id=org.id).scalar() or 0 if org else 0
+    total_expenses = db.session.query(func.sum(Expense.amount)).filter_by(organization_id=org.id).scalar() or 0 if org else 0
+    net_total = total_donations - total_expenses
+    return render_template(
+        'reports.html',
+        total_donations=total_donations,
+        total_expenses=total_expenses,
+        net_total=net_total,
+        active_page='reports',
+    )
 
 
 @main_bp.route('/about')
 def about():
     """About page."""
-    return render_template('about.html')
+    return render_template('about.html', active_page='about')
 
 
 @main_bp.route('/help')
 def help():
     """Help/documentation page."""
-    return render_template('help.html')
+    return render_template('help.html', active_page='help')

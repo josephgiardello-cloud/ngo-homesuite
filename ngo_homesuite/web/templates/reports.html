@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block title %}Reports - NGO HomeSuite{% endblock %}
+
+{% block content %}
+<h1>Reports</h1>
+<p class="text-muted">Starter reporting dashboard for quick operational visibility.</p>
+
+<div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));">
+    <div class="card">
+        <div class="card-text">Total Donations</div>
+        <div class="card-value">${{ '%.2f'|format(total_donations) }}</div>
+    </div>
+    <div class="card">
+        <div class="card-text">Total Expenses</div>
+        <div class="card-value">${{ '%.2f'|format(total_expenses) }}</div>
+    </div>
+    <div class="card">
+        <div class="card-text">Net Available</div>
+        <div class="card-value">${{ '%.2f'|format(net_total) }}</div>
+    </div>
+</div>
+{% endblock %}

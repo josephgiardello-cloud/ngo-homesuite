@@ -12,6 +12,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
+# Support running as a script: python ngo_homesuite/main.py
+if __package__ in (None, ""):
+    repo_root = Path(__file__).resolve().parents[1]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+
 # --- Third-party imports ---
 import yaml
 from flask import Flask, request, render_template, session as flask_session
@@ -23,7 +29,6 @@ from sqlalchemy.ext.declarative import declarative_base
 # --- Local/project imports ---
 from ngo_homesuite.db.engine import init_engine
 from ngo_homesuite.services.reporting_service import ReportingService
-from ngo_homesuite.utils.integrity_drift import periodic_integrity_check
 
 ## SQLAlchemy models and fetch_reports have been moved to db/models.py and db/repositories/reports.py
 
@@ -336,11 +341,10 @@ app = Flask(__name__)
 app.config['LANGUAGES'] = ['en', 'es', 'fr', 'hi']
 app.config['BABEL_DEFAULT_LOCALE'] = 'en'
 app.secret_key = os.getenv('FLASK_SECRET_KEY', 'dev')
-babel = Babel(app)
-
-@babel.localeselector
 def get_locale():
     return request.accept_languages.best_match(app.config['LANGUAGES'])
+
+babel = Babel(app, locale_selector=get_locale)
 
 @app.route('/')
 def index():
@@ -403,6 +407,11 @@ def run_migrations_and_db(eff):
 
 def run_integrity_check(eff):
     import shutil
+    try:
+        from ngo_homesuite.utils.integrity_drift import periodic_integrity_check
+    except Exception:
+        logger.warning("[INTEGRITY] periodic_integrity_check is unavailable; skipping integrity drift check.")
+        return
     alert_email = os.getenv('NGO_INTEGRITY_ALERT_EMAIL')
     alert_webhook = os.getenv('NGO_INTEGRITY_ALERT_WEBHOOK')
     alert_slack = os.getenv('NGO_INTEGRITY_ALERT_SLACK')
@@ -523,16 +532,13 @@ def run_cli():
     main(sys.argv[1:])
 
 def run_web():
-    # Enforce secrets for web startup
-    admin_pw = os.getenv('ADMIN_PASSWORD')
-    flask_secret = os.getenv('FLASK_SECRET_KEY')
-    if not admin_pw:
-        print("ERROR: ADMIN_PASSWORD environment variable must be set for web server.", file=sys.stderr)
-        sys.exit(3)
-    if not flask_secret:
-        print("ERROR: FLASK_SECRET_KEY environment variable must be set for web server.", file=sys.stderr)
-        sys.exit(4)
-    app.run()
+    from ngo_homesuite.app_factory import create_app
+
+    flask_app = create_app()
+    host = os.environ.get('HOST', '127.0.0.1')
+    port = int(os.environ.get('PORT', 5000))
+    debug = os.environ.get('FLASK_DEBUG', 'True').lower() == 'true'
+    flask_app.run(host=host, port=port, debug=debug)
 
 def run_tests():
     unittest.main()
@@ -541,7 +547,10 @@ if __name__ == '__main__':
     if '--test' in sys.argv:
         sys.argv.remove('--test')
         run_tests()
+    elif '--cli' in sys.argv:
+        sys.argv.remove('--cli')
+        run_cli()
     elif '--web' in sys.argv:
         run_web()
     else:
-        run_cli()
+        run_web()

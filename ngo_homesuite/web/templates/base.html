@@ -35,7 +35,7 @@
             display: inline-block;
             margin-left: 2rem;
         }
-        
+
         header nav a {
             color: #ecf0f1;
             margin: 0 1rem;
@@ -67,47 +67,58 @@
             margin: 2rem auto;
             padding: 0 2rem;
         }
-        
-        .sidebar {
-            display: none;
+
+        .container {
+            display: block;
         }
-        
-        @media (min-width: 768px) {
+
+        .sidebar {
+            background: white;
+            padding: 1rem;
+            border-radius: 4px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            margin-bottom: 1rem;
+        }
+
+        .sidebar ul {
+            list-style: none;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+            gap: 0.5rem;
+        }
+
+        .sidebar a {
+            display: block;
+            color: #2c3e50;
+            text-decoration: none;
+            padding: 0.6rem 0.8rem;
+            border-radius: 4px;
+            transition: background-color 0.2s;
+        }
+
+        .sidebar a:hover,
+        .sidebar a.active {
+            background-color: #ecf0f1;
+        }
+
+        @media (min-width: 900px) {
             .container {
                 display: grid;
-                grid-template-columns: 250px 1fr;
-                gap: 2rem;
+                grid-template-columns: 240px 1fr;
+                gap: 1.5rem;
             }
-            
+
             .sidebar {
-                display: block;
-                background: white;
-                padding: 1rem;
-                border-radius: 4px;
-                box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+                margin-bottom: 0;
                 height: fit-content;
             }
-            
+
             .sidebar ul {
-                list-style: none;
-            }
-            
-            .sidebar li {
-                margin-bottom: 0.5rem;
-            }
-            
-            .sidebar a {
                 display: block;
-                color: #2c3e50;
-                text-decoration: none;
-                padding: 0.75rem 1rem;
-                border-radius: 4px;
-                transition: background-color 0.3s;
             }
-            
-            .sidebar a:hover,
-            .sidebar a.active {
-                background-color: #ecf0f1;
+
+            .sidebar li {
+                margin-bottom: 0.35rem;
             }
         }
         
@@ -374,7 +385,24 @@
             {% endif %}
         {% endwith %}
         
-        {% block content %}{% endblock %}
+        <div class="container">
+            {% if current_user.is_authenticated %}
+            <aside class="sidebar">
+                <ul>
+                    <li><a href="{{ url_for('main.dashboard') }}" class="{{ 'active' if active_page == 'dashboard' else '' }}">Dashboard</a></li>
+                    <li><a href="{{ url_for('main.donors_list') }}" class="{{ 'active' if active_page == 'donors' else '' }}">Donors</a></li>
+                    <li><a href="{{ url_for('main.donation_create') }}" class="{{ 'active' if active_page == 'donations' else '' }}">Donations</a></li>
+                    <li><a href="{{ url_for('main.projects_dashboard') }}" class="{{ 'active' if active_page == 'projects' else '' }}">Projects</a></li>
+                    <li><a href="{{ url_for('main.funds_list') }}" class="{{ 'active' if active_page == 'funds' else '' }}">Funds</a></li>
+                    <li><a href="{{ url_for('main.reports_page') }}" class="{{ 'active' if active_page == 'reports' else '' }}">Reports</a></li>
+                </ul>
+            </aside>
+            {% endif %}
+
+            <section class="content">
+                {% block content %}{% endblock %}
+            </section>
+        </div>
     </main>
     
     <footer>

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+
+{% block title %}Funds - NGO HomeSuite{% endblock %}
+
+{% block content %}
+<h1>Funds</h1>
+<p class="text-muted">Fund allocations used by donations and expenses.</p>
+
+<div class="mb-3 mt-2">
+    <a href="{{ url_for('main.fund_create') }}" class="btn btn-primary">Add Fund</a>
+</div>
+
+{% if funds %}
+<table>
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Description</th>
+            <th>Status</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for fund in funds %}
+        <tr>
+            <td>{{ fund.name }}</td>
+            <td>{{ fund.description or '-' }}</td>
+            <td>{{ 'active' if fund.is_active else 'inactive' }}</td>
+            <td><a href="{{ url_for('main.fund_edit', fund_id=fund.id) }}" class="btn btn-secondary">Edit</a></td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="card">
+    <p>No funds are configured yet.</p>
+</div>
+{% endif %}
+{% endblock %}

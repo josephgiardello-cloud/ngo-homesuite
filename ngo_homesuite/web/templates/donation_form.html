@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+
+{% block title %}Record Donation - NGO HomeSuite{% endblock %}
+
+{% block content %}
+<h1>Record Donation</h1>
+<p class="text-muted">Capture a donation with donor, fund, and project attribution.</p>
+
+<form method="post" class="mt-2">
+    {{ form.hidden_tag() }}
+
+    <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));">
+        <div class="form-group {% if form.donor_id.errors %}error{% endif %}">
+            {{ form.donor_id.label }}
+            {{ form.donor_id() }}
+            {% for error in form.donor_id.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        </div>
+
+        <div class="form-group {% if form.amount.errors %}error{% endif %}">
+            {{ form.amount.label }}
+            {{ form.amount() }}
+            {% for error in form.amount.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        </div>
+
+        <div class="form-group {% if form.currency.errors %}error{% endif %}">
+            {{ form.currency.label }}
+            {{ form.currency() }}
+            {% for error in form.currency.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        </div>
+
+        <div class="form-group {% if form.payment_method.errors %}error{% endif %}">
+            {{ form.payment_method.label }}
+            {{ form.payment_method() }}
+            {% for error in form.payment_method.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        </div>
+
+        <div class="form-group {% if form.project_id.errors %}error{% endif %}">
+            {{ form.project_id.label }}
+            {{ form.project_id() }}
+            {% for error in form.project_id.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        </div>
+
+        <div class="form-group {% if form.fund_id.errors %}error{% endif %}">
+            {{ form.fund_id.label }}
+            {{ form.fund_id() }}
+            {% for error in form.fund_id.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        </div>
+
+        <div class="form-group {% if form.purpose.errors %}error{% endif %}">
+            {{ form.purpose.label }}
+            {{ form.purpose() }}
+            {% for error in form.purpose.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        </div>
+
+        <div class="form-group {% if form.reference_number.errors %}error{% endif %}">
+            {{ form.reference_number.label }}
+            {{ form.reference_number() }}
+            {% for error in form.reference_number.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        </div>
+    </div>
+
+    <div class="form-group {% if form.notes.errors %}error{% endif %}">
+        {{ form.notes.label }}
+        {{ form.notes(rows=4) }}
+        {% for error in form.notes.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+    </div>
+
+    {{ form.submit(class_='btn btn-primary') }}
+</form>
+{% endblock %}

@@ -40,5 +40,6 @@ gunicorn==22.0.0
 # Utilities
 requests==2.32.3
 python-dateutil==2.9.0.post0
+reportlab==4.2.2
 
 # Testing (see requirements-dev.txt for optional test dependencies)

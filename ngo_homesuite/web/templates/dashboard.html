@@ -10,6 +10,11 @@
     
     <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
         <div class="card">
+            <div class="card-text">Donors</div>
+            <div class="card-value">{{ stats.donor_count }}</div>
+        </div>
+
+        <div class="card">
             <div class="card-text">Active Beneficiaries</div>
             <div class="card-value">{{ stats.beneficiary_count }}</div>
         </div>
@@ -28,6 +33,16 @@
             <div class="card-text">Project Budget</div>
             <div class="card-value">${{ "%.2f"|format(stats.total_budget) }}</div>
         </div>
+
+        <div class="card">
+            <div class="card-text">Total Expenses</div>
+            <div class="card-value">${{ "%.2f"|format(stats.total_expenses) }}</div>
+        </div>
+
+        <div class="card">
+            <div class="card-text">Active Funds</div>
+            <div class="card-value">{{ stats.total_funds }}</div>
+        </div>
     </div>
     
     {% if stats.recent_donations %}
@@ -39,6 +54,7 @@
                     <th>Amount</th>
                     <th>Date</th>
                     <th>Status</th>
+                    <th>Receipt</th>
                 </tr>
             </thead>
             <tbody>
@@ -48,6 +64,7 @@
                         <td>{{ donation.currency }} {{ "%.2f"|format(donation.amount) }}</td>
                         <td>{{ donation.donation_date.strftime('%Y-%m-%d') }}</td>
                         <td><span style="padding: 0.25rem 0.75rem; border-radius: 20px; background-color: #d4edda; color: #155724;">{{ donation.status }}</span></td>
+                        <td><a href="{{ url_for('main.donation_receipt', donation_id=donation.id) }}" class="btn btn-secondary">PDF</a></td>
                     </tr>
                 {% endfor %}
             </tbody>
@@ -55,9 +72,9 @@
     {% endif %}
     
     <div style="margin-top: 2rem;">
-        <a href="#" class="btn btn-primary">View All Donations</a>
-        <a href="#" class="btn btn-secondary">View Beneficiaries</a>
-        <a href="#" class="btn btn-secondary">Manage Projects</a>
+        <a href="{{ url_for('main.donation_create') }}" class="btn btn-primary">Add Donation</a>
+        <a href="{{ url_for('main.donors_list') }}" class="btn btn-secondary">Manage Donors</a>
+        <a href="{{ url_for('main.projects_dashboard') }}" class="btn btn-secondary">Manage Projects</a>
     </div>
     
 {% else %}

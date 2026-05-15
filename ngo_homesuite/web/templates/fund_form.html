@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block title %}{{ 'Edit Fund' if is_edit else 'Add Fund' }} - NGO HomeSuite{% endblock %}
+
+{% block content %}
+<h1>{{ 'Edit Fund' if is_edit else 'Add Fund' }}</h1>
+
+<form method="post" class="mt-2">
+    {{ form.hidden_tag() }}
+
+    <div class="form-group {% if form.name.errors %}error{% endif %}">
+        {{ form.name.label }}
+        {{ form.name() }}
+        {% for error in form.name.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+    </div>
+
+    <div class="form-group {% if form.is_active.errors %}error{% endif %}">
+        {{ form.is_active.label }}
+        {{ form.is_active() }}
+        {% for error in form.is_active.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+    </div>
+
+    <div class="form-group {% if form.description.errors %}error{% endif %}">
+        {{ form.description.label }}
+        {{ form.description(rows=5) }}
+        {% for error in form.description.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+    </div>
+
+    {{ form.submit(class_='btn btn-primary') }}
+    <a href="{{ url_for('main.funds_list') }}" class="btn btn-secondary">Cancel</a>
+</form>
+{% endblock %}

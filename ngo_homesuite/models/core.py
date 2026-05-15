@@ -12,10 +12,12 @@ Core entities:
 from datetime import datetime
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
-from werkzeug.security import generate_password_hash, check_password_hash
+from argon2 import PasswordHasher
+from argon2.exceptions import VerifyMismatchError, VerificationError
 from sqlalchemy.dialects.sqlite import JSON
 
 db = SQLAlchemy()
+password_hasher = PasswordHasher()
 
 
 class User(UserMixin, db.Model):
@@ -34,7 +36,7 @@ class User(UserMixin, db.Model):
     phone = db.Column(db.String(20), nullable=True)
     
     # Role and status
-    role = db.Column(db.String(32), default='viewer', nullable=False)  # admin, fundraiser, volunteer_manager, viewer
+    role = db.Column(db.String(32), default='viewer', nullable=False)  # admin, staff, volunteer, viewer
     is_active = db.Column(db.Boolean, default=True, nullable=False, index=True)
     
     # Organization association
@@ -48,15 +50,24 @@ class User(UserMixin, db.Model):
     
     def set_password(self, password):
         """Hash and set password."""
-        self.password_hash = generate_password_hash(password, method='argon2')
+        self.password_hash = password_hasher.hash(password)
     
     def check_password(self, password):
         """Verify password against hash."""
-        return check_password_hash(self.password_hash, password)
+        try:
+            return password_hasher.verify(self.password_hash, password)
+        except (VerifyMismatchError, VerificationError):
+            return False
     
     def has_role(self, *roles):
         """Check if user has any of the specified roles."""
-        return self.role in roles
+        role_map = {
+            'fundraiser': 'staff',
+            'volunteer_manager': 'volunteer',
+        }
+        normalized_self = role_map.get(self.role, self.role)
+        normalized_roles = {role_map.get(role, role) for role in roles}
+        return normalized_self in normalized_roles
     
     def __repr__(self):
         return f'<User {self.username}>'
@@ -87,7 +98,7 @@ class Organization(db.Model):
     is_active = db.Column(db.Boolean, default=True, nullable=False, index=True)
     
     # Metadata
-    metadata = db.Column(JSON, nullable=True)  # For additional custom fields
+    metadata_json = db.Column('metadata', JSON, nullable=True)  # For additional custom fields
     
     # Timestamps
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
@@ -97,6 +108,10 @@ class Organization(db.Model):
     beneficiaries = db.relationship('Beneficiary', backref='organization', cascade='all, delete-orphan')
     projects = db.relationship('Project', backref='organization', cascade='all, delete-orphan')
     donations = db.relationship('Donation', backref='organization', cascade='all, delete-orphan')
+    donors = db.relationship('Donor', backref='organization', cascade='all, delete-orphan')
+    funds = db.relationship('Fund', backref='organization', cascade='all, delete-orphan')
+    volunteers = db.relationship('Volunteer', backref='organization', cascade='all, delete-orphan')
+    expenses = db.relationship('Expense', backref='organization', cascade='all, delete-orphan')
     
     def __repr__(self):
         return f'<Organization {self.name}>'
@@ -149,6 +164,7 @@ class Project(db.Model):
     # Project info
     name = db.Column(db.String(200), nullable=False, index=True)
     description = db.Column(db.Text, nullable=True)
+    program = db.Column(db.String(200), nullable=True)
     
     # Dates
     start_date = db.Column(db.Date, nullable=True)
@@ -181,6 +197,8 @@ class Donation(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
     project_id = db.Column(db.Integer, db.ForeignKey('projects.id'), nullable=True)
+    fund_id = db.Column(db.Integer, db.ForeignKey('funds.id'), nullable=True)
+    donor_id = db.Column(db.Integer, db.ForeignKey('donors.id'), nullable=True)
     
     # Donor info
     donor_name = db.Column(db.String(200), nullable=False)
@@ -211,5 +229,103 @@ class Donation(db.Model):
         return f'<Donation {self.amount} {self.currency}>'
 
 
+class Donor(db.Model):
+    """Donor profile and contact information."""
+
+    __tablename__ = 'donors'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    name = db.Column(db.String(200), nullable=False, index=True)
+    email = db.Column(db.String(120), nullable=True, index=True)
+    phone = db.Column(db.String(20), nullable=True)
+    donor_type = db.Column(db.String(50), default='individual', nullable=False)
+    notes = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    donations = db.relationship('Donation', backref='donor')
+
+    def __repr__(self):
+        return f'<Donor {self.name}>'
+
+
+class Fund(db.Model):
+    """Fund that donations and expenses can be allocated to."""
+
+    __tablename__ = 'funds'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    name = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    donations = db.relationship('Donation', backref='fund')
+    expenses = db.relationship('Expense', backref='fund')
+
+    __table_args__ = (
+        db.UniqueConstraint('organization_id', 'name', name='uq_funds_org_name'),
+    )
+
+    def __repr__(self):
+        return f'<Fund {self.name}>'
+
+
+class Volunteer(db.Model):
+    """Volunteer record for activity and contact management."""
+
+    __tablename__ = 'volunteers'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    name = db.Column(db.String(200), nullable=False)
+    email = db.Column(db.String(120), nullable=True, index=True)
+    phone = db.Column(db.String(20), nullable=True)
+    hours_logged = db.Column(db.Float, default=0.0, nullable=False)
+    status = db.Column(db.String(50), default='active', nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self):
+        return f'<Volunteer {self.name}>'
+
+
+class Expense(db.Model):
+    """Expense captured for project/program and fund reporting."""
+
+    __tablename__ = 'expenses'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    project_id = db.Column(db.Integer, db.ForeignKey('projects.id'), nullable=True)
+    fund_id = db.Column(db.Integer, db.ForeignKey('funds.id'), nullable=True)
+    amount = db.Column(db.Float, nullable=False)
+    currency = db.Column(db.String(3), default='USD', nullable=False)
+    paid_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    payee = db.Column(db.String(200), nullable=True)
+    description = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    project = db.relationship('Project', backref='expenses')
+
+    def __repr__(self):
+        return f'<Expense {self.amount} {self.currency}>'
+
+
 # Export all models
-__all__ = ['db', 'User', 'Organization', 'Beneficiary', 'Project', 'Donation']
+__all__ = [
+    'db',
+    'User',
+    'Organization',
+    'Donor',
+    'Donation',
+    'Project',
+    'Fund',
+    'Volunteer',
+    'Expense',
+    'Beneficiary',
+]

@@ -1,6 +1,7 @@
 from reportlab.lib.pagesizes import LETTER
 from reportlab.pdfgen import canvas
 import datetime
+from io import BytesIO
 
 def generate_receipt_pdf(donation: dict, donor: dict, output_path: str):
     """
@@ -18,3 +19,21 @@ def generate_receipt_pdf(donation: dict, donor: dict, output_path: str):
     c.drawString(72, 620, "Thank you for your support! This receipt may be used for tax purposes.")
     c.showPage()
     c.save()
+
+
+def generate_receipt_pdf_bytes(donation: dict, donor: dict) -> bytes:
+    """Generate a donation receipt PDF and return raw bytes for HTTP responses."""
+
+    buffer = BytesIO()
+    c = canvas.Canvas(buffer, pagesize=LETTER)
+    c.setFont("Helvetica", 12)
+    c.drawString(72, 720, "Donation Receipt")
+    c.drawString(72, 700, f"Date: {donation.get('received_at', datetime.date.today())}")
+    c.drawString(72, 680, f"Donor: {donor.get('name', '')}")
+    c.drawString(72, 660, f"Address: {donor.get('address', '')}")
+    c.drawString(72, 640, f"Amount: {donation.get('amount_cents', 0)/100:.2f} {donation.get('currency', 'USD')}")
+    c.drawString(72, 620, "Thank you for your support! This receipt may be used for tax purposes.")
+    c.showPage()
+    c.save()
+    buffer.seek(0)
+    return buffer.read()
