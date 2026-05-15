@@ -149,6 +149,10 @@ ngo-homesuite/
    ```bash
    pip install -r requirements.txt
    ```
+   Alternative (from `pyproject.toml`):
+   ```bash
+   pip install -e .
+   ```
 
 4. **Configure the application**
    ```bash
@@ -406,6 +410,27 @@ If you see "database is locked":
 1. Ensure only one instance is running
 2. Check for orphaned connections
 3. Restart the application
+4. Run migration preflight to validate backup/lock flow:
+   ```bash
+   python -m ngo_homesuite.db.migrate --dry-run --verify-backup
+   ```
+
+### Ollama Unavailable
+If Copilot requests fail or timeout:
+1. Ensure Ollama is running locally (`http://localhost:11434` by default)
+2. Verify model availability:
+   ```bash
+   ollama list
+   ```
+3. Confirm `.env` values for `OLLAMA_HOST` and `OLLAMA_MODEL`
+
+### Port Already In Use
+If startup fails because port 5000 or 8000 is already in use:
+1. Change `PORT` in `.env`
+2. On Windows, identify the conflicting process:
+   ```powershell
+   Get-NetTCPConnection -LocalPort 5000 | Select-Object LocalAddress,LocalPort,OwningProcess,State
+   ```
 
 ### Password Policy Errors
 The system enforces strong password policies:

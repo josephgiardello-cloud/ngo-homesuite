@@ -39,7 +39,7 @@ gunicorn==22.0.0
 
 # Utilities
 requests==2.32.3
-ollama>=0.3.0
+ollama==0.3.3
 langchain==0.3.27
 langchain-ollama==0.3.3
 langchain-community==0.3.27

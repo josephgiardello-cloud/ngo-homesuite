@@ -39,6 +39,12 @@ jobs:
         pip install -r requirements.txt
         pip install pytest pytest-cov
 
+    - name: Migration preflight
+      env:
+        NGO_HOMESUITE_DB_KEY: ""
+      run: |
+        python -m ngo_homesuite.db.migrate --dry-run --verify-backup
+
     - name: Run tests
       run: |
         pytest ngo_homesuite/ -v --tb=short --cov=ngo_homesuite --cov-report=xml

@@ -4,7 +4,7 @@ import hashlib
 import sys
 import datetime
 import json
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, cast
 import shutil
 
 # --- AUTOMATED ROLLBACK SUPPORT ---
@@ -1121,6 +1121,29 @@ MIGRATIONS: Dict[int, Callable[[Any, Any], None]] = {
 # --- MIGRATION LOGIC ---
 
 def migrate_schema(conn: Any, cur: Any) -> None:
+    # Legacy bridge: keep API compatibility, but route migration execution through
+    # the actively maintained SQL-file runner.
+    try:
+        cur.execute("PRAGMA database_list")
+        db_rows = cur.fetchall()
+        db_path = None
+        for row in db_rows:
+            # sqlite pragma row: (seq, name, file)
+            if len(row) >= 3 and row[1] == 'main':
+                db_path = row[2]
+                break
+        from ngo_homesuite.db.migrate import auto_migrate  # pyright: ignore[reportUnknownVariableType]
+        auto_migrate_fn = cast(Callable[[str | None], None], auto_migrate)
+
+        print(
+            "[MIGRATION] db.schema.migrate_schema is deprecated; delegating to ngo_homesuite.db.migrate.auto_migrate",
+            file=sys.stderr,
+        )
+        auto_migrate_fn(db_path or None)
+        return
+    except Exception as delegated_exc:
+        print(f"[MIGRATION] Delegation fallback failed: {delegated_exc}. Running legacy migration path.", file=sys.stderr)
+
     def backup_db_file():
         db_path = getattr(conn, 'database', None)
         if not db_path or db_path in (':memory:', ''):
