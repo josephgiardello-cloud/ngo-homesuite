@@ -125,29 +125,29 @@ def _append_external_audit_log(entry: Mapping[str, Any], log_type: str = "audit"
         log_path_obj.parent.mkdir(parents=True, exist_ok=True)
         log_path_obj.touch(exist_ok=False)
         _set_secure_permissions(log_path_obj)
-        try:
-            import portalocker
+    try:
+        import portalocker
+        with open(log_path, "a", encoding="utf-8") as f:
+            portalocker.lock(f, portalocker.LOCK_EX)
+            f.write(json.dumps(entry, sort_keys=True, separators=(',', ':')) + "\n")
+            portalocker.unlock(f)
+    except ImportError:
+        # Fallback to fcntl.flock on Unix
+        import sys
+        if sys.platform != "win32":
+            import fcntl
             with open(log_path, "a", encoding="utf-8") as f:
-                portalocker.lock(f, portalocker.LOCK_EX)
+                fcntl.flock(f, fcntl.LOCK_EX)
                 f.write(json.dumps(entry, sort_keys=True, separators=(',', ':')) + "\n")
-                portalocker.unlock(f)
-        except ImportError:
-            # Fallback to fcntl.flock on Unix
-            import sys
-            if sys.platform != "win32":
-                import fcntl
-                with open(log_path, "a", encoding="utf-8") as f:
-                    fcntl.flock(f, fcntl.LOCK_EX)
-                    f.write(json.dumps(entry, sort_keys=True, separators=(',', ':')) + "\n")
-                    fcntl.flock(f, fcntl.LOCK_UN)
-            else:
-                raise FatalDBError("portalocker is required on Windows for safe audit logging. Please install portalocker.")
-        except Exception as e:
-            logger.error(
-                f"Failed to write to external {log_type} log: {e}",
-                extra={"event_id": f"{log_type}.log.write_failed", "extra_fields": {"error": str(e)}}
-            )
-            raise FatalDBError(f"Failed to write to external {log_type} log: {e}")
+                fcntl.flock(f, fcntl.LOCK_UN)
+        else:
+            raise FatalDBError("portalocker is required on Windows for safe audit logging. Please install portalocker.")
+    except Exception as e:
+        logger.error(
+            f"Failed to write to external {log_type} log: {e}",
+            extra={"event_id": f"{log_type}.log.write_failed", "extra_fields": {"error": str(e)}}
+        )
+        raise FatalDBError(f"Failed to write to external {log_type} log: {e}")
 
 
 def log_key_provenance(conn: sqlite3.Connection, old_key: str, new_key: str, operator: str | None = None) -> None:
@@ -294,7 +294,7 @@ class DualKeyWindow:
     def try_keys(self, conn: sqlite3.Connection) -> bool:
         """Try new_key, then old_key if window is active. Raise if both fail."""
         with self._lock:
-            if not self.is_active():
+            if time.time() >= self.expires_at:
                 raise FatalDBError("Dual-key window is not active.")
             try:
                 _sqlcipher_apply_key(conn, self.new_key)

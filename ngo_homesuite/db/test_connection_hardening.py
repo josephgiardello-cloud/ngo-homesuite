@@ -76,16 +76,11 @@ def test_append_only_log(tmp_path):
     os.environ['NGO_HOMESUITE_PROVENANCE_LOG'] = str(log_path)
     entry = {'ts': 'now', 'operator': 'test', 'old_key_fingerprint': 'a', 'new_key_fingerprint': 'b', 'signature': 'sig', 'event': 'key_rotation'}
     connection._append_external_audit_log(entry, log_type='provenance')
+    connection._append_external_audit_log({**entry, 'ts': 'later'}, log_type='provenance')
     assert log_path.exists()
     with open(log_path) as f:
         lines = f.readlines()
-    assert len(lines) == 1
-    # Try to open in write mode should not truncate (simulate append-only policy)
-    with open(log_path, 'a') as f:
-        f.write('test\n')
-    with open(log_path) as f:
-        lines2 = f.readlines()
-    assert len(lines2) == 2
+    assert len(lines) == 2
 
 
 def test_logger_handler_hijack_defense(monkeypatch):
