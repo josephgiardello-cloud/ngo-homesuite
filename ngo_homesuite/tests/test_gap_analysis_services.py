@@ -323,6 +323,30 @@ class TestP2PFundraising:
 
         db.session.rollback()
 
+    def test_unlink_donation_rejects_cross_org_donation(self, ctx):
+        from ngo_homesuite.services.p2p_service import create_page, link_donation, unlink_donation
+        from ngo_homesuite.models.core import Organization
+
+        org2 = Organization(name="Org Two Unlink", slug="org-two-unlink", is_active=True)
+        db.session.add(org2)
+        db.session.flush()
+
+        donor_org1 = _make_donor(org_id=1, name="Org1 Unlink Donor")
+        donor_org2 = _make_donor(org_id=org2.id, name="Org2 Unlink Donor")
+
+        page = create_page(1, donor_org1.id, "Org1 Unlink Page", goal_amount=100.0)
+        donation_org1 = _make_donation(1, donor_org1.id, 40.0)
+        donation_org2 = _make_donation(org2.id, donor_org2.id, 65.0)
+        link_donation(page.id, 1, donation_org1.id)
+
+        with pytest.raises(ValueError, match="invalid resource reference"):
+            unlink_donation(page.id, 1, donation_org2.id)
+
+        # Valid same-org unlink still succeeds.
+        unlink_donation(page.id, 1, donation_org1.id)
+
+        db.session.rollback()
+
 
 # ============================================================
 # Copilot Tools — Engagement Score integration

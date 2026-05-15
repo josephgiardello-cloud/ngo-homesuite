@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -67,7 +68,7 @@ class TestPiiRedaction:
 # ---------------------------------------------------------------------------
 
 from ngo_homesuite.app_factory import create_app
-from ngo_homesuite.models.core import db as _db, User, AIConversation, AIMessage
+from ngo_homesuite.models.core import db as _db, User, Organization, AIConversation, AIMessage
 
 
 @pytest.fixture(scope="module")
@@ -224,6 +225,51 @@ class TestConversationPersistence:
         _login(client, "test_viewer", "viewer_pass_123")
         rv = client.get("/ai/history", headers={"Accept": "application/json"})
         assert rv.status_code == 403
+
+    def test_history_scoped_to_user_organization(self, client, app):
+        with app.app_context():
+            org1 = Organization(name="AI Org One", slug="ai-org-one", is_active=True)
+            org2 = Organization(name="AI Org Two", slug="ai-org-two", is_active=True)
+            _db.session.add_all([org1, org2])
+            _db.session.flush()
+
+            user = User.query.filter_by(username="ai_org_admin").first()
+            if user is None:
+                user = User(
+                    username="ai_org_admin",
+                    email="ai.org.admin@test.local",
+                    role="admin",
+                    is_active=True,
+                    organization_id=org1.id,
+                )
+                user.set_password("ai_org_admin_pass")
+                _db.session.add(user)
+                _db.session.flush()
+            else:
+                user.organization_id = org1.id
+
+            conv_good = AIConversation(
+                session_id=f"history-same-org-{uuid.uuid4().hex[:10]}",
+                user_id=user.id,
+                organization_id=org1.id,
+                model="llama3.2",
+            )
+            conv_other = AIConversation(
+                session_id=f"history-other-org-{uuid.uuid4().hex[:10]}",
+                user_id=user.id,
+                organization_id=org2.id,
+                model="llama3.2",
+            )
+            _db.session.add_all([conv_good, conv_other])
+            _db.session.commit()
+
+        _login(client, "ai_org_admin", "ai_org_admin_pass")
+        rv = client.get("/ai/history")
+        assert rv.status_code == 200
+        data = rv.get_json()
+        session_ids = {item["session_id"] for item in data}
+        assert any(s.startswith("history-same-org-") for s in session_ids)
+        assert not any(s.startswith("history-other-org-") for s in session_ids)
 
 
 # ---------------------------------------------------------------------------

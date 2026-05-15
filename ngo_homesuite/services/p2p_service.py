@@ -199,7 +199,12 @@ def link_donation(page_id: int, organization_id: int, donation_id: int) -> P2PPa
     return link
 
 
-def unlink_donation(page_id: int, donation_id: int) -> None:
+def unlink_donation(page_id: int, organization_id: int, donation_id: int) -> None:
+    P2PPage.query.filter_by(id=page_id, organization_id=organization_id).first_or_404()
+    donation = Donation.query.filter_by(id=donation_id, organization_id=organization_id).first()
+    if donation is None:
+        raise ValueError("invalid resource reference")
+
     link = P2PPageDonation.query.filter_by(page_id=page_id, donation_id=donation_id).first()
     if link:
         db.session.delete(link)

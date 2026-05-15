@@ -175,12 +175,21 @@ def _resolve_tenant_id(payload: dict[str, Any]) -> str:
 
 
 def _get_or_create_conversation(session_id: str, model: str, tenant_id: str) -> AIConversation:
+    user_id = getattr(current_user, "id", None)
+    organization_id = getattr(current_user, "organization_id", None)
+
     conv = AIConversation.query.filter_by(session_id=session_id).first()
+    if conv is not None:
+        # Prevent cross-tenant or cross-user conversation reuse if a session id is ever replayed.
+        if conv.organization_id != organization_id or conv.user_id != user_id:
+            raise PermissionError("Conversation does not belong to the authenticated user context")
+        return conv
+
     if conv is None:
         conv = AIConversation(
             session_id=session_id,
-            user_id=getattr(current_user, "id", None),
-            organization_id=getattr(current_user, "organization_id", None),
+            user_id=user_id,
+            organization_id=organization_id,
             model=model,
             tenant_id=tenant_id,
         )
@@ -312,9 +321,10 @@ def _audit_interaction(user_prompt: str, model: str, tenant_id: str) -> None:
 def conversation_history() -> Response:
     """Return the last 20 AI conversations for the current user."""
     user_id = getattr(current_user, "id", None)
+    organization_id = getattr(current_user, "organization_id", None)
     convs = (
         AIConversation.query
-        .filter_by(user_id=user_id)
+        .filter_by(user_id=user_id, organization_id=organization_id)
         .order_by(AIConversation.created_at.desc())
         .limit(20)
         .all()

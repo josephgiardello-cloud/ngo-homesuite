@@ -18,6 +18,7 @@ Documentation index:
 - Feature maturity matrix: `docs/feature_status.md`
 - Production checklist: `docs/production_checklist.md`
 - Architecture decisions (ADR): `docs/adr/README.md`
+- Release/versioning process: `docs/release_process.md`
 
 ### Screenshot Gallery
 
@@ -266,7 +267,7 @@ pytest ngo_homesuite/utils --maxfail=10 -v
 - First-party test suite runs from `ngo_homesuite/` by default via `pytest.ini`
 - Includes AI hardening, copilot routes, auth models, DB hardening, integrity drift, and web sprint tests
 - Bundled third-party test trees outside `ngo_homesuite/` are excluded from default project test runs
-- Latest full run (2026-05-15): `130 collected`, `129 passed`, `1 skipped`
+- Latest full run (2026-05-15): `132 collected`, `131 passed`, `1 skipped`
 
 To refresh this value locally:
 ```bash
