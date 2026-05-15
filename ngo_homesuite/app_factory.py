@@ -69,9 +69,11 @@ def create_app(config=None):
     # Register blueprints
     from ngo_homesuite.web.main_routes import main_bp
     from ngo_homesuite.web.auth_routes import auth_bp
-    
+    from ngo_homesuite.web.ai_routes import ai_bp
+
     app.register_blueprint(main_bp)
     app.register_blueprint(auth_bp)
+    app.register_blueprint(ai_bp)
     
     # Setup logging
     setup_logging(app)

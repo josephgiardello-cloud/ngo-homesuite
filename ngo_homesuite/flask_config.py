@@ -64,6 +64,14 @@ class Config:
     # JSON config
     JSON_SORT_KEYS = False
 
+    # Apex Sovereign AI
+    APEX_AI_ENABLED = os.environ.get('APEX_AI_ENABLED', 'True') == 'True'
+    APEX_BASE_URL = os.environ.get('APEX_BASE_URL', 'http://localhost:8000')
+    APEX_API_TOKEN = os.environ.get('APEX_API_TOKEN', '')
+    APEX_MODEL = os.environ.get('APEX_MODEL', 'llama3.2')
+    APEX_TENANT_ID = os.environ.get('APEX_TENANT_ID', 'ngo-default')
+    APEX_TIMEOUT_S = float(os.environ.get('APEX_TIMEOUT_S', '120'))
+
 
 class DevelopmentConfig(Config):
     """Development configuration."""

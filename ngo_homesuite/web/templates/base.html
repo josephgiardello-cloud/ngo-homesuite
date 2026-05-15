@@ -370,6 +370,145 @@
         .mb-4 { margin-bottom: 2rem; }
 
         h1, h2, h3 { margin-bottom: 0.7rem; color: var(--text); }
+
+        .ai-fab {
+            position: fixed;
+            right: 1rem;
+            bottom: 1rem;
+            z-index: 60;
+            width: 58px;
+            height: 58px;
+            border-radius: 50%;
+            border: none;
+            background: linear-gradient(135deg, #1476d4 0%, #0d4f93 100%);
+            color: #fff;
+            box-shadow: 0 12px 24px rgba(6, 30, 58, 0.25);
+            font-size: 1.3rem;
+            font-weight: 700;
+        }
+
+        .ai-panel {
+            position: fixed;
+            right: 1rem;
+            bottom: 4.8rem;
+            width: min(420px, calc(100vw - 2rem));
+            max-height: min(72vh, 640px);
+            z-index: 60;
+            border-radius: 14px;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            box-shadow: var(--shadow);
+            display: none;
+            overflow: hidden;
+        }
+
+        .ai-panel.open {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .ai-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.7rem 0.9rem;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface-soft);
+        }
+
+        .ai-title {
+            font-weight: 700;
+            font-size: 0.95rem;
+            color: var(--text);
+        }
+
+        .ai-badge {
+            font-size: 0.74rem;
+            color: var(--muted);
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            padding: 0.15rem 0.5rem;
+        }
+
+        .ai-messages {
+            padding: 0.75rem;
+            overflow-y: auto;
+            flex: 1;
+            min-height: 220px;
+            background: var(--surface);
+        }
+
+        .ai-msg {
+            margin-bottom: 0.65rem;
+            max-width: 90%;
+            border-radius: 10px;
+            padding: 0.55rem 0.68rem;
+            font-size: 0.88rem;
+            line-height: 1.4;
+            white-space: pre-wrap;
+        }
+
+        .ai-msg.user {
+            margin-left: auto;
+            background: rgba(20, 118, 212, 0.13);
+            border: 1px solid rgba(20, 118, 212, 0.22);
+        }
+
+        .ai-msg.assistant {
+            margin-right: auto;
+            background: var(--surface-soft);
+            border: 1px solid var(--border);
+        }
+
+        .ai-msg.error {
+            margin-right: auto;
+            background: rgba(201, 63, 63, 0.12);
+            border: 1px solid rgba(201, 63, 63, 0.3);
+            color: var(--danger);
+        }
+
+        .ai-input-wrap {
+            border-top: 1px solid var(--border);
+            padding: 0.65rem;
+            display: grid;
+            gap: 0.55rem;
+            background: var(--surface);
+        }
+
+        .ai-textarea {
+            width: 100%;
+            resize: vertical;
+            min-height: 70px;
+            max-height: 160px;
+        }
+
+        .ai-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 0.55rem;
+        }
+
+        .ai-hint {
+            color: var(--muted);
+            font-size: 0.75rem;
+        }
+
+        @media (max-width: 680px) {
+            .ai-panel {
+                right: 0.5rem;
+                bottom: 4.5rem;
+                width: calc(100vw - 1rem);
+                max-height: 74vh;
+            }
+
+            .ai-fab {
+                right: 0.75rem;
+                bottom: 0.75rem;
+                width: 54px;
+                height: 54px;
+            }
+        }
     </style>
     {% block extra_css %}{% endblock %}
 </head>
@@ -426,6 +565,29 @@
             </section>
         </div>
     </main>
+
+    {% if current_user.is_authenticated %}
+    <button type="button" class="ai-fab" id="aiFab" aria-label="Open AI assistant">AI</button>
+    <section class="ai-panel" id="aiPanel" aria-live="polite" aria-label="Apex AI Assistant">
+        <div class="ai-header">
+            <div>
+                <div class="ai-title">Apex Assistant</div>
+                <div class="ai-badge">Governed NGO Mode</div>
+            </div>
+            <button type="button" class="btn btn-secondary" id="aiCloseBtn">Close</button>
+        </div>
+        <div class="ai-messages" id="aiMessages">
+            <div class="ai-msg assistant">Hello. I can help with donor outreach drafts, impact summaries, budget notes, and report analysis.</div>
+        </div>
+        <form class="ai-input-wrap" id="aiForm">
+            <textarea id="aiPrompt" class="ai-textarea" placeholder="Ask about reports, donor communications, or operations..." required></textarea>
+            <div class="ai-row">
+                <span class="ai-hint">All responses are routed through Apex Sovereign policy controls.</span>
+                <button type="submit" class="btn btn-primary" id="aiSendBtn">Send</button>
+            </div>
+        </form>
+    </section>
+    {% endif %}
     
     <footer>
         <p>&copy; 2026 NGO HomeSuite. All rights reserved.</p>
@@ -460,7 +622,137 @@
                     applyTheme(next);
                 });
             }
+
+            const aiFab = document.getElementById('aiFab');
+            const aiPanel = document.getElementById('aiPanel');
+            const aiCloseBtn = document.getElementById('aiCloseBtn');
+            const aiForm = document.getElementById('aiForm');
+            const aiPrompt = document.getElementById('aiPrompt');
+            const aiMessages = document.getElementById('aiMessages');
+            const aiSendBtn = document.getElementById('aiSendBtn');
+
+            if (aiFab && aiPanel && aiForm && aiPrompt && aiMessages && aiSendBtn) {
+                function togglePanel(forceOpen) {
+                    const shouldOpen = typeof forceOpen === 'boolean' ? forceOpen : !aiPanel.classList.contains('open');
+                    aiPanel.classList.toggle('open', shouldOpen);
+                    if (shouldOpen) {
+                        aiPrompt.focus();
+                    }
+                }
+
+                function addMessage(text, type) {
+                    const el = document.createElement('div');
+                    el.className = 'ai-msg ' + type;
+                    el.textContent = text;
+                    aiMessages.appendChild(el);
+                    aiMessages.scrollTop = aiMessages.scrollHeight;
+                    return el;
+                }
+
+                async function streamAssistantReply(promptText) {
+                    const response = await fetch('{{ url_for("ai.stream_chat") }}', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            prompt: promptText,
+                            context: {
+                                page: window.location.pathname
+                            }
+                        })
+                    });
+
+                    if (!response.ok || !response.body) {
+                        throw new Error('Assistant is unavailable right now.');
+                    }
+
+                    const assistantEl = addMessage('', 'assistant');
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = '';
+
+                    while (true) {
+                        const result = await reader.read();
+                        if (result.done) {
+                            break;
+                        }
+
+                        buffer += decoder.decode(result.value, { stream: true });
+                        const parts = buffer.split('\n\n');
+                        buffer = parts.pop() || '';
+
+                        for (const part of parts) {
+                            const lines = part.split('\n');
+                            for (const line of lines) {
+                                if (!line.startsWith('data:')) {
+                                    continue;
+                                }
+                                const payload = line.slice(5).trim();
+                                if (!payload || payload === '[DONE]') {
+                                    continue;
+                                }
+
+                                let data;
+                                try {
+                                    data = JSON.parse(payload);
+                                } catch (_err) {
+                                    continue;
+                                }
+
+                                if (data.error) {
+                                    assistantEl.className = 'ai-msg error';
+                                    assistantEl.textContent = data.error;
+                                    return;
+                                }
+
+                                if (data.token) {
+                                    assistantEl.textContent += data.token;
+                                    aiMessages.scrollTop = aiMessages.scrollHeight;
+                                }
+                            }
+                        }
+                    }
+
+                    if (!assistantEl.textContent.trim()) {
+                        assistantEl.textContent = 'No response content was returned by Apex.';
+                    }
+                }
+
+                aiFab.addEventListener('click', function() {
+                    togglePanel();
+                });
+
+                if (aiCloseBtn) {
+                    aiCloseBtn.addEventListener('click', function() {
+                        togglePanel(false);
+                    });
+                }
+
+                aiForm.addEventListener('submit', async function(event) {
+                    event.preventDefault();
+                    const text = aiPrompt.value.trim();
+                    if (!text) {
+                        return;
+                    }
+
+                    addMessage(text, 'user');
+                    aiPrompt.value = '';
+                    aiSendBtn.disabled = true;
+                    aiSendBtn.textContent = 'Streaming...';
+
+                    try {
+                        await streamAssistantReply(text);
+                    } catch (error) {
+                        addMessage(error.message || 'Unexpected assistant error.', 'error');
+                    } finally {
+                        aiSendBtn.disabled = false;
+                        aiSendBtn.textContent = 'Send';
+                    }
+                });
+            }
         })();
     </script>
+    {% block extra_js %}{% endblock %}
 </body>
 </html>
