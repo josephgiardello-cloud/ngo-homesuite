@@ -140,3 +140,12 @@ def test_optional_relationship_counts_adds_org_filter_when_column_exists(registr
     assert len(captured) == 3
     assert all("organization_id = :org_id" in sql for sql, _ in captured)
     assert all(params.get("org_id") == 42 for _, params in captured)
+
+
+def test_generate_report_requires_organization_context(registry):
+    payload = registry.execute(
+        "generate_report",
+        {"report_type": "donor_summary", "params": {}},
+        {"actor": "test-copilot"},
+    )
+    assert payload["error"] == "organization_id is required in runtime context"

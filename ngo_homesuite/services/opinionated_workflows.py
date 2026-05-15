@@ -22,8 +22,14 @@ def _make_receipt_number(donation_id: int) -> str:
     return f"R-{donation_id:06d}-{datetime.now(timezone.utc).strftime('%Y%m%d')}"
 
 
-def run_donation_receipt_followup_workflow(*, donation_id: int, actor: str, db_path: str = 'ngo_homesuite.db') -> dict:
-    donation = Donation.query.filter_by(id=donation_id).first()
+def run_donation_receipt_followup_workflow(
+    *,
+    donation_id: int,
+    actor: str,
+    organization_id: int,
+    db_path: str = 'ngo_homesuite.db',
+) -> dict:
+    donation = Donation.query.filter_by(id=donation_id, organization_id=organization_id).first()
     if donation is None:
         return {
             "ok": False,

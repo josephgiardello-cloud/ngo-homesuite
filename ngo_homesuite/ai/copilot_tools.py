@@ -788,10 +788,18 @@ class CopilotToolRegistry:
         params = args.get("params") if isinstance(args.get("params"), dict) else {}
         if not report_type:
             return {"error": "report_type is required"}
+        org_id = self._org_filter(runtime_ctx)
+        if org_id is None:
+            return {"error": "organization_id is required in runtime context"}
 
         actor = runtime_ctx.get("actor") or "copilot"
         try:
-            return self.reporting_service.generate_report(report_type, params=params, actor=actor)
+            return self.reporting_service.generate_report(
+                report_type,
+                params=params,
+                actor=actor,
+                organization_id=org_id,
+            )
         except Exception as exc:
             return {"error": str(exc), "report_type": report_type}
 
@@ -799,9 +807,17 @@ class CopilotToolRegistry:
         report_type = str(args.get("report_type", "grant_pipeline")).strip() or "grant_pipeline"
         params = args.get("params") if isinstance(args.get("params"), dict) else {}
         actor = runtime_ctx.get("actor") or "copilot"
+        org_id = self._org_filter(runtime_ctx)
+        if org_id is None:
+            return {"error": "organization_id is required in runtime context"}
 
         try:
-            rows = self.reporting_service.generate_report(report_type, params=params, actor=actor)
+            rows = self.reporting_service.generate_report(
+                report_type,
+                params=params,
+                actor=actor,
+                organization_id=org_id,
+            )
         except Exception as exc:
             return {"error": str(exc), "report_type": report_type}
 
@@ -893,12 +909,16 @@ class CopilotToolRegistry:
     def _execute_donation_followup_workflow(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
         donation_id = int(args.get("donation_id", 0) or 0)
         actor = str(runtime_ctx.get("actor") or "copilot")
+        org_id = self._org_filter(runtime_ctx)
         if donation_id <= 0:
             return {"error": "donation_id is required"}
+        if org_id is None:
+            return {"error": "organization_id is required in runtime context"}
 
         return run_donation_receipt_followup_workflow(
             donation_id=donation_id,
             actor=actor,
+            organization_id=org_id,
         )
 
     # ------------------------------------------------------------------ #

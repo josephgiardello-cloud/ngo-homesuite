@@ -509,8 +509,9 @@ def api_semantic_context():
     org = _current_org()
     registry = _build_domain_registry_for_org(org)
     memory = SemanticMemoryLayer()
-    memory.index_registry(registry)
-    return {'ok': True, 'context': memory.assemble_context(task=task, limit=6)}
+    org_id = org.id if org else None
+    memory.index_registry(registry, organization_id=org_id)
+    return {'ok': True, 'context': memory.assemble_context(task=task, limit=6, organization_id=org_id)}
 
 
 @main_bp.route('/workflows', methods=['GET'])
@@ -528,10 +529,15 @@ def workflow_donation_route():
     if not donation_id:
         flash('Donation ID is required.', 'error')
         return redirect(url_for('main.workflows_page'))
+    org = _current_org()
+    if not org:
+        flash('No organization is available.', 'error')
+        return redirect(url_for('main.workflows_page'))
 
     result = run_donation_receipt_followup_workflow(
         donation_id=donation_id,
         actor=getattr(current_user, 'username', 'workflow'),
+        organization_id=org.id,
         db_path=_sqlite_db_file_path(),
     )
     flash('Workflow completed.' if result.get('ok') else str(result.get('error')), 'success' if result.get('ok') else 'error')
@@ -583,9 +589,14 @@ def workflow_program_route():
 @login_required
 @roles_required('admin', 'staff')
 def api_workflow_donation_run(donation_id: int):
+    org = _current_org()
+    if not org:
+        return {'ok': False, 'error': 'No organization is available.'}, 400
+
     result = run_donation_receipt_followup_workflow(
         donation_id=donation_id,
         actor=getattr(current_user, 'username', 'workflow'),
+        organization_id=org.id,
         db_path=_sqlite_db_file_path(),
     )
     return (result, 200) if result.get('ok') else (result, 404)
