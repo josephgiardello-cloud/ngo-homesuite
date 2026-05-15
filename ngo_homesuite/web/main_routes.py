@@ -1,5 +1,7 @@
 """Main web routes, dashboards, and Phase 1 CRUD interfaces."""
 
+import csv
+from collections import defaultdict
 from datetime import datetime
 from typing import Optional as TypingOptional
 
@@ -9,6 +11,7 @@ from flask_wtf import FlaskForm
 from wtforms import StringField, SelectField, TextAreaField, FloatField, SubmitField
 from wtforms.validators import DataRequired, Optional as WTOptional, NumberRange, Email
 from io import BytesIO
+from openpyxl import Workbook
 
 from ngo_homesuite.models.core import (
     Organization, Beneficiary, Project, Donation, Donor, Fund, Expense, db
@@ -92,6 +95,30 @@ def _current_org() -> TypingOptional[Organization]:
     return Organization.query.filter_by(is_active=True).first()
 
 
+def _build_csv_bytes(headers, rows):
+    buffer = BytesIO()
+    text_buffer = buffer if False else None
+    import io
+    text_stream = io.StringIO()
+    writer = csv.writer(text_stream)
+    writer.writerow(headers)
+    writer.writerows(rows)
+    return text_stream.getvalue().encode('utf-8-sig')
+
+
+def _build_xlsx_bytes(sheet_name, headers, rows):
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = sheet_name
+    worksheet.append(headers)
+    for row in rows:
+        worksheet.append(list(row))
+    output = BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    return output.read()
+
+
 @main_bp.route('/')
 def index():
     """Home/landing page."""
@@ -149,9 +176,73 @@ def dashboard():
 @login_required
 def donors_list():
     org = _current_org()
-    donors = Donor.query.filter_by(organization_id=org.id).order_by(Donor.name.asc()).all() if org else []
+    query = request.args.get('q', '').strip()
+    donor_type = request.args.get('donor_type', '').strip()
+
+    donors_query = Donor.query.filter_by(organization_id=org.id) if org else Donor.query.filter_by(id=-1)
+    if query:
+        like_term = f"%{query}%"
+        donors_query = donors_query.filter(
+            (Donor.name.ilike(like_term)) |
+            (Donor.email.ilike(like_term)) |
+            (Donor.phone.ilike(like_term))
+        )
+    if donor_type:
+        donors_query = donors_query.filter_by(donor_type=donor_type)
+
+    donors = donors_query.order_by(Donor.name.asc()).all()
     delete_form = ConfirmDeleteForm()
-    return render_template('donors.html', donors=donors, delete_form=delete_form, active_page='donors')
+    return render_template(
+        'donors.html',
+        donors=donors,
+        delete_form=delete_form,
+        active_page='donors',
+        filter_q=query,
+        filter_donor_type=donor_type,
+    )
+
+
+@main_bp.route('/donors/export/<string:file_type>')
+@login_required
+def donors_export(file_type: str):
+    org = _current_org()
+    if not org:
+        flash('No organization available for export.', 'error')
+        return redirect(url_for('main.donors_list'))
+
+    query = request.args.get('q', '').strip()
+    donor_type = request.args.get('donor_type', '').strip()
+    donors_query = Donor.query.filter_by(organization_id=org.id)
+    if query:
+        like_term = f"%{query}%"
+        donors_query = donors_query.filter(
+            (Donor.name.ilike(like_term)) |
+            (Donor.email.ilike(like_term)) |
+            (Donor.phone.ilike(like_term))
+        )
+    if donor_type:
+        donors_query = donors_query.filter_by(donor_type=donor_type)
+
+    donors = donors_query.order_by(Donor.name.asc()).all()
+    headers = ['ID', 'Name', 'Email', 'Phone', 'Type', 'Created At']
+    rows = [
+        [d.id, d.name, d.email or '', d.phone or '', d.donor_type, d.created_at.strftime('%Y-%m-%d %H:%M:%S') if d.created_at else '']
+        for d in donors
+    ]
+
+    if file_type == 'csv':
+        data = _build_csv_bytes(headers, rows)
+        return send_file(BytesIO(data), mimetype='text/csv', as_attachment=True, download_name='donors.csv')
+    if file_type == 'xlsx':
+        data = _build_xlsx_bytes('Donors', headers, rows)
+        return send_file(
+            BytesIO(data),
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name='donors.xlsx',
+        )
+    flash('Unsupported export type.', 'error')
+    return redirect(url_for('main.donors_list'))
 
 
 @main_bp.route('/donors/new', methods=['GET', 'POST'])
@@ -303,8 +394,68 @@ def donation_receipt(donation_id: int):
 @login_required
 def projects_dashboard():
     org = _current_org()
-    projects = Project.query.filter_by(organization_id=org.id).order_by(Project.name.asc()).all() if org else []
-    return render_template('projects.html', projects=projects, active_page='projects')
+    query = request.args.get('q', '').strip()
+    status = request.args.get('status', '').strip()
+
+    projects_query = Project.query.filter_by(organization_id=org.id) if org else Project.query.filter_by(id=-1)
+    if query:
+        like_term = f"%{query}%"
+        projects_query = projects_query.filter(
+            (Project.name.ilike(like_term)) |
+            (Project.program.ilike(like_term)) |
+            (Project.description.ilike(like_term))
+        )
+    if status:
+        projects_query = projects_query.filter_by(status=status)
+
+    projects = projects_query.order_by(Project.name.asc()).all()
+    return render_template(
+        'projects.html',
+        projects=projects,
+        active_page='projects',
+        filter_q=query,
+        filter_status=status,
+    )
+
+
+@main_bp.route('/projects/export/<string:file_type>')
+@login_required
+def projects_export(file_type: str):
+    org = _current_org()
+    if not org:
+        flash('No organization available for export.', 'error')
+        return redirect(url_for('main.projects_dashboard'))
+
+    query = request.args.get('q', '').strip()
+    status = request.args.get('status', '').strip()
+    projects_query = Project.query.filter_by(organization_id=org.id)
+    if query:
+        like_term = f"%{query}%"
+        projects_query = projects_query.filter(
+            (Project.name.ilike(like_term)) |
+            (Project.program.ilike(like_term)) |
+            (Project.description.ilike(like_term))
+        )
+    if status:
+        projects_query = projects_query.filter_by(status=status)
+
+    projects = projects_query.order_by(Project.name.asc()).all()
+    headers = ['ID', 'Name', 'Program', 'Status', 'Currency', 'Budget', 'Spent']
+    rows = [[p.id, p.name, p.program or '', p.status, p.currency, p.budget, p.spent] for p in projects]
+
+    if file_type == 'csv':
+        data = _build_csv_bytes(headers, rows)
+        return send_file(BytesIO(data), mimetype='text/csv', as_attachment=True, download_name='projects.csv')
+    if file_type == 'xlsx':
+        data = _build_xlsx_bytes('Projects', headers, rows)
+        return send_file(
+            BytesIO(data),
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name='projects.xlsx',
+        )
+    flash('Unsupported export type.', 'error')
+    return redirect(url_for('main.projects_dashboard'))
 
 
 @main_bp.route('/projects/new', methods=['GET', 'POST'])
@@ -363,8 +514,68 @@ def project_edit(project_id: int):
 @login_required
 def funds_list():
     org = _current_org()
-    funds = Fund.query.filter_by(organization_id=org.id).order_by(Fund.name.asc()).all() if org else []
-    return render_template('funds.html', funds=funds, active_page='funds')
+    query = request.args.get('q', '').strip()
+    status = request.args.get('status', '').strip()
+
+    funds_query = Fund.query.filter_by(organization_id=org.id) if org else Fund.query.filter_by(id=-1)
+    if query:
+        like_term = f"%{query}%"
+        funds_query = funds_query.filter((Fund.name.ilike(like_term)) | (Fund.description.ilike(like_term)))
+    if status == 'active':
+        funds_query = funds_query.filter_by(is_active=True)
+    elif status == 'inactive':
+        funds_query = funds_query.filter_by(is_active=False)
+
+    funds = funds_query.order_by(Fund.name.asc()).all()
+    return render_template(
+        'funds.html',
+        funds=funds,
+        active_page='funds',
+        filter_q=query,
+        filter_status=status,
+    )
+
+
+@main_bp.route('/funds/export/<string:file_type>')
+@login_required
+def funds_export(file_type: str):
+    org = _current_org()
+    if not org:
+        flash('No organization available for export.', 'error')
+        return redirect(url_for('main.funds_list'))
+
+    query = request.args.get('q', '').strip()
+    status = request.args.get('status', '').strip()
+
+    funds_query = Fund.query.filter_by(organization_id=org.id)
+    if query:
+        like_term = f"%{query}%"
+        funds_query = funds_query.filter((Fund.name.ilike(like_term)) | (Fund.description.ilike(like_term)))
+    if status == 'active':
+        funds_query = funds_query.filter_by(is_active=True)
+    elif status == 'inactive':
+        funds_query = funds_query.filter_by(is_active=False)
+
+    funds = funds_query.order_by(Fund.name.asc()).all()
+    headers = ['ID', 'Name', 'Description', 'Status', 'Updated At']
+    rows = [
+        [f.id, f.name, f.description or '', 'active' if f.is_active else 'inactive', f.updated_at.strftime('%Y-%m-%d %H:%M:%S') if f.updated_at else '']
+        for f in funds
+    ]
+
+    if file_type == 'csv':
+        data = _build_csv_bytes(headers, rows)
+        return send_file(BytesIO(data), mimetype='text/csv', as_attachment=True, download_name='funds.csv')
+    if file_type == 'xlsx':
+        data = _build_xlsx_bytes('Funds', headers, rows)
+        return send_file(
+            BytesIO(data),
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name='funds.xlsx',
+        )
+    flash('Unsupported export type.', 'error')
+    return redirect(url_for('main.funds_list'))
 
 
 @main_bp.route('/funds/new', methods=['GET', 'POST'])
@@ -421,11 +632,38 @@ def reports_page():
     total_donations = db.session.query(func.sum(Donation.amount)).filter_by(organization_id=org.id).scalar() or 0 if org else 0
     total_expenses = db.session.query(func.sum(Expense.amount)).filter_by(organization_id=org.id).scalar() or 0 if org else 0
     net_total = total_donations - total_expenses
+
+    monthly_donations = defaultdict(float)
+    monthly_expenses = defaultdict(float)
+    labels = []
+
+    if org:
+        donations = Donation.query.filter_by(organization_id=org.id).all()
+        expenses = Expense.query.filter_by(organization_id=org.id).all()
+
+        for donation in donations:
+            if donation.donation_date:
+                key = donation.donation_date.strftime('%Y-%m')
+                monthly_donations[key] += float(donation.amount or 0)
+        for expense in expenses:
+            if expense.paid_at:
+                key = expense.paid_at.strftime('%Y-%m')
+                monthly_expenses[key] += float(expense.amount or 0)
+
+        labels = sorted(set(list(monthly_donations.keys()) + list(monthly_expenses.keys())))
+
+    chart_data = {
+        'labels': labels,
+        'donations': [round(monthly_donations[label], 2) for label in labels],
+        'expenses': [round(monthly_expenses[label], 2) for label in labels],
+    }
+
     return render_template(
         'reports.html',
         total_donations=total_donations,
         total_expenses=total_expenses,
         net_total=net_total,
+        chart_data=chart_data,
         active_page='reports',
     )
 

@@ -8,7 +8,25 @@
 
 <div class="mb-3 mt-2">
     <a href="{{ url_for('main.fund_create') }}" class="btn btn-primary">Add Fund</a>
+    <a href="{{ url_for('main.funds_export', file_type='csv', q=filter_q, status=filter_status) }}" class="btn btn-secondary">Export CSV</a>
+    <a href="{{ url_for('main.funds_export', file_type='xlsx', q=filter_q, status=filter_status) }}" class="btn btn-secondary">Export Excel</a>
 </div>
+
+<form method="get" class="mb-3" style="display:grid; gap:0.75rem; grid-template-columns: 1fr 220px auto; align-items:end;">
+    <div class="form-group" style="margin:0;">
+        <label for="q">Search</label>
+        <input type="text" id="q" name="q" value="{{ filter_q }}" placeholder="Fund name or description" />
+    </div>
+    <div class="form-group" style="margin:0;">
+        <label for="status">Status</label>
+        <select id="status" name="status">
+            <option value="" {{ 'selected' if not filter_status else '' }}>All</option>
+            <option value="active" {{ 'selected' if filter_status == 'active' else '' }}>Active</option>
+            <option value="inactive" {{ 'selected' if filter_status == 'inactive' else '' }}>Inactive</option>
+        </select>
+    </div>
+    <button type="submit" class="btn btn-primary">Apply</button>
+</form>
 
 {% if funds %}
 <table>

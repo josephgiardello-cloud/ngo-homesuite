@@ -20,4 +20,52 @@
         <div class="card-value">${{ '%.2f'|format(net_total) }}</div>
     </div>
 </div>
+
+<div class="card mt-3">
+    <h2>Monthly Trends</h2>
+    <p class="text-muted">Donations and expenses grouped by month.</p>
+    <canvas id="monthlyTrendChart" height="120"></canvas>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script>
+    const chartData = {{ chart_data | tojson }};
+    const ctx = document.getElementById('monthlyTrendChart');
+    if (ctx) {
+        new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: chartData.labels,
+                datasets: [
+                    {
+                        label: 'Donations',
+                        data: chartData.donations,
+                        backgroundColor: 'rgba(46, 125, 50, 0.65)',
+                        borderColor: 'rgba(46, 125, 50, 1)',
+                        borderWidth: 1
+                    },
+                    {
+                        label: 'Expenses',
+                        data: chartData.expenses,
+                        backgroundColor: 'rgba(198, 40, 40, 0.65)',
+                        borderColor: 'rgba(198, 40, 40, 1)',
+                        borderWidth: 1
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: (value) => `$${value}`
+                        }
+                    }
+                }
+            }
+        });
+    }
+</script>
 {% endblock %}
