@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -251,7 +251,7 @@ class CopilotToolRegistry:
         return metrics
 
     def _compute_rfm_signals(self, donor: Donor, org_id: int) -> dict[str, Any]:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         lookback = now - timedelta(days=365)
         rows = (
             Donation.query.filter_by(organization_id=org_id, donor_id=donor.id)

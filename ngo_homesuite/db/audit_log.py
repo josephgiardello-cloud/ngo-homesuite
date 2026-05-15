@@ -1,7 +1,7 @@
 # Audit log table and helper for tamper-evident event logging
 import sqlite3
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 def get_db_connection(db_path):
@@ -65,7 +65,7 @@ def log_event(db_path, actor, action, entity, metadata=None):
         cur = conn.execute('SELECT hash_event FROM audit_log ORDER BY id DESC LIMIT 1')
         row = cur.fetchone()
         hash_prev = row['hash_event'] if row else None
-        timestamp_utc = datetime.utcnow().isoformat() + 'Z'
+        timestamp_utc = datetime.now(timezone.utc).isoformat()
         meta_json = json.dumps(metadata or {}, sort_keys=True)
         import hashlib
         event_str = f"{timestamp_utc}|{actor}|{action}|{entity}|{meta_json}|{hash_prev or ''}"

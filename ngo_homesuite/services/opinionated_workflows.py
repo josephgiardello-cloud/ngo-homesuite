@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 
 from ngo_homesuite.db.audit_log import log_event
@@ -19,7 +19,7 @@ def _safe_log_event(*, db_path: str, actor: str, action: str, entity: str, metad
 
 
 def _make_receipt_number(donation_id: int) -> str:
-    return f"R-{donation_id:06d}-{datetime.utcnow().strftime('%Y%m%d')}"
+    return f"R-{donation_id:06d}-{datetime.now(timezone.utc).strftime('%Y%m%d')}"
 
 
 def run_donation_receipt_followup_workflow(*, donation_id: int, actor: str, db_path: str = 'ngo_homesuite.db') -> dict:
@@ -111,7 +111,7 @@ def run_program_tracking_impact_workflow(*, program_name: str, beneficiary_count
         "beneficiary_count": beneficiary_count,
         "outcomes": outcomes,
         "impact_score": impact_score,
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
     _safe_log_event(

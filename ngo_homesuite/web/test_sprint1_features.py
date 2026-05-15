@@ -144,7 +144,7 @@ def test_process_recurring_marks_failure_without_email(client, app):
     assert rv.status_code == 200
 
     with app.app_context():
-        refreshed = RecurringDonationPlan.query.get(plan_id)
+        refreshed = db.session.get(RecurringDonationPlan, plan_id)
         assert refreshed.status == "failed"
         assert refreshed.fail_count >= 1
         assert refreshed.last_error

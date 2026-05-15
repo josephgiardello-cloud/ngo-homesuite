@@ -8,6 +8,7 @@ from flask import Blueprint, render_template, redirect, url_for, flash, request
 from flask_login import login_user, logout_user, login_required, current_user
 from wtforms import StringField, PasswordField, BooleanField, SubmitField
 from wtforms.validators import DataRequired, Email, EqualTo, ValidationError, Length
+from datetime import datetime, timezone
 from flask_wtf import FlaskForm
 from ngo_homesuite.models.core import db, User
 
@@ -123,6 +124,5 @@ def logout():
 def before_request():
     """Update last login timestamp."""
     if current_user.is_authenticated:
-        from datetime import datetime
-        current_user.last_login = datetime.utcnow()
+        current_user.last_login = datetime.now(timezone.utc)
         db.session.commit()

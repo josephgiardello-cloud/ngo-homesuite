@@ -4,7 +4,7 @@ import csv
 import json
 from ngo_homesuite.ai.copilot_tools import CopilotToolRegistry
 from collections import defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional as TypingOptional
 
@@ -334,7 +334,7 @@ def _issue_receipt_for_donation(donation: Donation, recipient_email: str | None 
     if existing:
         return existing
 
-    receipt_number = f"R-{donation.id:06d}-{datetime.utcnow().strftime('%Y%m%d')}"
+    receipt_number = f"R-{donation.id:06d}-{datetime.now(timezone.utc).strftime('%Y%m%d')}"
     receipt = DonationReceipt(
         donation_id=donation.id,
         receipt_number=receipt_number,
@@ -349,7 +349,7 @@ def _issue_receipt_for_donation(donation: Donation, recipient_email: str | None 
     donation_payload = {
         'amount_cents': int(round(float(donation.amount or 0) * 100)),
         'currency': donation.currency,
-        'received_at': donation.donation_date.strftime('%Y-%m-%d') if donation.donation_date else datetime.utcnow().strftime('%Y-%m-%d'),
+        'received_at': donation.donation_date.strftime('%Y-%m-%d') if donation.donation_date else datetime.now(timezone.utc).strftime('%Y-%m-%d'),
     }
     donor_payload = {
         'name': donor.name if donor else donation.donor_name,
@@ -368,7 +368,7 @@ def _issue_receipt_for_donation(donation: Donation, recipient_email: str | None 
                 donation.currency,
             )
             receipt.status = 'sent'
-            receipt.sent_at = datetime.utcnow()
+            receipt.sent_at = datetime.now(timezone.utc)
         except Exception as exc:
             receipt.status = 'failed'
             receipt.error_message = str(exc)
@@ -896,7 +896,7 @@ def donor_edit(donor_id: int):
         donor.phone = form.phone.data
         donor.donor_type = form.donor_type.data
         donor.notes = form.notes.data
-        donor.updated_at = datetime.utcnow()
+        donor.updated_at = datetime.now(timezone.utc)
         db.session.commit()
         flash('Donor updated successfully.', 'success')
         return redirect(url_for('main.donors_list'))
@@ -1126,7 +1126,7 @@ def process_recurring_donations():
             plan.status = 'failed'
             plan.fail_count = int(plan.fail_count or 0) + 1
             plan.last_error = 'Missing donor contact info for payment retry workflow.'
-            plan.updated_at = datetime.utcnow()
+            plan.updated_at = datetime.now(timezone.utc)
             failed += 1
             continue
 
@@ -1151,7 +1151,7 @@ def process_recurring_donations():
         plan.fail_count = 0
         plan.last_error = None
         plan.status = 'active'
-        plan.updated_at = datetime.utcnow()
+        plan.updated_at = datetime.now(timezone.utc)
         processed += 1
 
     db.session.commit()
@@ -1541,7 +1541,7 @@ def project_edit(project_id: int):
         project.spent = form.spent.data
         project.currency = form.currency.data
         project.status = form.status.data
-        project.updated_at = datetime.utcnow()
+        project.updated_at = datetime.now(timezone.utc)
         db.session.commit()
         flash('Project updated successfully.', 'success')
         return redirect(url_for('main.projects_dashboard'))
@@ -1662,7 +1662,7 @@ def fund_edit(fund_id: int):
         fund.name = form.name.data
         fund.description = form.description.data
         fund.is_active = form.is_active.data == 'true'
-        fund.updated_at = datetime.utcnow()
+        fund.updated_at = datetime.now(timezone.utc)
         db.session.commit()
         flash('Fund updated successfully.', 'success')
         return redirect(url_for('main.funds_list'))
@@ -1742,7 +1742,7 @@ def reports_compliance_evidence():
     as_download = request.args.get('download', '0').strip().lower() in {'1', 'true', 'yes', 'on'}
     if as_download:
         body = json.dumps(payload, indent=2, ensure_ascii=False).encode('utf-8')
-        filename = f"compliance-evidence-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}.json"
+        filename = f"compliance-evidence-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.json"
         return send_file(
             BytesIO(body),
             mimetype='application/json',
