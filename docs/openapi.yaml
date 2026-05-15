@@ -82,6 +82,116 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+  /api/domain/snapshot:
+    get:
+      operationId: getDomainSnapshot
+      summary: Build and return current NGO domain entity graph snapshot
+      tags: [Domain]
+      responses:
+        '200':
+          description: Domain snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DomainSnapshotResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/semantic/context:
+    get:
+      operationId: getSemanticTaskContext
+      summary: Build semantic context for a task from the domain graph
+      tags: [AI]
+      parameters:
+        - in: query
+          name: task
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Assembled semantic context
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SemanticContextResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/workflows/donation/{donationId}/run:
+    post:
+      operationId: postRunDonationWorkflow
+      summary: Run donation receipt and follow-up workflow
+      tags: [Workflows]
+      parameters:
+        - in: path
+          name: donationId
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Donation workflow result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/workflows/grant/run:
+    post:
+      operationId: postRunGrantWorkflow
+      summary: Run grant tracking and reporting workflow
+      tags: [Workflows]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunGrantWorkflowRequest'
+      responses:
+        '200':
+          description: Grant workflow result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/workflows/program-impact/run:
+    post:
+      operationId: postRunProgramImpactWorkflow
+      summary: Run program impact scoring workflow
+      tags: [Workflows]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunProgramWorkflowRequest'
+      responses:
+        '200':
+          description: Program workflow result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /ai/copilot/chat:
     post:
       operationId: postCopilotChat
@@ -161,6 +271,75 @@ components:
     ToolAction:
       type: object
       additionalProperties: true
+    DomainSnapshotResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        organization:
+          type: string
+          nullable: true
+        entities:
+          type: object
+          additionalProperties: true
+      required: [ok, entities]
+    SemanticContext:
+      type: object
+      properties:
+        task:
+          type: string
+        generated_at:
+          type: string
+        entity_count:
+          type: integer
+        retrieved_entities:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+      required: [task, generated_at, entity_count, retrieved_entities]
+    SemanticContextResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        context:
+          $ref: '#/components/schemas/SemanticContext'
+      required: [ok, context]
+    WorkflowResult:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        workflow:
+          type: string
+        error:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+      required: [ok]
+    RunGrantWorkflowRequest:
+      type: object
+      properties:
+        grant_name:
+          type: string
+        requested_amount:
+          type: number
+      required: [grant_name]
+    RunProgramWorkflowRequest:
+      type: object
+      properties:
+        program_name:
+          type: string
+        beneficiary_count:
+          type: integer
+        outcomes:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+      required: [program_name]
     CopilotChatResponse:
       type: object
       properties:

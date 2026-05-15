@@ -66,6 +66,15 @@ A comprehensive nonprofit management system for managing donors, donations, fund
 - Source spec file is maintained in `docs/openapi.yaml`
 - Includes stable `operationId` values and reusable component schemas for tooling/client generation
 
+### 🚀 High-ROI Workflow Layer
+- Domain graph snapshot endpoint at `/api/domain/snapshot` (Donor/Campaign/Grant/Beneficiary/Program/Outcome)
+- Semantic task context endpoint at `/api/semantic/context?task=...`
+- Opinionated workflow API endpoints:
+   - `POST /api/workflows/donation/{donationId}/run`
+   - `POST /api/workflows/grant/run`
+   - `POST /api/workflows/program-impact/run`
+- Minimal workflow UI at `/workflows` for operations users
+
 ### 🔒 Security & Compliance
 - SQLCipher encryption support (optional)
 - Append-only audit logging (all changes tracked immutably)

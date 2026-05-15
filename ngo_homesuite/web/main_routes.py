@@ -18,6 +18,22 @@ from openpyxl import Workbook
 from ngo_homesuite.models.core import (
     Organization, Beneficiary, Project, Donation, Donor, Fund, Expense, DonationReceipt, RecurringDonationPlan, db
 )
+from ngo_homesuite.domain import (
+    BeneficiaryEntity,
+    CampaignEntity,
+    DomainRegistry,
+    DonorEntity,
+    GrantEntity,
+    LifecycleState,
+    OutcomeEntity,
+    ProgramEntity,
+)
+from ngo_homesuite.ai.semantic_memory import SemanticMemoryLayer
+from ngo_homesuite.services.opinionated_workflows import (
+    run_donation_receipt_followup_workflow,
+    run_grant_tracking_reporting_workflow,
+    run_program_tracking_impact_workflow,
+)
 from sqlalchemy import func
 from ngo_homesuite.web.rbac import roles_required
 from ngo_homesuite.utils.receipt_pdf import generate_receipt_pdf_bytes
@@ -199,6 +215,119 @@ def _openapi_spec_path() -> Path:
     return Path(current_app.root_path).parent / 'docs' / 'openapi.yaml'
 
 
+def _sqlite_db_file_path() -> str:
+    uri = str(current_app.config.get('SQLALCHEMY_DATABASE_URI', 'sqlite:///ngo_homesuite.db'))
+    if uri.startswith('sqlite:///'):
+        return uri.replace('sqlite:///', '', 1)
+    return 'ngo_homesuite.db'
+
+
+def _build_domain_registry_for_org(org: Organization | None) -> DomainRegistry:
+    registry = DomainRegistry()
+    if org is None:
+        return registry
+
+    donors = Donor.query.filter_by(organization_id=org.id).all()
+    projects = Project.query.filter_by(organization_id=org.id).all()
+    beneficiaries = Beneficiary.query.filter_by(organization_id=org.id).all()
+
+    for donor in donors:
+        donor_entity = DonorEntity(
+            entity_id=f"donor:{donor.id}",
+            name=donor.name,
+            donor_type=donor.donor_type,
+            email=donor.email,
+            phone=donor.phone,
+            lifecycle_state=LifecycleState.active,
+        )
+        donor_entity.transition(LifecycleState.active, actor='system', reason='ingested_for_domain_registry')
+        registry.upsert(donor_entity)
+
+    for project in projects:
+        program = ProgramEntity(
+            entity_id=f"program:{project.id}",
+            name=project.name,
+            lifecycle_state=LifecycleState.active if project.status in ('active', 'planned') else LifecycleState.paused,
+        )
+        program.transition(program.lifecycle_state, actor='system', reason='project_to_program_mapping')
+        registry.upsert(program)
+
+    for beneficiary in beneficiaries:
+        beneficiary_entity = BeneficiaryEntity(
+            entity_id=f"beneficiary:{beneficiary.id}",
+            name=f"{beneficiary.first_name} {beneficiary.last_name}".strip(),
+            lifecycle_state=LifecycleState.active if beneficiary.status == 'active' else LifecycleState.paused,
+        )
+        beneficiary_entity.transition(beneficiary_entity.lifecycle_state, actor='system', reason='beneficiary_ingested')
+        registry.upsert(beneficiary_entity)
+
+    purpose_sums = (
+        db.session.query(Donation.purpose, func.coalesce(func.sum(Donation.amount), 0.0))
+        .filter(Donation.organization_id == org.id)
+        .group_by(Donation.purpose)
+        .all()
+    )
+    for idx, (purpose, total) in enumerate(purpose_sums, start=1):
+        if not purpose:
+            continue
+        campaign = CampaignEntity(
+            entity_id=f"campaign:{idx}",
+            name=str(purpose),
+            lifecycle_state=LifecycleState.active,
+            fundraising_goal=round(float(total) * 1.25, 2),
+            raised_amount=float(total),
+        )
+        campaign.transition(LifecycleState.active, actor='system', reason='derived_from_donation_purpose')
+        registry.upsert(campaign)
+
+    foundation_totals = (
+        db.session.query(Donor.name, func.coalesce(func.sum(Donation.amount), 0.0))
+        .join(Donation, Donation.donor_id == Donor.id)
+        .filter(Donor.organization_id == org.id, Donor.donor_type == 'foundation')
+        .group_by(Donor.name)
+        .all()
+    )
+    for idx, (foundation_name, approved) in enumerate(foundation_totals, start=1):
+        grant = GrantEntity(
+            entity_id=f"grant:{idx}",
+            name=f"{foundation_name} Grant",
+            lifecycle_state=LifecycleState.active,
+            requested_amount=round(float(approved) * 1.2, 2),
+            approved_amount=float(approved),
+            status_note='Derived from foundation donor history',
+        )
+        grant.transition(LifecycleState.active, actor='system', reason='derived_from_foundation_donations')
+        registry.upsert(grant)
+
+    for project in projects:
+        related_donations = Donation.query.filter_by(organization_id=org.id, project_id=project.id).count()
+        outcome = OutcomeEntity(
+            entity_id=f"outcome:program:{project.id}",
+            name=f"{project.name} Donor Reach",
+            lifecycle_state=LifecycleState.active,
+            metric_name='contributing_donations',
+            metric_value=float(related_donations),
+            program_id=f"program:{project.id}",
+        )
+        outcome.transition(LifecycleState.active, actor='system', reason='derived_outcome_metric')
+        registry.upsert(outcome)
+        registry.link(source_id=f"program:{project.id}", relation='has_outcome', target_id=outcome.entity_id, actor='system')
+
+    # Lightweight relationship stitching for usability in semantic retrieval.
+    for beneficiary in beneficiaries:
+        beneficiary_id = f"beneficiary:{beneficiary.id}"
+        for project in projects:
+            if beneficiary.program and project.program and beneficiary.program.strip().lower() == project.program.strip().lower():
+                registry.link(
+                    source_id=beneficiary_id,
+                    relation='enrolled_in_program',
+                    target_id=f"program:{project.id}",
+                    actor='system',
+                )
+
+    return registry
+
+
 def _issue_receipt_for_donation(donation: Donation, recipient_email: str | None = None):
     existing = DonationReceipt.query.filter_by(donation_id=donation.id).first()
     if existing:
@@ -312,6 +441,144 @@ def api_swagger_ui():
     </body>
 </html>"""
     return Response(html, mimetype='text/html')
+
+
+@main_bp.route('/api/domain/snapshot', methods=['GET'])
+@login_required
+@roles_required('admin', 'staff', 'viewer')
+def api_domain_snapshot():
+    org = _current_org()
+    registry = _build_domain_registry_for_org(org)
+    return {'ok': True, 'organization': org.name if org else None, 'entities': registry.snapshot()}
+
+
+@main_bp.route('/api/semantic/context', methods=['GET'])
+@login_required
+@roles_required('admin', 'staff', 'viewer')
+def api_semantic_context():
+    task = (request.args.get('task') or '').strip()
+    if not task:
+        return {'error': 'task query parameter is required.'}, 400
+
+    org = _current_org()
+    registry = _build_domain_registry_for_org(org)
+    memory = SemanticMemoryLayer()
+    memory.index_registry(registry)
+    return {'ok': True, 'context': memory.assemble_context(task=task, limit=6)}
+
+
+@main_bp.route('/workflows', methods=['GET'])
+@login_required
+@roles_required('admin', 'staff', 'viewer')
+def workflows_page():
+    return render_template('workflows.html', active_page='workflows')
+
+
+@main_bp.route('/workflows/donation', methods=['POST'])
+@login_required
+@roles_required('admin', 'staff')
+def workflow_donation_route():
+    donation_id = request.form.get('donation_id', type=int)
+    if not donation_id:
+        flash('Donation ID is required.', 'error')
+        return redirect(url_for('main.workflows_page'))
+
+    result = run_donation_receipt_followup_workflow(
+        donation_id=donation_id,
+        actor=getattr(current_user, 'username', 'workflow'),
+        db_path=_sqlite_db_file_path(),
+    )
+    flash('Workflow completed.' if result.get('ok') else str(result.get('error')), 'success' if result.get('ok') else 'error')
+    return redirect(url_for('main.workflows_page'))
+
+
+@main_bp.route('/workflows/grant', methods=['POST'])
+@login_required
+@roles_required('admin', 'staff')
+def workflow_grant_route():
+    grant_name = (request.form.get('grant_name') or '').strip()
+    requested_amount = request.form.get('requested_amount', type=float) or 0.0
+    if not grant_name:
+        flash('Grant name is required.', 'error')
+        return redirect(url_for('main.workflows_page'))
+
+    result = run_grant_tracking_reporting_workflow(
+        grant_name=grant_name,
+        requested_amount=requested_amount,
+        actor=getattr(current_user, 'username', 'workflow'),
+        db_path=_sqlite_db_file_path(),
+    )
+    flash('Grant workflow completed.' if result.get('ok') else 'Grant workflow failed.', 'success' if result.get('ok') else 'error')
+    return redirect(url_for('main.workflows_page'))
+
+
+@main_bp.route('/workflows/program-impact', methods=['POST'])
+@login_required
+@roles_required('admin', 'staff')
+def workflow_program_route():
+    program_name = (request.form.get('program_name') or '').strip()
+    beneficiary_count = request.form.get('beneficiary_count', type=int) or 0
+    if not program_name:
+        flash('Program name is required.', 'error')
+        return redirect(url_for('main.workflows_page'))
+
+    result = run_program_tracking_impact_workflow(
+        program_name=program_name,
+        beneficiary_count=beneficiary_count,
+        outcomes=[{'metric_name': 'beneficiary_engagement', 'metric_value': beneficiary_count}],
+        actor=getattr(current_user, 'username', 'workflow'),
+        db_path=_sqlite_db_file_path(),
+    )
+    flash('Program workflow completed.' if result.get('ok') else 'Program workflow failed.', 'success' if result.get('ok') else 'error')
+    return redirect(url_for('main.workflows_page'))
+
+
+@main_bp.route('/api/workflows/donation/<int:donation_id>/run', methods=['POST'])
+@login_required
+@roles_required('admin', 'staff')
+def api_workflow_donation_run(donation_id: int):
+    result = run_donation_receipt_followup_workflow(
+        donation_id=donation_id,
+        actor=getattr(current_user, 'username', 'workflow'),
+        db_path=_sqlite_db_file_path(),
+    )
+    return (result, 200) if result.get('ok') else (result, 404)
+
+
+@main_bp.route('/api/workflows/grant/run', methods=['POST'])
+@login_required
+@roles_required('admin', 'staff')
+def api_workflow_grant_run():
+    payload = request.get_json(silent=True) or {}
+    grant_name = str(payload.get('grant_name', '')).strip()
+    requested_amount = float(payload.get('requested_amount', 0.0) or 0.0)
+    if not grant_name:
+        return {'error': 'grant_name is required.'}, 400
+    return run_grant_tracking_reporting_workflow(
+        grant_name=grant_name,
+        requested_amount=requested_amount,
+        actor=getattr(current_user, 'username', 'workflow'),
+        db_path=_sqlite_db_file_path(),
+    )
+
+
+@main_bp.route('/api/workflows/program-impact/run', methods=['POST'])
+@login_required
+@roles_required('admin', 'staff')
+def api_workflow_program_run():
+    payload = request.get_json(silent=True) or {}
+    program_name = str(payload.get('program_name', '')).strip()
+    beneficiary_count = int(payload.get('beneficiary_count', 0) or 0)
+    outcomes = payload.get('outcomes') if isinstance(payload.get('outcomes'), list) else []
+    if not program_name:
+        return {'error': 'program_name is required.'}, 400
+    return run_program_tracking_impact_workflow(
+        program_name=program_name,
+        beneficiary_count=beneficiary_count,
+        outcomes=outcomes,
+        actor=getattr(current_user, 'username', 'workflow'),
+        db_path=_sqlite_db_file_path(),
+    )
 
 
 @main_bp.route('/')

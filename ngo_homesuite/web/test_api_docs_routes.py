@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+import yaml
 
 from ngo_homesuite.app_factory import create_app
 from ngo_homesuite.flask_config import TestingConfig
@@ -66,3 +67,20 @@ def test_api_docs_and_openapi_endpoints_return_content(client, app):
     assert "CopilotChatRequest:" in spec_text
     assert "CopilotChatResponse:" in spec_text
     assert "ErrorResponse:" in spec_text
+
+    spec_obj = yaml.safe_load(spec_text)
+    assert isinstance(spec_obj, dict)
+    assert isinstance(spec_obj.get("paths"), dict)
+
+    operation_ids = []
+    for methods in spec_obj["paths"].values():
+        if not isinstance(methods, dict):
+            continue
+        for operation in methods.values():
+            if not isinstance(operation, dict):
+                continue
+            operation_id = operation.get("operationId")
+            assert operation_id, "Every operation must define operationId"
+            operation_ids.append(operation_id)
+
+    assert len(operation_ids) == len(set(operation_ids)), "operationId values must be unique"
