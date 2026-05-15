@@ -177,7 +177,7 @@ def _execute_step(enrollment: StewardshipEnrollment) -> dict:
         return outcome
 
     step = steps[enrollment.current_step]
-    donor = db.session.get(Donor, enrollment.donor_id)
+    donor = Donor.query.filter_by(id=enrollment.donor_id, organization_id=enrollment.organization_id).first()
     if not donor:
         enrollment.status = "cancelled"
         return outcome

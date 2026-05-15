@@ -16,7 +16,7 @@ from ngo_homesuite.models.core import (
     StewardshipStep,
     db,
 )
-from ngo_homesuite.services.stewardship_service import process_due_steps, run_auto_enrollments
+from ngo_homesuite.services.stewardship_service import _execute_step, process_due_steps, run_auto_enrollments
 
 
 @pytest.fixture(scope="module")
@@ -143,3 +143,64 @@ def test_lapsed_member_auto_enrollment_picks_past_end_dates(app):
 
         assert first["enrolled"] >= 1
         assert second["enrolled"] == 0
+
+
+def test_process_due_steps_cancels_mismatched_cross_org_donor(app):
+    with app.app_context():
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        org_a = Organization.query.filter_by(is_active=True).first()
+        assert org_a is not None
+
+        org_b = Organization(name="Stewardship Org B", slug="stewardship-org-b", is_active=True)
+        db.session.add(org_b)
+        db.session.flush()
+
+        donor_b = Donor(
+            organization_id=org_b.id,
+            name="Cross Tenant Steward",
+            email="cross.steward@example.org",
+            donor_type="individual",
+        )
+        db.session.add(donor_b)
+        db.session.flush()
+
+        journey = StewardshipJourney(
+            organization_id=org_a.id,
+            name="Cross Tenant Journey",
+            trigger="new_donor",
+            is_active=True,
+        )
+        db.session.add(journey)
+        db.session.flush()
+
+        step = StewardshipStep(
+            journey_id=journey.id,
+            step_order=0,
+            step_type="email",
+            delay_days=0,
+            subject="Welcome {name}",
+            body="Hello {name}",
+        )
+        db.session.add(step)
+        db.session.flush()
+
+        enrollment = StewardshipEnrollment(
+            journey_id=journey.id,
+            donor_id=donor_b.id,
+            organization_id=org_a.id,
+            status="active",
+            current_step=0,
+            next_step_due=now - timedelta(minutes=5),
+        )
+        db.session.add(enrollment)
+        db.session.commit()
+
+        outcome = _execute_step(enrollment)
+
+        assert outcome["sent_email"] == 0
+        assert outcome["sent_sms"] == 0
+        assert outcome["completed"] == 0
+
+        refreshed = db.session.get(StewardshipEnrollment, enrollment.id)
+        assert refreshed is not None
+        assert refreshed.status == "cancelled"
