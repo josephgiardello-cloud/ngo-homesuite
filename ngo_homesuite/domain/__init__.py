@@ -10,6 +10,18 @@ from .entities import (
     OutcomeEntity,
     ProgramEntity,
 )
+from .kernel import (
+    Beneficiary,
+    CaseIntake,
+    Donation,
+    EntityLifecycle,
+    Household,
+    OrganizationRoot,
+    Program,
+    ServiceDeliveryEvent,
+    StaffUser,
+    Volunteer,
+)
 from .registry import DomainRegistry
 
 __all__ = [
@@ -22,4 +34,14 @@ __all__ = [
     "OutcomeEntity",
     "ProgramEntity",
     "DomainRegistry",
+    "OrganizationRoot",
+    "Beneficiary",
+    "Household",
+    "CaseIntake",
+    "Program",
+    "ServiceDeliveryEvent",
+    "Donation",
+    "Volunteer",
+    "StaffUser",
+    "EntityLifecycle",
 ]

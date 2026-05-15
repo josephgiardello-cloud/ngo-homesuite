@@ -523,13 +523,9 @@ def run_cli():
     main(sys.argv[1:])
 
 def run_web():
-    from ngo_homesuite.app_factory import create_app
+    from ngo_homesuite.app.bootstrap import run_server
 
-    flask_app = create_app()
-    host = os.environ.get('HOST', '127.0.0.1')
-    port = int(os.environ.get('PORT', 5000))
-    debug = os.environ.get('FLASK_DEBUG', 'True').lower() == 'true'
-    flask_app.run(host=host, port=port, debug=debug)
+    run_server()
 
 def run_tests():
     unittest.main()

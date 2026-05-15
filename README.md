@@ -75,6 +75,18 @@ A comprehensive nonprofit management system for managing donors, donations, fund
    - `POST /api/workflows/program-impact/run`
 - Minimal workflow UI at `/workflows` for operations users
 
+### 🏗️ V2 Operating System Baseline
+- Deterministic workflow runtime module at `ngo_homesuite/workflow_engine/`
+- Multi-tenant and RBAC guards at `ngo_homesuite/tenant/` and `ngo_homesuite/rbac/`
+- Append-only in-memory event store baseline at `ngo_homesuite/audit/event_store.py`
+- Versioned API endpoints under `/api/v1/`:
+   - `GET /api/v1/workflows`
+   - `POST /api/v1/workflows/instances`
+   - `POST /api/v1/workflows/instances/{instanceId}/events`
+   - `GET /api/v1/workflows/instances/{instanceId}/trace`
+   - `GET /api/v1/audit/events?org_id=...`
+- Architecture blueprint: `docs/architecture_v2.md`
+
 ### 🔒 Security & Compliance
 - SQLCipher encryption support (optional)
 - Append-only audit logging (all changes tracked immutably)

@@ -192,6 +192,124 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+  /api/v1/workflows:
+    get:
+      operationId: getV1WorkflowDefinitions
+      summary: List deterministic workflow definitions in V2 runtime
+      tags: [WorkflowsV1]
+      responses:
+        '200':
+          description: Workflow definition list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  workflow_types:
+                    type: array
+                    items:
+                      type: string
+                required: [ok, workflow_types]
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/workflows/instances:
+    post:
+      operationId: postV1CreateWorkflowInstance
+      summary: Create a workflow instance
+      tags: [WorkflowsV1]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkflowInstanceRequest'
+      responses:
+        '200':
+          description: Created workflow instance
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/V1WorkflowInstanceEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/workflows/instances/{instanceId}/events:
+    post:
+      operationId: postV1ApplyWorkflowEvent
+      summary: Apply event transition to workflow instance
+      tags: [WorkflowsV1]
+      parameters:
+        - in: path
+          name: instanceId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApplyWorkflowEventRequest'
+      responses:
+        '200':
+          description: Updated workflow instance
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/V1WorkflowInstanceEnvelope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/workflows/instances/{instanceId}/trace:
+    get:
+      operationId: getV1WorkflowTrace
+      summary: Get execution trace for workflow instance
+      tags: [WorkflowsV1]
+      parameters:
+        - in: path
+          name: instanceId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Workflow execution trace
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Trace not found
+  /api/v1/audit/events:
+    get:
+      operationId: getV1AuditEvents
+      summary: List append-only audit events for an org
+      tags: [AuditV1]
+      parameters:
+        - in: query
+          name: org_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Audit event list
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /ai/copilot/chat:
     post:
       operationId: postCopilotChat
@@ -340,6 +458,56 @@ components:
             type: object
             additionalProperties: true
       required: [program_name]
+    CreateWorkflowInstanceRequest:
+      type: object
+      properties:
+        org_id:
+          type: string
+        workflow_type:
+          type: string
+      required: [org_id, workflow_type]
+    ApplyWorkflowEventRequest:
+      type: object
+      properties:
+        org_id:
+          type: string
+        event_type:
+          type: string
+        actor_id:
+          type: string
+        role:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+      required: [org_id, event_type, actor_id, role]
+    V1WorkflowInstance:
+      type: object
+      properties:
+        instance_id:
+          type: string
+        org_id:
+          type: string
+        workflow_type:
+          type: string
+        current_step:
+          type: string
+        status:
+          type: string
+        history:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+      required: [instance_id, org_id, workflow_type, current_step, status]
+    V1WorkflowInstanceEnvelope:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        instance:
+          $ref: '#/components/schemas/V1WorkflowInstance'
+      required: [ok, instance]
     CopilotChatResponse:
       type: object
       properties:
