@@ -1040,7 +1040,7 @@ class CopilotToolRegistry:
             records = high_priority_lapsed(org_id, limit=limit)
             result = []
             for rec in records:
-                donor = db.session.get(Donor, rec.donor_id)
+                donor = Donor.query.filter_by(id=rec.donor_id, organization_id=org_id).first()
                 rfm = self._compute_rfm_signals(donor, org_id) if donor else {}
                 related = self._optional_donor_relationship_counts(rec.donor_id, org_id)
                 actions = self._recommended_actions(rfm, related) if rfm else []

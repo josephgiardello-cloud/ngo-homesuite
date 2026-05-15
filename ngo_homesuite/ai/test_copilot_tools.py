@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from ngo_homesuite.ai.copilot_tools import CopilotToolRegistry
 from ngo_homesuite.app_factory import create_app
 from ngo_homesuite.flask_config import TestingConfig
-from ngo_homesuite.models.core import Donation, DonationReceipt
+from ngo_homesuite.models.core import Donation, DonationReceipt, Donor, Organization, db
 
 
 @pytest.fixture(scope="module")
@@ -149,3 +151,37 @@ def test_generate_report_requires_organization_context(registry):
         {"actor": "test-copilot"},
     )
     assert payload["error"] == "organization_id is required in runtime context"
+
+
+def test_list_at_risk_donors_keeps_donor_hydration_tenant_scoped(registry, app, monkeypatch):
+    with app.app_context():
+        org_a = Organization.query.filter_by(is_active=True).first()
+        assert org_a is not None
+        org_a_id = int(org_a.id)
+
+        org_b = Organization(name="Copilot Org B", slug="copilot-org-b", is_active=True)
+        db.session.add(org_b)
+        db.session.flush()
+        org_b_id = int(org_b.id)
+
+        donor_b = Donor(
+            organization_id=org_b_id,
+            name="Cross Tenant At Risk",
+            email="cross@example.com",
+            donor_type="individual",
+        )
+        db.session.add(donor_b)
+        db.session.commit()
+        donor_b_id = int(donor_b.id)
+
+    def _fake_high_priority_lapsed(org_id, limit=20):
+        return [SimpleNamespace(donor_id=donor_b_id, score=88.0, segment="lapsed", cultivation_priority="high")]
+
+    monkeypatch.setattr("ngo_homesuite.services.engagement_scoring_service.high_priority_lapsed", _fake_high_priority_lapsed)
+
+    payload = registry.execute("list_at_risk_donors", {"limit": 5}, {"organization_id": org_a_id, "actor": "test-copilot"})
+
+    assert payload["count"] == 1
+    donor_row = payload["donors"][0]
+    assert donor_row["donor_name"] == "Unknown"
+    assert donor_row["email"] is None
