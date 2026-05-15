@@ -4,8 +4,6 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from ngo_homesuite.app_factory import create_app
-from ngo_homesuite.flask_config import TestingConfig
 from ngo_homesuite.models.core import (
     Donor,
     MembershipRecord,
@@ -20,8 +18,8 @@ from ngo_homesuite.services.stewardship_service import _execute_step, process_du
 
 
 @pytest.fixture(scope="module")
-def app():
-    return create_app(TestingConfig)
+def app(shared_test_app):
+    return shared_test_app
 
 
 def test_process_due_steps_counts_email_and_completion(app):

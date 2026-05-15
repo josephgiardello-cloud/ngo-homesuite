@@ -3,14 +3,12 @@ from __future__ import annotations
 import pytest
 from datetime import datetime, UTC
 
-from ngo_homesuite.app_factory import create_app
-from ngo_homesuite.flask_config import TestingConfig
 from ngo_homesuite.models.core import Donation, Organization, User, db
 
 
 @pytest.fixture(scope="module")
-def app():
-    return create_app(TestingConfig)
+def app(shared_test_app):
+    return shared_test_app
 
 
 @pytest.fixture()

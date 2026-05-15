@@ -10,6 +10,9 @@ This module handles test environment setup, including:
 import os
 import pytest
 
+from ngo_homesuite.app_factory import create_app
+from ngo_homesuite.flask_config import TestingConfig
+
 
 def pytest_configure(config):
     """
@@ -25,6 +28,11 @@ def pytest_configure(config):
     
     # Store in config for potential restoration
     config.original_db_key = original_key
+
+
+@pytest.fixture(scope="session")
+def shared_test_app():
+    return create_app(TestingConfig)
 
 
 @pytest.fixture(scope="session", autouse=True)
