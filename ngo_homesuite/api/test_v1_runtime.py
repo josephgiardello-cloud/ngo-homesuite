@@ -143,3 +143,40 @@ def test_v1_workflow_cross_tenant_access_is_blocked(client, app):
         },
     )
     assert cross_tenant_event.status_code == 403
+
+
+def test_v1_workflow_event_idempotency_key_prevents_duplicate_transition(client, app):
+    _ensure_user(app, "v2_admin_idem", "v2_admin_idem@test.local", "admin", "v2_admin_idem_pass_123")
+    _login(client, "v2_admin_idem", "v2_admin_idem_pass_123")
+
+    with app.app_context():
+        org = Organization.query.filter_by(is_active=True).first()
+        org_id = str(org.id)
+
+    create_instance = client.post(
+        "/api/v1/workflows/instances",
+        json={"org_id": org_id, "workflow_type": "case_intake"},
+    )
+    assert create_instance.status_code == 200
+    instance_id = create_instance.get_json()["instance"]["instance_id"]
+
+    payload = {
+        "org_id": org_id,
+        "event_type": "intake_submit",
+        "actor_id": "u_admin",
+        "role": "org_admin",
+        "idempotency_key": "idem-intake-submit-001",
+        "payload": {"case_id": "CASE-IDEM-001", "email": "idem@example.org"},
+    }
+
+    first = client.post(f"/api/v1/workflows/instances/{instance_id}/events", json=payload)
+    assert first.status_code == 200
+    first_instance = first.get_json()["instance"]
+    assert first_instance["idempotent_replay"] is False
+    assert len(first_instance["history"]) == 1
+
+    replay = client.post(f"/api/v1/workflows/instances/{instance_id}/events", json=payload)
+    assert replay.status_code == 200
+    replay_instance = replay.get_json()["instance"]
+    assert replay_instance["idempotent_replay"] is True
+    assert len(replay_instance["history"]) == 1

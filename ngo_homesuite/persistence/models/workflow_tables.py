@@ -32,6 +32,7 @@ class WorkflowInstanceRecord(db.Model):
     workflow_type = db.Column(db.String(120), nullable=False, index=True)
     current_step = db.Column(db.String(120), nullable=False)
     status = db.Column(db.String(32), nullable=False)
+    version = db.Column(db.Integer, nullable=False, default=1)
     history_json = db.Column(db.Text, nullable=False, default="[]")
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)

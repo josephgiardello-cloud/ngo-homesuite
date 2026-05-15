@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from ngo_homesuite.audit import DbEventStore
 from ngo_homesuite.integration_fabric import ConnectorRegistry
 from ngo_homesuite.observability import WorkflowTracer
+from ngo_homesuite.persistence import SqlAlchemyUnitOfWork, WorkflowDefinitionRepositoryPort, WorkflowRepositoryPort
 from ngo_homesuite.persistence.repositories import WorkflowDefinitionRepository, WorkflowRepository
 from ngo_homesuite.shared_kernel import new_id, redact_payload
 from ngo_homesuite.tenant import TenantContext
@@ -23,10 +24,16 @@ class AppContainer:
     event_store: DbEventStore
     tracer: WorkflowTracer
     connector_registry: ConnectorRegistry
-    workflow_repository: WorkflowRepository
-    workflow_definition_repository: WorkflowDefinitionRepository
+    workflow_repository: WorkflowRepositoryPort
+    workflow_definition_repository: WorkflowDefinitionRepositoryPort
     state_machine: DeterministicStateMachine
     workflow_definitions: dict[str, WorkflowDefinition]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.workflow_repository, WorkflowRepositoryPort):
+            raise TypeError("workflow_repository must satisfy WorkflowRepositoryPort")
+        if not isinstance(self.workflow_definition_repository, WorkflowDefinitionRepositoryPort):
+            raise TypeError("workflow_definition_repository must satisfy WorkflowDefinitionRepositoryPort")
 
     @classmethod
     def build_default(cls) -> "AppContainer":
@@ -71,8 +78,9 @@ class AppContainer:
             ],
         )
 
-        workflow_definition_repository.ensure_definition(intake_flow, allow_global_scope=True)
-        workflow_definition_repository.ensure_definition(donation_flow, allow_global_scope=True)
+        with SqlAlchemyUnitOfWork() as uow:
+            workflow_definition_repository.ensure_definition(intake_flow, allow_global_scope=True, uow=uow)
+            workflow_definition_repository.ensure_definition(donation_flow, allow_global_scope=True, uow=uow)
 
         return cls(
             event_store=event_store,
@@ -97,7 +105,20 @@ class AppContainer:
             workflow_type=workflow_type,
             current_step=definition.initial_step,
         )
-        return self.workflow_repository.save(instance)
+        with SqlAlchemyUnitOfWork() as uow:
+            return self.workflow_repository.save(instance, uow=uow)
+
+    @staticmethod
+    def _is_idempotent_replay(instance: WorkflowInstance, *, event_type: str, idempotency_key: str | None) -> bool:
+        if not idempotency_key:
+            return False
+        for item in instance.history:
+            payload = item.get("payload") if isinstance(item, dict) else None
+            if not isinstance(payload, dict):
+                continue
+            if item.get("event_type") == event_type and payload.get("_idempotency_key") == idempotency_key:
+                return True
+        return False
 
     def dispatch_workflow_event(
         self,
@@ -106,11 +127,16 @@ class AppContainer:
         event_type: str,
         tenant: TenantContext,
         payload: dict | None = None,
-    ) -> WorkflowInstance:
+        idempotency_key: str | None = None,
+    ) -> tuple[WorkflowInstance, bool]:
         payload = redact_payload(payload or {})
         instance = self.workflow_repository.get(instance_id, org_id=tenant.org_id)
         if instance is None:
             raise KeyError(f"Unknown workflow instance: {instance_id}")
+        if self._is_idempotent_replay(instance, event_type=event_type, idempotency_key=idempotency_key):
+            return instance, True
+        if idempotency_key:
+            payload["_idempotency_key"] = idempotency_key
         definition = self.workflow_definitions[instance.workflow_type]
         next_instance = self.state_machine.apply_event(
             definition=definition,
@@ -119,4 +145,6 @@ class AppContainer:
             tenant=tenant,
             payload=payload,
         )
-        return self.workflow_repository.save(next_instance)
+        with SqlAlchemyUnitOfWork() as uow:
+            saved = self.workflow_repository.save(next_instance, uow=uow)
+        return saved, False

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+from ngo_homesuite.persistence.interfaces import UnitOfWorkPort
 from ngo_homesuite.models.core import db
 from ngo_homesuite.persistence.models.workflow_tables import WorkflowInstanceRecord
 from ngo_homesuite.shared_kernel import redact_payload
@@ -33,12 +34,13 @@ class WorkflowRepository:
             org_id=record.org_id,
             workflow_type=record.workflow_type,
             current_step=record.current_step,
+            version=int(record.version or 1),
             status=WorkflowStatus(record.status),
             history=json.loads(record.history_json or "[]"),
             created_at=record.created_at.isoformat() if record.created_at else "",
         )
 
-    def save(self, instance: WorkflowInstance) -> WorkflowInstance:
+    def save(self, instance: WorkflowInstance, *, uow: UnitOfWorkPort | None = None) -> WorkflowInstance:
         self._assert_org_id(instance.org_id)
         record = WorkflowInstanceRecord.query.filter_by(instance_id=instance.instance_id).first()
         history_json = self._to_record_history(instance.history)
@@ -49,14 +51,24 @@ class WorkflowRepository:
                 workflow_type=instance.workflow_type,
                 current_step=instance.current_step,
                 status=str(instance.status),
+                version=max(1, int(instance.version or 1)),
                 history_json=history_json,
             )
             db.session.add(record)
         else:
+            current_version = int(record.version or 1)
+            expected_version = max(1, int(instance.version or 1))
+            if expected_version != current_version:
+                raise RuntimeError(
+                    f"Optimistic lock conflict for instance {instance.instance_id}: "
+                    f"expected version {expected_version}, current version {current_version}"
+                )
             record.current_step = instance.current_step
             record.status = str(instance.status)
+            record.version = current_version + 1
             record.history_json = history_json
-        db.session.commit()
+        if uow is None:
+            db.session.commit()
         return self._from_record(record)
 
     def get(

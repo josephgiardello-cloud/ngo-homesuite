@@ -4,6 +4,7 @@ import hashlib
 import json
 
 from ngo_homesuite.models.core import db
+from ngo_homesuite.persistence.interfaces import UnitOfWorkPort
 from ngo_homesuite.persistence.models.workflow_tables import WorkflowDefinitionRecord
 from ngo_homesuite.workflow_engine import StepNode, TransitionRule, WorkflowDefinition
 
@@ -60,7 +61,13 @@ class WorkflowDefinitionRepository:
             transitions=transitions,
         )
 
-    def ensure_definition(self, definition: WorkflowDefinition, *, allow_global_scope: bool = False) -> WorkflowDefinitionRecord:
+    def ensure_definition(
+        self,
+        definition: WorkflowDefinition,
+        *,
+        allow_global_scope: bool = False,
+        uow: UnitOfWorkPort | None = None,
+    ) -> WorkflowDefinitionRecord:
         if not allow_global_scope:
             raise PermissionError("Global-scope definition access requires allow_global_scope=True")
         definition_hash = self._hash(definition)
@@ -72,7 +79,8 @@ class WorkflowDefinitionRepository:
         if latest is not None and latest.definition_hash == definition_hash:
             if not latest.is_active:
                 latest.is_active = True
-                db.session.commit()
+                if uow is None:
+                    db.session.commit()
             return latest
 
         next_version = 1 if latest is None else latest.version + 1
@@ -88,7 +96,8 @@ class WorkflowDefinitionRepository:
             transitions_json=transitions_json,
         )
         db.session.add(record)
-        db.session.commit()
+        if uow is None:
+            db.session.commit()
         return record
 
     def list_active_definitions(self, *, allow_global_scope: bool = False) -> dict[str, WorkflowDefinition]:

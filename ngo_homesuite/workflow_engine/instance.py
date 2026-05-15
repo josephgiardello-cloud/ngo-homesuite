@@ -17,6 +17,7 @@ class WorkflowInstance:
     org_id: str
     workflow_type: str
     current_step: str
+    version: int = 1
     status: WorkflowStatus = WorkflowStatus.ACTIVE
     history: list[dict] = field(default_factory=list)
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())

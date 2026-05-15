@@ -23,6 +23,7 @@ class WorkflowEventRequest(BaseModel):
     actor_id: str
     role: str
     payload: dict = Field(default_factory=dict)
+    idempotency_key: str | None = None
 
 
 def _container() -> AppContainer:
@@ -103,11 +104,12 @@ def apply_workflow_event(instance_id: str):
     tenant = TenantContext(org_id=body.org_id, user_id=body.actor_id, role=_map_role(body.role))
     try:
         _enforce_user_org_access(body.org_id)
-        instance = _container().dispatch_workflow_event(
+        instance, was_replay = _container().dispatch_workflow_event(
             instance_id=instance_id,
             event_type=body.event_type,
             tenant=tenant,
             payload=redact_payload(body.payload),
+            idempotency_key=body.idempotency_key,
         )
     except PermissionError as exc:
         return {"error": str(exc)}, 403
@@ -121,8 +123,10 @@ def apply_workflow_event(instance_id: str):
             "org_id": instance.org_id,
             "workflow_type": instance.workflow_type,
             "current_step": instance.current_step,
+            "version": instance.version,
             "status": instance.status,
             "history": instance.history,
+            "idempotent_replay": was_replay,
         },
     }
 
