@@ -163,6 +163,11 @@ ngo-homesuite/
 python -m ngo_homesuite.db.migrate
 ```
 
+Preflight before applying migrations (recommended):
+```bash
+python -m ngo_homesuite.db.migrate --dry-run --verify-backup
+```
+
 #### With SQLCipher Encryption
 1. Install optional dependency:
    ```bash

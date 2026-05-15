@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from ngo_homesuite.db.migrate import MigrationError, auto_migrate
+from ngo_homesuite.db.migrate import MigrationError, auto_migrate, plan_migrations
 
 
 @pytest.fixture()
@@ -94,3 +94,66 @@ def test_auto_migrate_raises_on_hash_mismatch(tmp_path, monkeypatch, backup_env)
 
     with pytest.raises(MigrationError):
         auto_migrate(str(db_path))
+
+
+def test_plan_migrations_reports_pending_versions(tmp_path, monkeypatch):
+    migrations_dir = tmp_path / "migrations"
+    migrations_dir.mkdir(parents=True, exist_ok=True)
+    _write_migration(
+        migrations_dir,
+        "0001_initial.sql",
+        """
+        CREATE TABLE IF NOT EXISTS schema_version (
+            version INTEGER PRIMARY KEY,
+            applied_at_utc TEXT NOT NULL,
+            hash TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS t1 (id INTEGER PRIMARY KEY);
+        """,
+    )
+    _write_migration(
+        migrations_dir,
+        "0002_next.sql",
+        "ALTER TABLE t1 ADD COLUMN note TEXT;",
+    )
+
+    import ngo_homesuite.migrations as migrations_module
+
+    monkeypatch.setattr(migrations_module, "MIGRATIONS_DIR", migrations_dir)
+
+    db_path = tmp_path / "preflight.db"
+    plan_before = plan_migrations(str(db_path))
+    assert plan_before["pending_count"] == 2
+
+    auto_migrate(str(db_path))
+
+    plan_after = plan_migrations(str(db_path))
+    assert plan_after["pending_count"] == 0
+
+
+def test_plan_migrations_detects_version_gaps(tmp_path, monkeypatch):
+    migrations_dir = tmp_path / "migrations"
+    migrations_dir.mkdir(parents=True, exist_ok=True)
+    _write_migration(
+        migrations_dir,
+        "0001_initial.sql",
+        """
+        CREATE TABLE IF NOT EXISTS schema_version (
+            version INTEGER PRIMARY KEY,
+            applied_at_utc TEXT NOT NULL,
+            hash TEXT NOT NULL
+        );
+        """,
+    )
+    _write_migration(
+        migrations_dir,
+        "0003_gap.sql",
+        "CREATE TABLE IF NOT EXISTS gap_table (id INTEGER PRIMARY KEY);",
+    )
+
+    import ngo_homesuite.migrations as migrations_module
+
+    monkeypatch.setattr(migrations_module, "MIGRATIONS_DIR", migrations_dir)
+
+    with pytest.raises(MigrationError):
+        plan_migrations(str(tmp_path / "gap.db"))
