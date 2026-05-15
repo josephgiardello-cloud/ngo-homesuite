@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 import json
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from sqlalchemy import func
+from sqlalchemy import func, inspect, text
 
 from ngo_homesuite.models.core import Donation, Donor, Expense, Organization, db
+from ngo_homesuite.services.bank_reconciliation_service import BankReconciliationService
+from ngo_homesuite.services.opinionated_workflows import run_donation_receipt_followup_workflow
 from ngo_homesuite.services.reporting_service import ReportingService
 
 
@@ -23,6 +26,7 @@ class CopilotTool:
 class CopilotToolRegistry:
     def __init__(self) -> None:
         self.reporting_service = ReportingService()
+        self.bank_reconciliation_service = BankReconciliationService()
         self._tools = {
             "list_recent_donations": CopilotTool(
                 name="list_recent_donations",
@@ -48,6 +52,43 @@ class CopilotToolRegistry:
                 },
                 handler=self._search_donors,
             ),
+            "donor_profile_insights": CopilotTool(
+                name="donor_profile_insights",
+                description="Build a donor intelligence snapshot with RFM-based predictive scoring and next-step guidance.",
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "donor_id": {"type": "integer", "minimum": 1},
+                    },
+                    "required": ["donor_id"],
+                },
+                handler=self._donor_profile_insights,
+            ),
+            "rank_donors_for_outreach": CopilotTool(
+                name="rank_donors_for_outreach",
+                description="Return next donors to call ranked by predicted value and risk.",
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 10},
+                    },
+                },
+                handler=self._rank_donors_for_outreach,
+            ),
+            "draft_personalized_appeal": CopilotTool(
+                name="draft_personalized_appeal",
+                description="Draft a personalized donor outreach email grounded in giving history and risk signals.",
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "donor_id": {"type": "integer", "minimum": 1},
+                        "campaign_name": {"type": "string"},
+                        "ask_amount": {"type": "number", "minimum": 0},
+                    },
+                    "required": ["donor_id"],
+                },
+                handler=self._draft_personalized_appeal,
+            ),
             "organization_financial_summary": CopilotTool(
                 name="organization_financial_summary",
                 description="Return a quick financial summary for the current organization.",
@@ -66,6 +107,18 @@ class CopilotToolRegistry:
                     "required": ["report_type"],
                 },
                 handler=self._generate_report,
+            ),
+            "generate_grant_report_draft": CopilotTool(
+                name="generate_grant_report_draft",
+                description="Generate a grant report draft payload and a short narrative summary.",
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "report_type": {"type": "string", "default": "grant_pipeline"},
+                        "params": {"type": "object"},
+                    },
+                },
+                handler=self._generate_grant_report_draft,
             ),
             "create_donor": CopilotTool(
                 name="create_donor",
@@ -102,7 +155,181 @@ class CopilotToolRegistry:
                 requires_approval=True,
                 mutates_state=False,
             ),
+            "run_reconciliation": CopilotTool(
+                name="run_reconciliation",
+                description="Run a reconciliation workflow between a bank statement reference and ledger reference.",
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "bank_statement_ref": {"type": "string"},
+                        "ledger_ref": {"type": "string"},
+                    },
+                    "required": ["bank_statement_ref", "ledger_ref"],
+                },
+                handler=self._run_reconciliation,
+                requires_approval=True,
+                mutates_state=True,
+            ),
+            "execute_donation_followup_workflow": CopilotTool(
+                name="execute_donation_followup_workflow",
+                description="Execute donation receipt and follow-up workflow for a donation.",
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "donation_id": {"type": "integer", "minimum": 1},
+                    },
+                    "required": ["donation_id"],
+                },
+                handler=self._execute_donation_followup_workflow,
+                requires_approval=True,
+                mutates_state=True,
+            ),
         }
+
+    def _optional_donor_relationship_counts(self, donor_id: int) -> dict[str, int]:
+        inspector = inspect(db.engine)
+        table_names = set(inspector.get_table_names())
+        metrics = {"interactions": 0, "pledges": 0, "events": 0}
+
+        if "interactions" in table_names:
+            row = db.session.execute(
+                text("SELECT COUNT(*) FROM interactions WHERE donor_id = :donor_id"),
+                {"donor_id": donor_id},
+            ).scalar()
+            metrics["interactions"] = int(row or 0)
+
+        if "pledges" in table_names:
+            row = db.session.execute(
+                text("SELECT COUNT(*) FROM pledges WHERE donor_id = :donor_id"),
+                {"donor_id": donor_id},
+            ).scalar()
+            metrics["pledges"] = int(row or 0)
+
+        if "registrations" in table_names:
+            row = db.session.execute(
+                text("SELECT COUNT(*) FROM registrations WHERE donor_id = :donor_id"),
+                {"donor_id": donor_id},
+            ).scalar()
+            metrics["events"] = int(row or 0)
+
+        return metrics
+
+    def _compute_rfm_signals(self, donor: Donor, org_id: int) -> dict[str, Any]:
+        now = datetime.utcnow()
+        lookback = now - timedelta(days=365)
+        rows = (
+            Donation.query.filter_by(organization_id=org_id, donor_id=donor.id)
+            .order_by(Donation.donation_date.desc())
+            .all()
+        )
+
+        latest = rows[0].donation_date if rows else None
+        recency_days = 9999 if latest is None else max(0, (now - latest).days)
+        in_year = [d for d in rows if d.donation_date and d.donation_date >= lookback]
+        frequency_12m = len(in_year)
+        monetary_12m = float(sum(float(d.amount or 0.0) for d in in_year))
+        lifetime_total = float(sum(float(d.amount or 0.0) for d in rows))
+        max_single_gift = float(max((float(d.amount or 0.0) for d in rows), default=0.0))
+
+        if recency_days <= 30:
+            recency_score = 100
+        elif recency_days <= 90:
+            recency_score = 75
+        elif recency_days <= 180:
+            recency_score = 50
+        elif recency_days <= 365:
+            recency_score = 25
+        else:
+            recency_score = 10
+
+        if frequency_12m >= 12:
+            frequency_score = 100
+        elif frequency_12m >= 6:
+            frequency_score = 80
+        elif frequency_12m >= 3:
+            frequency_score = 60
+        elif frequency_12m >= 1:
+            frequency_score = 35
+        else:
+            frequency_score = 10
+
+        if monetary_12m >= 10000:
+            monetary_score = 100
+        elif monetary_12m >= 5000:
+            monetary_score = 85
+        elif monetary_12m >= 2500:
+            monetary_score = 70
+        elif monetary_12m >= 1000:
+            monetary_score = 55
+        elif monetary_12m > 0:
+            monetary_score = 35
+        else:
+            monetary_score = 10
+
+        giving_likelihood = round((0.4 * recency_score) + (0.3 * frequency_score) + (0.3 * monetary_score), 1)
+        churn_risk = round(100 - (0.6 * recency_score + 0.25 * frequency_score + 0.15 * monetary_score), 1)
+        major_gift_potential = round(min(100.0, (0.6 * monetary_score) + (0.4 * min(100.0, max_single_gift / 100))), 1)
+
+        return {
+            "last_donation_at": latest.isoformat() if latest else None,
+            "recency_days": recency_days,
+            "frequency_12m": frequency_12m,
+            "monetary_12m": round(monetary_12m, 2),
+            "lifetime_total": round(lifetime_total, 2),
+            "max_single_gift": round(max_single_gift, 2),
+            "rfm": {
+                "recency_score": recency_score,
+                "frequency_score": frequency_score,
+                "monetary_score": monetary_score,
+            },
+            "predictions": {
+                "giving_likelihood": giving_likelihood,
+                "churn_risk": churn_risk,
+                "major_gift_potential": major_gift_potential,
+            },
+        }
+
+    def _insight_summary_text(self, donor: Donor, metrics: dict[str, Any], related: dict[str, int]) -> str:
+        recency = metrics["recency_days"]
+        likelihood = metrics["predictions"]["giving_likelihood"]
+        churn = metrics["predictions"]["churn_risk"]
+        major = metrics["predictions"]["major_gift_potential"]
+        lifetime = metrics["lifetime_total"]
+
+        if recency > 180 and lifetime >= 1000:
+            status = "lapsed donor with strong reactivation potential"
+        elif churn >= 65:
+            status = "at-risk donor requiring quick follow-up"
+        elif likelihood >= 70:
+            status = "high-probability near-term donor"
+        else:
+            status = "steady donor with moderate opportunity"
+
+        return (
+            f"{donor.name} appears to be a {status}. "
+            f"Last gift was {recency} days ago, 12-month giving is ${metrics['monetary_12m']:.2f} across "
+            f"{metrics['frequency_12m']} gifts, and lifetime giving is ${lifetime:.2f}. "
+            f"Model signals: give likelihood {likelihood}/100, churn risk {churn}/100, major gift potential {major}/100. "
+            f"Related activity counts: interactions={related['interactions']}, pledges={related['pledges']}, events={related['events']}."
+        )
+
+    def _recommended_actions(self, metrics: dict[str, Any], related: dict[str, int]) -> list[str]:
+        recency = metrics["recency_days"]
+        churn = metrics["predictions"]["churn_risk"]
+        major = metrics["predictions"]["major_gift_potential"]
+        actions: list[str] = []
+
+        if recency > 120 or churn >= 60:
+            actions.append("Schedule a personal check-in call within 7 days.")
+        if related["interactions"] == 0:
+            actions.append("Log a new interaction after outreach to maintain relationship context.")
+        if major >= 70:
+            actions.append("Prepare a tailored major-gift ask anchored to recent impact outcomes.")
+        if metrics["frequency_12m"] <= 1:
+            actions.append("Offer a recurring giving option with a low-friction monthly amount.")
+        if not actions:
+            actions.append("Send a stewardship update and confirm next engagement milestone.")
+        return actions
 
     def list_tools(self) -> list[CopilotTool]:
         return list(self._tools.values())
@@ -221,6 +448,109 @@ class CopilotToolRegistry:
             "donor_count": donor_count,
         }
 
+    def _donor_profile_insights(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
+        org_id = self._org_filter(runtime_ctx)
+        donor_id = int(args.get("donor_id", 0) or 0)
+        if org_id is None:
+            return {"error": "organization_id is required in runtime context"}
+        if donor_id <= 0:
+            return {"error": "donor_id is required"}
+
+        donor = Donor.query.filter_by(organization_id=org_id, id=donor_id).first()
+        if donor is None:
+            return {"error": f"donor {donor_id} not found"}
+
+        metrics = self._compute_rfm_signals(donor, org_id)
+        related = self._optional_donor_relationship_counts(donor.id)
+        summary = self._insight_summary_text(donor, metrics, related)
+
+        return {
+            "donor": {
+                "id": donor.id,
+                "name": donor.name,
+                "email": donor.email,
+                "phone": donor.phone,
+                "donor_type": donor.donor_type,
+            },
+            "metrics": metrics,
+            "activity": related,
+            "recommended_actions": self._recommended_actions(metrics, related),
+            "insight_summary": summary,
+        }
+
+    def _rank_donors_for_outreach(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
+        org_id = self._org_filter(runtime_ctx)
+        if org_id is None:
+            return {"error": "organization_id is required in runtime context"}
+
+        limit = max(1, min(int(args.get("limit", 10) or 10), 25))
+        donors = Donor.query.filter_by(organization_id=org_id).order_by(Donor.created_at.asc()).all()
+
+        ranked: list[dict[str, Any]] = []
+        for donor in donors:
+            metrics = self._compute_rfm_signals(donor, org_id)
+            related = self._optional_donor_relationship_counts(donor.id)
+            score = round(
+                (0.5 * metrics["predictions"]["giving_likelihood"]) +
+                (0.3 * metrics["predictions"]["major_gift_potential"]) +
+                (0.2 * metrics["predictions"]["churn_risk"]),
+                1,
+            )
+            ranked.append(
+                {
+                    "donor_id": donor.id,
+                    "donor_name": donor.name,
+                    "priority_score": score,
+                    "giving_likelihood": metrics["predictions"]["giving_likelihood"],
+                    "churn_risk": metrics["predictions"]["churn_risk"],
+                    "major_gift_potential": metrics["predictions"]["major_gift_potential"],
+                    "last_donation_at": metrics["last_donation_at"],
+                    "suggested_next_action": self._recommended_actions(metrics, related)[0],
+                }
+            )
+
+        ranked.sort(key=lambda item: item["priority_score"], reverse=True)
+        return {"recommended": ranked[:limit], "count": min(limit, len(ranked))}
+
+    def _draft_personalized_appeal(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
+        org_id = self._org_filter(runtime_ctx)
+        donor_id = int(args.get("donor_id", 0) or 0)
+        if org_id is None:
+            return {"error": "organization_id is required in runtime context"}
+        if donor_id <= 0:
+            return {"error": "donor_id is required"}
+
+        donor = Donor.query.filter_by(organization_id=org_id, id=donor_id).first()
+        org = Organization.query.filter_by(id=org_id).first()
+        if donor is None:
+            return {"error": f"donor {donor_id} not found"}
+
+        metrics = self._compute_rfm_signals(donor, org_id)
+        campaign_name = str(args.get("campaign_name", "Community Impact Fund")).strip() or "Community Impact Fund"
+        ask_amount = float(args.get("ask_amount") or max(50.0, round(metrics["max_single_gift"] * 0.6, 2) or 100.0))
+
+        subject = f"{donor.name}, your support can accelerate {campaign_name}"
+        body = (
+            f"Hi {donor.name},\n\n"
+            f"Thank you for your continued support of {(org.name if org else 'our nonprofit')}. "
+            "In the last year, your contributions helped sustain critical programs for families we serve.\n\n"
+            f"We are currently advancing {campaign_name}, and a gift of ${ask_amount:,.2f} would directly expand this work."
+            f" Based on your past support, we believe this is a meaningful way to deepen your impact.\n\n"
+            "Would you be open to a short call this week so we can share progress and next steps?\n\n"
+            "With gratitude,\n"
+            "Fundraising Team"
+        )
+
+        return {
+            "donor_id": donor.id,
+            "donor_name": donor.name,
+            "campaign_name": campaign_name,
+            "ask_amount": round(ask_amount, 2),
+            "subject": subject,
+            "body": body,
+            "signals": metrics["predictions"],
+        }
+
     def _generate_report(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
         report_type = str(args.get("report_type", "")).strip()
         params = args.get("params") if isinstance(args.get("params"), dict) else {}
@@ -232,6 +562,26 @@ class CopilotToolRegistry:
             return self.reporting_service.generate_report(report_type, params=params, actor=actor)
         except Exception as exc:
             return {"error": str(exc), "report_type": report_type}
+
+    def _generate_grant_report_draft(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
+        report_type = str(args.get("report_type", "grant_pipeline")).strip() or "grant_pipeline"
+        params = args.get("params") if isinstance(args.get("params"), dict) else {}
+        actor = runtime_ctx.get("actor") or "copilot"
+
+        try:
+            rows = self.reporting_service.generate_report(report_type, params=params, actor=actor)
+        except Exception as exc:
+            return {"error": str(exc), "report_type": report_type}
+
+        return {
+            "report_type": report_type,
+            "row_ids": rows,
+            "summary": f"Prepared grant report draft '{report_type}' with {len(rows)} rows.",
+            "next_steps": [
+                "Validate grant milestones and outcomes before submission.",
+                "Attach supporting evidence from compliance exports.",
+            ],
+        }
 
     def _create_donor(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
         org_id = self._org_filter(runtime_ctx)
@@ -287,3 +637,34 @@ class CopilotToolRegistry:
             "filename": "donors_snapshot.csv",
             "csv": csv_payload,
         }
+
+    def _run_reconciliation(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
+        bank_statement_ref = str(args.get("bank_statement_ref", "")).strip()
+        ledger_ref = str(args.get("ledger_ref", "")).strip()
+        actor = str(runtime_ctx.get("actor") or "copilot")
+        if not bank_statement_ref or not ledger_ref:
+            return {"error": "bank_statement_ref and ledger_ref are required"}
+
+        result = self.bank_reconciliation_service.reconcile(
+            bank_statement=bank_statement_ref,
+            ledger=ledger_ref,
+            actor=actor,
+        )
+        return {
+            "ok": True,
+            "status": "reconciliation_started" if result is None else "reconciliation_completed",
+            "bank_statement_ref": bank_statement_ref,
+            "ledger_ref": ledger_ref,
+            "result": result,
+        }
+
+    def _execute_donation_followup_workflow(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
+        donation_id = int(args.get("donation_id", 0) or 0)
+        actor = str(runtime_ctx.get("actor") or "copilot")
+        if donation_id <= 0:
+            return {"error": "donation_id is required"}
+
+        return run_donation_receipt_followup_workflow(
+            donation_id=donation_id,
+            actor=actor,
+        )

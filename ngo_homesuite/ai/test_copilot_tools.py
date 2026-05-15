@@ -1,0 +1,86 @@
+from __future__ import annotations
+
+import pytest
+
+from ngo_homesuite.ai.copilot_tools import CopilotToolRegistry
+from ngo_homesuite.app_factory import create_app
+from ngo_homesuite.flask_config import TestingConfig
+from ngo_homesuite.models.core import Donation, DonationReceipt
+
+
+@pytest.fixture(scope="module")
+def app():
+    class _TestCfg(TestingConfig):
+        COPILOT_ENABLED = True
+
+    return create_app(_TestCfg)
+
+
+@pytest.fixture()
+def registry(app):
+    with app.app_context():
+        yield CopilotToolRegistry()
+
+
+def _runtime_ctx() -> dict[str, int | str]:
+    return {
+        "organization_id": 1,
+        "actor": "test-copilot",
+    }
+
+
+def test_donor_profile_insights_returns_predictive_summary(registry, app):
+    with app.app_context():
+        donor_id = 1
+
+    payload = registry.execute("donor_profile_insights", {"donor_id": donor_id}, _runtime_ctx())
+
+    assert payload["donor"]["id"] == donor_id
+    assert isinstance(payload["insight_summary"], str)
+    assert payload["metrics"]["predictions"]["giving_likelihood"] >= 0
+    assert isinstance(payload["recommended_actions"], list)
+    assert payload["recommended_actions"]
+
+
+def test_rank_donors_for_outreach_returns_prioritized_list(registry):
+    payload = registry.execute("rank_donors_for_outreach", {"limit": 2}, _runtime_ctx())
+
+    assert payload["count"] >= 1
+    assert len(payload["recommended"]) >= 1
+    first = payload["recommended"][0]
+    assert "priority_score" in first
+    assert "suggested_next_action" in first
+
+
+def test_draft_personalized_appeal_uses_donor_context(registry):
+    payload = registry.execute(
+        "draft_personalized_appeal",
+        {"donor_id": 1, "campaign_name": "Literacy Scholarship Drive", "ask_amount": 250},
+        _runtime_ctx(),
+    )
+
+    assert payload["campaign_name"] == "Literacy Scholarship Drive"
+    assert payload["ask_amount"] == 250.0
+    assert "subject" in payload and payload["subject"]
+    assert "body" in payload and "Fundraising Team" in payload["body"]
+
+
+def test_execute_donation_followup_workflow_creates_receipt(registry, app):
+    with app.app_context():
+        donation = Donation.query.order_by(Donation.id.asc()).first()
+        assert donation is not None
+        donation_id = int(donation.id)
+
+    payload = registry.execute(
+        "execute_donation_followup_workflow",
+        {"donation_id": donation_id},
+        _runtime_ctx(),
+    )
+
+    assert payload["ok"] is True
+    assert payload["workflow"] == "donation_receipt_followup"
+    assert payload["donation_id"] == donation_id
+
+    with app.app_context():
+        receipt = DonationReceipt.query.filter_by(donation_id=donation_id).first()
+        assert receipt is not None

@@ -80,7 +80,7 @@ class Config:
     COPILOT_ALLOW_WEB_TOOLS = os.environ.get('COPILOT_ALLOW_WEB_TOOLS', 'False') == 'True'
     COPILOT_TOOL_ALLOWLIST = os.environ.get(
         'COPILOT_TOOL_ALLOWLIST',
-        'list_recent_donations,search_donors,organization_financial_summary,generate_report,create_donor,export_donors_snapshot',
+        'list_recent_donations,search_donors,donor_profile_insights,rank_donors_for_outreach,draft_personalized_appeal,organization_financial_summary,generate_report,generate_grant_report_draft,create_donor,export_donors_snapshot,run_reconciliation,execute_donation_followup_workflow',
     )
     COPILOT_REQUIRE_APPROVAL_TOKEN = os.environ.get('COPILOT_REQUIRE_APPROVAL_TOKEN', 'True') == 'True'
     COPILOT_APPROVAL_TOKEN_TTL_SEC = int(os.environ.get('COPILOT_APPROVAL_TOKEN_TTL_SEC', '300'))
