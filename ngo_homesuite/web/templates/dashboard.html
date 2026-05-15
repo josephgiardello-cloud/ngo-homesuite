@@ -47,6 +47,7 @@
     
     {% if stats.recent_donations %}
         <h2 style="margin-top: 2rem;">Recent Donations</h2>
+        <div class="table-wrap">
         <table>
             <thead>
                 <tr>
@@ -63,18 +64,21 @@
                         <td>{{ donation.donor_name }}</td>
                         <td>{{ donation.currency }} {{ "%.2f"|format(donation.amount) }}</td>
                         <td>{{ donation.donation_date.strftime('%Y-%m-%d') }}</td>
-                        <td><span style="padding: 0.25rem 0.75rem; border-radius: 20px; background-color: #d4edda; color: #155724;">{{ donation.status }}</span></td>
+                        <td><span style="padding: 0.25rem 0.75rem; border-radius: 20px; border: 1px solid var(--border); background: var(--surface-soft); color: var(--text);">{{ donation.status }}</span></td>
                         <td><a href="{{ url_for('main.donation_receipt', donation_id=donation.id) }}" class="btn btn-secondary">PDF</a></td>
                     </tr>
                 {% endfor %}
             </tbody>
         </table>
+        </div>
     {% endif %}
     
     <div style="margin-top: 2rem;">
         <a href="{{ url_for('main.donation_create') }}" class="btn btn-primary">Add Donation</a>
+        <a href="{{ url_for('main.expense_create') }}" class="btn btn-primary">Add Expense</a>
         <a href="{{ url_for('main.donors_list') }}" class="btn btn-secondary">Manage Donors</a>
         <a href="{{ url_for('main.projects_dashboard') }}" class="btn btn-secondary">Manage Projects</a>
+        <a href="{{ url_for('main.reports_page') }}" class="btn btn-secondary">View Reports</a>
     </div>
     
 {% else %}

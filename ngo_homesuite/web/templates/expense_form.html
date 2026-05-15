@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block title %}Record Expense - NGO HomeSuite{% endblock %}
+
+{% block content %}
+<h1>Record Expense</h1>
+<p class="text-muted">Capture spending with optional fund and project assignment.</p>
+
+<form method="post" class="mt-2">
+    {{ form.hidden_tag() }}
+
+    <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));">
+        <div class="form-group {% if form.amount.errors %}error{% endif %}">
+            {{ form.amount.label }}
+            {{ form.amount() }}
+            {% for error in form.amount.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        </div>
+
+        <div class="form-group {% if form.currency.errors %}error{% endif %}">
+            {{ form.currency.label }}
+            {{ form.currency() }}
+            {% for error in form.currency.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        </div>
+
+        <div class="form-group {% if form.payee.errors %}error{% endif %}">
+            {{ form.payee.label }}
+            {{ form.payee() }}
+            {% for error in form.payee.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        </div>
+
+        <div class="form-group {% if form.project_id.errors %}error{% endif %}">
+            {{ form.project_id.label }}
+            {{ form.project_id() }}
+            {% for error in form.project_id.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        </div>
+
+        <div class="form-group {% if form.fund_id.errors %}error{% endif %}">
+            {{ form.fund_id.label }}
+            {{ form.fund_id() }}
+            {% for error in form.fund_id.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        </div>
+    </div>
+
+    <div class="form-group {% if form.description.errors %}error{% endif %}">
+        {{ form.description.label }}
+        {{ form.description(rows=4) }}
+        {% for error in form.description.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+    </div>
+
+    <div class="actions-row">
+        {{ form.submit(class_='btn btn-primary') }}
+        <a href="{{ url_for('main.expenses_list') }}" class="btn btn-secondary">View Expenses</a>
+        <a href="{{ url_for('main.donation_create') }}" class="btn btn-secondary">Record Donation</a>
+    </div>
+</form>
+{% endblock %}

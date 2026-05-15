@@ -27,6 +27,17 @@
     <canvas id="monthlyTrendChart" height="120"></canvas>
 </div>
 
+<div class="card mt-3">
+    <h2>Composition Snapshot</h2>
+    <p class="text-muted">Relative size of donations, expenses, and net.</p>
+    <canvas id="compositionChart" height="110"></canvas>
+</div>
+
+<div class="card mt-3">
+    <h2>Trend Insight</h2>
+    <p class="text-muted" id="trendInsight">Analyzing monthly pattern...</p>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <script>
     const chartData = {{ chart_data | tojson }};
@@ -50,6 +61,15 @@
                         backgroundColor: 'rgba(198, 40, 40, 0.65)',
                         borderColor: 'rgba(198, 40, 40, 1)',
                         borderWidth: 1
+                    },
+                    {
+                        label: 'Net',
+                        data: chartData.net,
+                        type: 'line',
+                        borderColor: 'rgba(20, 118, 212, 1)',
+                        backgroundColor: 'rgba(20, 118, 212, 0.18)',
+                        borderWidth: 2,
+                        tension: 0.25
                     }
                 ]
             },
@@ -66,6 +86,56 @@
                 }
             }
         });
+    }
+
+    const compositionCtx = document.getElementById('compositionChart');
+    if (compositionCtx) {
+        new Chart(compositionCtx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Donations', 'Expenses', 'Net'],
+                datasets: [{
+                    data: [
+                        chartData.totals.donations,
+                        chartData.totals.expenses,
+                        Math.abs(chartData.totals.net)
+                    ],
+                    backgroundColor: [
+                        'rgba(46, 125, 50, 0.72)',
+                        'rgba(198, 40, 40, 0.72)',
+                        'rgba(20, 118, 212, 0.72)'
+                    ],
+                    borderColor: [
+                        'rgba(46, 125, 50, 1)',
+                        'rgba(198, 40, 40, 1)',
+                        'rgba(20, 118, 212, 1)'
+                    ],
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: {
+                        position: 'bottom'
+                    }
+                }
+            }
+        });
+    }
+
+    const insightNode = document.getElementById('trendInsight');
+    if (insightNode) {
+        if (!chartData.labels.length) {
+            insightNode.textContent = 'No monthly trend data yet. Add donations and expenses to generate insights.';
+        } else {
+            const totalDon = chartData.totals.donations;
+            const totalExp = chartData.totals.expenses;
+            const net = chartData.totals.net;
+            const burnRatio = totalDon > 0 ? ((totalExp / totalDon) * 100).toFixed(1) : '0.0';
+            const direction = net >= 0 ? 'positive' : 'negative';
+            insightNode.textContent = `Net cash flow is currently ${direction} at $${net.toFixed(2)}. Expense-to-donation ratio is ${burnRatio}%.`;
+        }
     }
 </script>
 {% endblock %}

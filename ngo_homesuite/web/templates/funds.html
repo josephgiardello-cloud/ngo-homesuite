@@ -29,6 +29,7 @@
 </form>
 
 {% if funds %}
+<div class="table-wrap">
 <table>
     <thead>
         <tr>
@@ -44,11 +45,12 @@
             <td>{{ fund.name }}</td>
             <td>{{ fund.description or '-' }}</td>
             <td>{{ 'active' if fund.is_active else 'inactive' }}</td>
-            <td><a href="{{ url_for('main.fund_edit', fund_id=fund.id) }}" class="btn btn-secondary">Edit</a></td>
+            <td><div class="actions-row"><a href="{{ url_for('main.fund_edit', fund_id=fund.id) }}" class="btn btn-secondary">Edit</a></div></td>
         </tr>
     {% endfor %}
     </tbody>
 </table>
+</div>
 {% else %}
 <div class="card">
     <p>No funds are configured yet.</p>

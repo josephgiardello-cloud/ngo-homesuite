@@ -58,6 +58,16 @@ class DonationForm(FlaskForm):
     submit = SubmitField('Record Donation')
 
 
+class ExpenseForm(FlaskForm):
+    project_id = SelectField('Project', coerce=int, validators=[WTOptional()])
+    fund_id = SelectField('Fund', coerce=int, validators=[WTOptional()])
+    amount = FloatField('Amount', validators=[DataRequired(), NumberRange(min=0.01)])
+    currency = SelectField('Currency', choices=[('USD', 'USD'), ('EUR', 'EUR'), ('GBP', 'GBP')], validators=[DataRequired()])
+    payee = StringField('Payee', validators=[WTOptional()])
+    description = TextAreaField('Description', validators=[WTOptional()])
+    submit = SubmitField('Record Expense')
+
+
 class ProjectForm(FlaskForm):
     name = StringField('Project Name', validators=[DataRequired()])
     description = TextAreaField('Description', validators=[WTOptional()])
@@ -96,8 +106,6 @@ def _current_org() -> TypingOptional[Organization]:
 
 
 def _build_csv_bytes(headers, rows):
-    buffer = BytesIO()
-    text_buffer = buffer if False else None
     import io
     text_stream = io.StringIO()
     writer = csv.writer(text_stream)
@@ -117,6 +125,16 @@ def _build_xlsx_bytes(sheet_name, headers, rows):
     workbook.save(output)
     output.seek(0)
     return output.read()
+
+
+def _parse_float(value: str):
+    value = (value or '').strip()
+    if not value:
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
 
 
 @main_bp.route('/')
@@ -363,6 +381,112 @@ def donation_create():
     return render_template('donation_form.html', form=form, active_page='donations')
 
 
+@main_bp.route('/donations')
+@login_required
+def donations_list():
+    org = _current_org()
+    query = request.args.get('q', '').strip()
+    payment_method = request.args.get('payment_method', '').strip()
+    status = request.args.get('status', '').strip()
+    min_amount = _parse_float(request.args.get('min_amount', ''))
+    max_amount = _parse_float(request.args.get('max_amount', ''))
+
+    donations_query = Donation.query.filter_by(organization_id=org.id) if org else Donation.query.filter_by(id=-1)
+    if query:
+        like_term = f"%{query}%"
+        donations_query = donations_query.filter(
+            (Donation.donor_name.ilike(like_term)) |
+            (Donation.donor_email.ilike(like_term)) |
+            (Donation.reference_number.ilike(like_term)) |
+            (Donation.purpose.ilike(like_term))
+        )
+    if payment_method:
+        donations_query = donations_query.filter_by(payment_method=payment_method)
+    if status:
+        donations_query = donations_query.filter_by(status=status)
+    if min_amount is not None:
+        donations_query = donations_query.filter(Donation.amount >= min_amount)
+    if max_amount is not None:
+        donations_query = donations_query.filter(Donation.amount <= max_amount)
+
+    donations = donations_query.order_by(Donation.donation_date.desc()).all()
+    return render_template(
+        'donations.html',
+        donations=donations,
+        active_page='donations',
+        filter_q=query,
+        filter_payment_method=payment_method,
+        filter_status=status,
+        filter_min_amount=request.args.get('min_amount', ''),
+        filter_max_amount=request.args.get('max_amount', ''),
+    )
+
+
+@main_bp.route('/donations/export/<string:file_type>')
+@login_required
+def donations_export(file_type: str):
+    org = _current_org()
+    if not org:
+        flash('No organization available for export.', 'error')
+        return redirect(url_for('main.donations_list'))
+
+    query = request.args.get('q', '').strip()
+    payment_method = request.args.get('payment_method', '').strip()
+    status = request.args.get('status', '').strip()
+    min_amount = _parse_float(request.args.get('min_amount', ''))
+    max_amount = _parse_float(request.args.get('max_amount', ''))
+
+    donations_query = Donation.query.filter_by(organization_id=org.id)
+    if query:
+        like_term = f"%{query}%"
+        donations_query = donations_query.filter(
+            (Donation.donor_name.ilike(like_term)) |
+            (Donation.donor_email.ilike(like_term)) |
+            (Donation.reference_number.ilike(like_term)) |
+            (Donation.purpose.ilike(like_term))
+        )
+    if payment_method:
+        donations_query = donations_query.filter_by(payment_method=payment_method)
+    if status:
+        donations_query = donations_query.filter_by(status=status)
+    if min_amount is not None:
+        donations_query = donations_query.filter(Donation.amount >= min_amount)
+    if max_amount is not None:
+        donations_query = donations_query.filter(Donation.amount <= max_amount)
+
+    donations = donations_query.order_by(Donation.donation_date.desc()).all()
+    headers = ['ID', 'Date', 'Donor', 'Email', 'Amount', 'Currency', 'Status', 'Payment Method', 'Purpose', 'Reference']
+    rows = [
+        [
+            d.id,
+            d.donation_date.strftime('%Y-%m-%d') if d.donation_date else '',
+            d.donor_name,
+            d.donor_email or '',
+            d.amount,
+            d.currency,
+            d.status,
+            d.payment_method or '',
+            d.purpose or '',
+            d.reference_number or '',
+        ]
+        for d in donations
+    ]
+
+    if file_type == 'csv':
+        data = _build_csv_bytes(headers, rows)
+        return send_file(BytesIO(data), mimetype='text/csv', as_attachment=True, download_name='donations.csv')
+    if file_type == 'xlsx':
+        data = _build_xlsx_bytes('Donations', headers, rows)
+        return send_file(
+            BytesIO(data),
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name='donations.xlsx',
+        )
+    flash('Unsupported export type.', 'error')
+    return redirect(url_for('main.donations_list'))
+
+
 @main_bp.route('/donations/<int:donation_id>/receipt')
 @login_required
 def donation_receipt(donation_id: int):
@@ -388,6 +512,123 @@ def donation_receipt(donation_id: int):
         as_attachment=True,
         download_name=file_name,
     )
+
+
+@main_bp.route('/expenses')
+@login_required
+def expenses_list():
+    org = _current_org()
+    query = request.args.get('q', '').strip()
+    min_amount = _parse_float(request.args.get('min_amount', ''))
+    max_amount = _parse_float(request.args.get('max_amount', ''))
+
+    expenses_query = Expense.query.filter_by(organization_id=org.id) if org else Expense.query.filter_by(id=-1)
+    if query:
+        like_term = f"%{query}%"
+        expenses_query = expenses_query.filter(
+            (Expense.payee.ilike(like_term)) |
+            (Expense.description.ilike(like_term))
+        )
+    if min_amount is not None:
+        expenses_query = expenses_query.filter(Expense.amount >= min_amount)
+    if max_amount is not None:
+        expenses_query = expenses_query.filter(Expense.amount <= max_amount)
+
+    expenses = expenses_query.order_by(Expense.paid_at.desc()).all()
+    return render_template(
+        'expenses.html',
+        expenses=expenses,
+        active_page='expenses',
+        filter_q=query,
+        filter_min_amount=request.args.get('min_amount', ''),
+        filter_max_amount=request.args.get('max_amount', ''),
+    )
+
+
+@main_bp.route('/expenses/new', methods=['GET', 'POST'])
+@login_required
+@roles_required('admin', 'staff')
+def expense_create():
+    org = _current_org()
+    if not org:
+        flash('No organization is available. Please seed data first.', 'error')
+        return redirect(url_for('main.dashboard'))
+
+    project_options = [(0, 'General / None')] + [(p.id, p.name) for p in Project.query.filter_by(organization_id=org.id).order_by(Project.name.asc()).all()]
+    fund_options = [(0, 'General / None')] + [(f.id, f.name) for f in Fund.query.filter_by(organization_id=org.id, is_active=True).order_by(Fund.name.asc()).all()]
+
+    form = ExpenseForm()
+    form.project_id.choices = project_options
+    form.fund_id.choices = fund_options
+
+    if form.validate_on_submit():
+        expense = Expense(
+            organization_id=org.id,
+            project_id=form.project_id.data or None,
+            fund_id=form.fund_id.data or None,
+            amount=form.amount.data,
+            currency=form.currency.data,
+            payee=form.payee.data,
+            description=form.description.data,
+        )
+        db.session.add(expense)
+        db.session.commit()
+        flash('Expense recorded successfully.', 'success')
+        return redirect(url_for('main.expenses_list'))
+
+    return render_template('expense_form.html', form=form, active_page='expenses')
+
+
+@main_bp.route('/expenses/export/<string:file_type>')
+@login_required
+def expenses_export(file_type: str):
+    org = _current_org()
+    if not org:
+        flash('No organization available for export.', 'error')
+        return redirect(url_for('main.expenses_list'))
+
+    query = request.args.get('q', '').strip()
+    min_amount = _parse_float(request.args.get('min_amount', ''))
+    max_amount = _parse_float(request.args.get('max_amount', ''))
+
+    expenses_query = Expense.query.filter_by(organization_id=org.id)
+    if query:
+        like_term = f"%{query}%"
+        expenses_query = expenses_query.filter((Expense.payee.ilike(like_term)) | (Expense.description.ilike(like_term)))
+    if min_amount is not None:
+        expenses_query = expenses_query.filter(Expense.amount >= min_amount)
+    if max_amount is not None:
+        expenses_query = expenses_query.filter(Expense.amount <= max_amount)
+
+    expenses = expenses_query.order_by(Expense.paid_at.desc()).all()
+    headers = ['ID', 'Date', 'Payee', 'Amount', 'Currency', 'Project', 'Fund', 'Description']
+    rows = [
+        [
+            e.id,
+            e.paid_at.strftime('%Y-%m-%d') if e.paid_at else '',
+            e.payee or '',
+            e.amount,
+            e.currency,
+            e.project.name if e.project else '',
+            e.fund.name if e.fund else '',
+            e.description or '',
+        ]
+        for e in expenses
+    ]
+
+    if file_type == 'csv':
+        data = _build_csv_bytes(headers, rows)
+        return send_file(BytesIO(data), mimetype='text/csv', as_attachment=True, download_name='expenses.csv')
+    if file_type == 'xlsx':
+        data = _build_xlsx_bytes('Expenses', headers, rows)
+        return send_file(
+            BytesIO(data),
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name='expenses.xlsx',
+        )
+    flash('Unsupported export type.', 'error')
+    return redirect(url_for('main.expenses_list'))
 
 
 @main_bp.route('/projects')
@@ -656,6 +897,12 @@ def reports_page():
         'labels': labels,
         'donations': [round(monthly_donations[label], 2) for label in labels],
         'expenses': [round(monthly_expenses[label], 2) for label in labels],
+        'net': [round(monthly_donations[label] - monthly_expenses[label], 2) for label in labels],
+        'totals': {
+            'donations': round(total_donations, 2),
+            'expenses': round(total_expenses, 2),
+            'net': round(net_total, 2),
+        },
     }
 
     return render_template(
