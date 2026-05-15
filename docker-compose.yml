@@ -1,0 +1,41 @@
+version: "3.9"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ngo-homesuite-app
+    command: gunicorn -w 3 -k gthread -b 0.0.0.0:8000 ngo_homesuite.wsgi:app
+    env_file:
+      - .env
+    environment:
+      FLASK_ENV: production
+      RATE_LIMIT_ENABLED: "True"
+      LOG_LEVEL: INFO
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./backups:/app/backups
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2.8
+    container_name: ngo-homesuite-caddy
+    profiles: ["edge"]
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:

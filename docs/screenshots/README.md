@@ -8,4 +8,7 @@ Recommended captures:
 - donor-profile.png
 - donations-list.png
 - reports-compliance.png
+- workflows-runner.png
+
+Optional captures:
 - copilot-approval-queue.png

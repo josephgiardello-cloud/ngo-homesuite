@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ngo-homesuite"
+version = "0.2.0"
+description = "Multi-tenant NGO operations platform with workflow runtime, audit trails, and AI copilot support"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+  {name = "NGO HomeSuite Contributors"}
+]
+keywords = ["nonprofit", "ngo", "flask", "workflow", "audit", "donations"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Framework :: Flask",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+  "Flask==3.1.2",
+  "Flask-Login==0.6.3",
+  "Flask-SQLAlchemy==3.1.1",
+  "Flask-Migrate==4.0.7",
+  "Flask-WTF==1.2.2",
+  "Flask-Babel==4.0.0",
+  "Flask-Limiter==4.1.1",
+  "Pydantic==2.9.2",
+  "PyYAML==6.0.2",
+  "SQLAlchemy==2.0.36",
+  "alembic==1.14.0",
+  "cryptography==46.0.3",
+  "argon2-cffi==25.1.0",
+  "python-dotenv==1.0.1",
+  "requests==2.32.3",
+  "openpyxl==3.1.5",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ngo_homesuite*"]

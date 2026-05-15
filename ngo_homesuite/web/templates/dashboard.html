@@ -7,6 +7,13 @@
 
 {% if stats.organization %}
     <p class="text-muted">Organization: <strong>{{ stats.organization.name }}</strong></p>
+    <div class="card" style="margin-bottom:1rem; border-left:4px solid var(--primary);">
+        <div class="card-title" style="font-size:1rem; margin-bottom:0.4rem;">Today at a Glance</div>
+        <p class="text-muted" style="margin:0;">
+            Track donor momentum, cashflow, and program execution from one place.
+            Use the quick actions below to record transactions, review donor profiles, and export decision-ready reports.
+        </p>
+    </div>
     
     <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
         <div class="card">
@@ -72,6 +79,22 @@
         </table>
         </div>
     {% endif %}
+
+    <h2 style="margin-top: 1.5rem;">Demo Flow</h2>
+    <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));">
+        <div class="card">
+            <div class="card-title" style="font-size:1rem;">1. Review Donors</div>
+            <p class="text-muted">Open donor profiles, filter by type, and export targeted lists.</p>
+        </div>
+        <div class="card">
+            <div class="card-title" style="font-size:1rem;">2. Record Donations</div>
+            <p class="text-muted">Add donations, issue PDF receipts, and track recurring plans.</p>
+        </div>
+        <div class="card">
+            <div class="card-title" style="font-size:1rem;">3. Run Reports</div>
+            <p class="text-muted">Generate charts and compliance evidence for funders and auditors.</p>
+        </div>
+    </div>
     
     <div style="margin-top: 2rem;">
         <a href="{{ url_for('main.donation_create') }}" class="btn btn-primary">Add Donation</a>

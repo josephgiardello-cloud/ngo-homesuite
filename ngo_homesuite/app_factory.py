@@ -13,6 +13,8 @@ from flask import Flask
 from flask_login import LoginManager
 from flask_migrate import Migrate
 from flask_babel import Babel, lazy_gettext as _l
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 from ngo_homesuite.flask_config import get_config
 from ngo_homesuite.models.core import db, User, Organization, Donor, Donation, Project, Fund, Volunteer, Expense
@@ -45,6 +47,12 @@ def create_app(config=None):
     # Initialize extensions
     db.init_app(app)
     migrate = Migrate(app, db)
+    limiter = Limiter(
+        key_func=get_remote_address,
+        default_limits=[app.config.get('RATELIMIT_DEFAULT', '200 per day, 50 per hour')],
+        enabled=bool(app.config.get('RATELIMIT_ENABLED', True)),
+    )
+    limiter.init_app(app)
     def select_locale():
         return 'en'
 
@@ -88,6 +96,18 @@ def create_app(config=None):
     
     # Setup logging
     setup_logging(app)
+
+    @app.after_request
+    def apply_security_headers(response):
+        response.headers.setdefault('X-Content-Type-Options', 'nosniff')
+        response.headers.setdefault('X-Frame-Options', 'SAMEORIGIN')
+        response.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
+        response.headers.setdefault('Permissions-Policy', 'geolocation=(), microphone=(), camera=()')
+        response.headers.setdefault(
+            'Content-Security-Policy',
+            "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'",
+        )
+        return response
     
     app.logger.info('NGO HomeSuite application initialized')
     

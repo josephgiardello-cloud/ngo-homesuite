@@ -5,6 +5,7 @@ Environment-specific settings and base configuration.
 """
 
 import os
+import secrets
 from datetime import timedelta
 
 
@@ -12,7 +13,7 @@ class Config:
     """Base configuration."""
     
     # Flask
-    SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
+    SECRET_KEY = os.environ.get('SECRET_KEY') or os.environ.get('FLASK_SECRET_KEY') or secrets.token_urlsafe(48)
     DEBUG = False
     TESTING = False
     
