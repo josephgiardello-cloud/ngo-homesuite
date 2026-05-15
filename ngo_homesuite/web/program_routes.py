@@ -248,6 +248,25 @@ def get_intake_beneficiary_route(beneficiary_id: int):
     )
 
 
+@program_bp.get("/intake/beneficiaries/<int:beneficiary_id>/profile")
+@login_required
+def beneficiary_profile_route(beneficiary_id: int):
+    from ngo_homesuite.services.program_impact_service import beneficiary_profile
+
+    payload = beneficiary_profile(beneficiary_id, _org_id())
+    return jsonify(payload)
+
+
+@program_bp.get("/intake/beneficiaries/<int:beneficiary_id>/timeline")
+@login_required
+def beneficiary_timeline_route(beneficiary_id: int):
+    from ngo_homesuite.services.program_impact_service import beneficiary_timeline
+
+    limit = request.args.get("limit", 100, type=int)
+    payload = beneficiary_timeline(beneficiary_id, _org_id(), limit=limit)
+    return jsonify(payload)
+
+
 @program_bp.delete("/intake/beneficiaries/<int:beneficiary_id>")
 @login_required
 @roles_required("admin", "staff")

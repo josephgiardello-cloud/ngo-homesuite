@@ -213,3 +213,99 @@ def test_program_route_input_validation(client, app):
 
     rv_beneficiary_create = client.post("/programs/intake/beneficiaries", json={"first_name": "Only"})
     assert rv_beneficiary_create.status_code == 400
+
+
+def test_beneficiary_profile_and_timeline_routes(client, app):
+    org_id = _ensure_user(app, "program_profile", "program_profile@test.local", "staff", "program_profile_pass_123")
+    _login(client, "program_profile", "program_profile_pass_123")
+
+    create_beneficiary_rv = client.post(
+        "/programs/intake/beneficiaries",
+        json={
+            "first_name": "Nora",
+            "last_name": "Silva",
+            "program": "Livelihood",
+            "status": "active",
+            "city": "Lima",
+        },
+    )
+    assert create_beneficiary_rv.status_code == 201
+    beneficiary_id = create_beneficiary_rv.get_json()["id"]
+
+    create_case_rv = client.post(
+        "/programs/cases",
+        json={
+            "title": "Livelihood onboarding",
+            "beneficiary_id": beneficiary_id,
+            "case_type": "beneficiary",
+            "outcome_metric": "income_level",
+            "target_outcome_value": 1200,
+            "intake_stage": "assessment",
+        },
+    )
+    assert create_case_rv.status_code == 201
+    case_id = create_case_rv.get_json()["id"]
+
+    service_rv = client.post(
+        f"/programs/cases/{case_id}/service-logs",
+        json={
+            "service_type": "skills_training",
+            "service_date": datetime.now(UTC).isoformat(),
+            "duration_minutes": 90,
+            "outcome_note": "Completed session 1",
+        },
+    )
+    assert service_rv.status_code == 201
+
+    assessment_rv = client.post(
+        f"/programs/cases/{case_id}/assessments",
+        json={
+            "assessment_date": "2026-05-15",
+            "assessment_type": "initial",
+            "risk_level": "medium",
+            "employment_score": 4.0,
+            "education_score": 6.0,
+        },
+    )
+    assert assessment_rv.status_code == 201
+
+    referral_rv = client.post(
+        f"/programs/cases/{case_id}/referrals",
+        json={
+            "provider_name": "Local Jobs Office",
+            "referral_date": "2026-05-16",
+            "service_type": "employment",
+        },
+    )
+    assert referral_rv.status_code == 201
+
+    appointment_rv = client.post(
+        "/programs/appointments",
+        json={
+            "title": "Career coaching",
+            "scheduled_at": "2026-06-01T10:00:00",
+            "appointment_type": "follow_up",
+            "case_id": case_id,
+            "beneficiary_id": beneficiary_id,
+        },
+    )
+    assert appointment_rv.status_code == 201
+
+    profile_rv = client.get(f"/programs/intake/beneficiaries/{beneficiary_id}/profile")
+    assert profile_rv.status_code == 200
+    profile_payload = profile_rv.get_json()
+    assert profile_payload["beneficiary"]["id"] == beneficiary_id
+    assert profile_payload["summary"]["total_cases"] >= 1
+    assert profile_payload["summary"]["service_log_count"] >= 1
+    assert profile_payload["summary"]["referral_count"] >= 1
+    assert profile_payload["latest_assessment"] is not None
+
+    timeline_rv = client.get(f"/programs/intake/beneficiaries/{beneficiary_id}/timeline?limit=50")
+    assert timeline_rv.status_code == 200
+    timeline = timeline_rv.get_json()
+    assert isinstance(timeline, list)
+    event_types = {item["event_type"] for item in timeline}
+    assert "service_log" in event_types
+    assert "assessment" in event_types
+    assert "referral" in event_types
+    assert "appointment" in event_types

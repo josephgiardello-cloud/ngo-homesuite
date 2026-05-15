@@ -732,3 +732,211 @@ def cancel_appointment(appointment_id: int, organization_id: int) -> None:
     appt.status = "cancelled"
     db.session.commit()
 
+
+# ---------------------------------------------------------------------------
+# Beneficiary profile + timeline
+# ---------------------------------------------------------------------------
+
+def beneficiary_profile(beneficiary_id: int, organization_id: int) -> Dict[str, Any]:
+    beneficiary = Beneficiary.query.filter_by(
+        id=beneficiary_id, organization_id=organization_id
+    ).first_or_404()
+
+    cases = ProgramCase.query.filter_by(
+        organization_id=organization_id,
+        beneficiary_id=beneficiary_id,
+    ).all()
+    case_ids = [c.id for c in cases]
+
+    total_cases = len(cases)
+    open_cases = sum(1 for c in cases if c.status in {"open", "in_progress", "on_hold"})
+    closed_cases = sum(1 for c in cases if c.status == "closed")
+
+    avg_progress = (
+        round(sum(float(c.progress_percent or 0.0) for c in cases) / total_cases, 2)
+        if total_cases
+        else 0.0
+    )
+
+    latest_assessment: Optional[BeneficiaryAssessment] = None
+    if case_ids:
+        latest_assessment = (
+            BeneficiaryAssessment.query
+            .filter(BeneficiaryAssessment.case_id.in_(case_ids))
+            .order_by(BeneficiaryAssessment.assessment_date.desc(), BeneficiaryAssessment.id.desc())
+            .first()
+        )
+
+    service_count = (
+        BeneficiaryServiceLog.query
+        .filter_by(organization_id=organization_id, beneficiary_id=beneficiary_id)
+        .count()
+    )
+
+    referral_count = 0
+    if case_ids:
+        referral_count = (
+            BeneficiaryReferral.query
+            .filter(BeneficiaryReferral.case_id.in_(case_ids))
+            .count()
+        )
+
+    now = _utcnow()
+    upcoming_appointments = (
+        BeneficiaryAppointment.query
+        .filter_by(organization_id=organization_id, beneficiary_id=beneficiary_id)
+        .filter(BeneficiaryAppointment.scheduled_at >= now)
+        .filter(BeneficiaryAppointment.status.in_(["scheduled", "confirmed"]))
+        .count()
+    )
+
+    return {
+        "beneficiary": {
+            "id": beneficiary.id,
+            "first_name": beneficiary.first_name,
+            "last_name": beneficiary.last_name,
+            "email": beneficiary.email,
+            "phone": beneficiary.phone,
+            "program": beneficiary.program,
+            "status": beneficiary.status,
+            "city": beneficiary.city,
+            "country": beneficiary.country,
+        },
+        "summary": {
+            "total_cases": total_cases,
+            "open_cases": open_cases,
+            "closed_cases": closed_cases,
+            "average_progress_percent": avg_progress,
+            "service_log_count": service_count,
+            "referral_count": referral_count,
+            "upcoming_appointments": upcoming_appointments,
+        },
+        "latest_assessment": (
+            {
+                "assessment_date": latest_assessment.assessment_date.isoformat(),
+                "assessment_type": latest_assessment.assessment_type,
+                "risk_level": latest_assessment.risk_level,
+                "total_score": latest_assessment.total_score,
+            }
+            if latest_assessment is not None
+            else None
+        ),
+    }
+
+
+def beneficiary_timeline(
+    beneficiary_id: int,
+    organization_id: int,
+    *,
+    limit: int = 100,
+) -> List[Dict[str, Any]]:
+    Beneficiary.query.filter_by(
+        id=beneficiary_id, organization_id=organization_id
+    ).first_or_404()
+
+    cases = ProgramCase.query.filter_by(
+        organization_id=organization_id,
+        beneficiary_id=beneficiary_id,
+    ).all()
+    case_ids = [c.id for c in cases]
+
+    events: List[Dict[str, Any]] = []
+
+    if case_ids:
+        activities = (
+            CaseActivity.query
+            .filter(CaseActivity.organization_id == organization_id)
+            .filter(CaseActivity.case_id.in_(case_ids))
+            .all()
+        )
+        for item in activities:
+            events.append(
+                {
+                    "event_type": "case_activity",
+                    "timestamp": item.created_at,
+                    "case_id": item.case_id,
+                    "activity_type": item.activity_type,
+                    "content": item.content,
+                }
+            )
+
+        assessments = (
+            BeneficiaryAssessment.query
+            .filter(BeneficiaryAssessment.organization_id == organization_id)
+            .filter(BeneficiaryAssessment.case_id.in_(case_ids))
+            .all()
+        )
+        for item in assessments:
+            events.append(
+                {
+                    "event_type": "assessment",
+                    "timestamp": datetime.combine(item.assessment_date, datetime.min.time()),
+                    "case_id": item.case_id,
+                    "assessment_type": item.assessment_type,
+                    "risk_level": item.risk_level,
+                    "total_score": item.total_score,
+                }
+            )
+
+        referrals = (
+            BeneficiaryReferral.query
+            .filter(BeneficiaryReferral.organization_id == organization_id)
+            .filter(BeneficiaryReferral.case_id.in_(case_ids))
+            .all()
+        )
+        for item in referrals:
+            events.append(
+                {
+                    "event_type": "referral",
+                    "timestamp": datetime.combine(item.referral_date, datetime.min.time()),
+                    "case_id": item.case_id,
+                    "provider_name": item.provider_name,
+                    "service_type": item.service_type,
+                    "status": item.status,
+                }
+            )
+
+    service_logs = (
+        BeneficiaryServiceLog.query
+        .filter_by(organization_id=organization_id, beneficiary_id=beneficiary_id)
+        .all()
+    )
+    for item in service_logs:
+        events.append(
+            {
+                "event_type": "service_log",
+                "timestamp": item.service_date,
+                "case_id": item.case_id,
+                "service_type": item.service_type,
+                "duration_minutes": item.duration_minutes,
+                "service_units": item.service_units,
+                "outcome_note": item.outcome_note,
+            }
+        )
+
+    appointments = (
+        BeneficiaryAppointment.query
+        .filter_by(organization_id=organization_id, beneficiary_id=beneficiary_id)
+        .all()
+    )
+    for item in appointments:
+        events.append(
+            {
+                "event_type": "appointment",
+                "timestamp": item.scheduled_at,
+                "case_id": item.case_id,
+                "title": item.title,
+                "appointment_type": item.appointment_type,
+                "status": item.status,
+            }
+        )
+
+    events.sort(key=lambda row: row.get("timestamp") or datetime.min, reverse=True)
+    output: List[Dict[str, Any]] = []
+    for row in events[: max(1, min(limit, 500))]:
+        payload = dict(row)
+        ts = payload.get("timestamp")
+        payload["timestamp"] = ts.isoformat() if isinstance(ts, datetime) else None
+        output.append(payload)
+    return output
+
