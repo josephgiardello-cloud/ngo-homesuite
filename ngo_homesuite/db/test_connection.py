@@ -83,11 +83,14 @@ def test_backup_corrupt_db_copy(temp_db_file):
     Path(backup).unlink()
 
 
-def test_dual_key_window_logic():
-    # Test DualKeyWindow activation and expiry
-    win = connection.DualKeyWindow('old', 'new', time.time() + 1)
+def test_dual_key_window_logic(monkeypatch):
+    # Simulate expiry by controlling time instead of sleeping.
+    now = 1_000.0
+    monkeypatch.setattr(connection.time, "time", lambda: now)
+    win = connection.DualKeyWindow('old', 'new', now + 1)
     assert win.is_active() is True
-    time.sleep(1.1)
+
+    monkeypatch.setattr(connection.time, "time", lambda: now + 1.1)
     assert win.is_active() is False
 
 

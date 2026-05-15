@@ -6,6 +6,7 @@ import pytest
 import sqlite3
 import os
 import tempfile
+from argon2 import PasswordHasher, Type
 from ngo_homesuite.auth import models
 
 def setup_in_memory_db():
@@ -47,8 +48,15 @@ def test_enforce_password_policy_pwned(monkeypatch):
     with pytest.raises(ValueError, match="appeared in a public breach"):
         models._enforce_password_policy(username, password, role="admin")
 
-def test_create_user_and_verify():
+def test_create_user_and_verify(monkeypatch):
     # Setup: create a temp sqlite DB and users table
+    monkeypatch.setattr(models, "_check_pwned", lambda *a, **kw: False)
+    monkeypatch.setattr(
+        models,
+        "ARGON2_PH",
+        PasswordHasher(time_cost=2, memory_cost=19456, parallelism=1, hash_len=16, salt_len=8, type=Type.ID),
+    )
+
     with tempfile.NamedTemporaryFile(suffix='.sqlite3', delete=False) as tf:
         db_path = tf.name
     try:
