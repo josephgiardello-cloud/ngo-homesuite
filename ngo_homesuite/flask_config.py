@@ -5,20 +5,24 @@ Environment-specific settings and base configuration.
 """
 
 import os
-import secrets
 from datetime import timedelta
+
+from ngo_homesuite.config import get_runtime_settings
+
+
+_RUNTIME_SETTINGS = get_runtime_settings()
 
 
 class Config:
     """Base configuration."""
     
     # Flask
-    SECRET_KEY = os.environ.get('SECRET_KEY') or os.environ.get('FLASK_SECRET_KEY') or secrets.token_urlsafe(48)
+    SECRET_KEY = _RUNTIME_SETTINGS.secret_key
     DEBUG = False
     TESTING = False
     
     # Database
-    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL', 'sqlite:///ngo_homesuite.db')
+    SQLALCHEMY_DATABASE_URI = _RUNTIME_SETTINGS.database_url
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {
         'pool_pre_ping': True,
@@ -48,10 +52,10 @@ class Config:
     RATELIMIT_DEFAULT = '200 per day, 50 per hour'
     
     # Logging
-    LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO')
+    LOG_LEVEL = _RUNTIME_SETTINGS.log_level
     LOG_FILE = os.environ.get('LOG_FILE', 'logs/ngo_homesuite.log')
-    STRUCTURED_LOGS_JSON = os.environ.get('STRUCTURED_LOGS_JSON', 'True') == 'True'
-    METRICS_ENABLED = os.environ.get('METRICS_ENABLED', 'True') == 'True'
+    STRUCTURED_LOGS_JSON = _RUNTIME_SETTINGS.structured_logs_json
+    METRICS_ENABLED = _RUNTIME_SETTINGS.metrics_enabled
     
     # Mail (for notifications)
     MAIL_SERVER = os.environ.get('MAIL_SERVER', 'localhost')
@@ -117,7 +121,7 @@ class ProductionConfig(Config):
     RATELIMIT_ENABLED = True
     
     # Production database
-    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL')
+    SQLALCHEMY_DATABASE_URI = _RUNTIME_SETTINGS.database_url
 
 
 # Configuration mapping
@@ -131,7 +135,7 @@ config = {
 
 def get_config():
     """Get configuration based on FLASK_ENV."""
-    env = os.environ.get('FLASK_ENV', 'development')
+    env = _RUNTIME_SETTINGS.flask_env
     selected = config.get(env, DevelopmentConfig)
     if selected is ProductionConfig and not os.environ.get('DATABASE_URL'):
         raise ValueError('DATABASE_URL environment variable must be set in production')

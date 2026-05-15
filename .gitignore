@@ -48,6 +48,8 @@ ngo-homesuite.yaml.example
 *.db-wal
 ngo_database.db*
 instance/
+data/.secret_key
+data/*.db
 
 # Logs and backups
 *.log

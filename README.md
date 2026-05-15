@@ -152,8 +152,8 @@ ngo-homesuite/
 
 4. **Configure the application**
    ```bash
-   cp ngo-homesuite.yaml.example ngo-homesuite.yaml
-   # Edit ngo-homesuite.yaml with your settings
+   cp .env.example .env
+   # Edit .env with your settings
    ```
 
 ### Database Setup
@@ -186,7 +186,7 @@ python -m ngo_homesuite.db.migrate
 ### Running the Application
 
 ```bash
-python ngo_homesuite/main.py
+python -m ngo_homesuite.main
 ```
 
 The Flask application will be available at `http://localhost:5000` (default).
@@ -249,6 +249,15 @@ pytest ngo_homesuite/utils --maxfail=10 -v
 - Bundled third-party test trees outside `ngo_homesuite/` are excluded from default project test runs
 
 ## Configuration
+
+Configuration precedence is:
+1. Environment variables (`.env` / process environment)
+2. YAML file (`ngo-homesuite.yaml` or `ngo_homesuite.yaml`, optional)
+3. Safe in-code defaults
+
+`SECRET_KEY` / `FLASK_SECRET_KEY` behavior:
+- If either env var is set, that value is used.
+- If neither is set, HomeSuite generates a secure key on first run and persists it to `data/.secret_key`.
 
 ### Environment Variables
 
