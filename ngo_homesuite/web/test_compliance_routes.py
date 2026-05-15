@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from ngo_homesuite.compliance.evidence_pack import build_compliance_evidence
 from ngo_homesuite.app_factory import create_app
 from ngo_homesuite.flask_config import TestingConfig
 from ngo_homesuite.models.core import Organization, User, db
@@ -96,3 +97,28 @@ def test_compliance_evidence_global_scope_denied_for_org_users(client, app):
     data = rv.get_json()
     assert data is not None
     assert "Global compliance scope" in data["error"]
+
+
+def test_compliance_evidence_user_count_scoped_by_organization(app):
+    with app.app_context():
+        org_a = Organization(name="Evidence Org A", slug="evidence-org-a", is_active=True)
+        org_b = Organization(name="Evidence Org B", slug="evidence-org-b", is_active=True)
+        db.session.add_all([org_a, org_b])
+        db.session.flush()
+
+        user_a = User(username="evidence_user_a", email="a@example.org", role="admin", is_active=True, organization_id=org_a.id)
+        user_a.set_password("pass123")
+        user_b1 = User(username="evidence_user_b1", email="b1@example.org", role="admin", is_active=True, organization_id=org_b.id)
+        user_b1.set_password("pass123")
+        user_b2 = User(username="evidence_user_b2", email="b2@example.org", role="staff", is_active=True, organization_id=org_b.id)
+        user_b2.set_password("pass123")
+        db.session.add_all([user_a, user_b1, user_b2])
+        db.session.commit()
+
+        evidence_all = build_compliance_evidence(app, organization_id=None)
+        evidence_a = build_compliance_evidence(app, organization_id=org_a.id)
+        evidence_b = build_compliance_evidence(app, organization_id=org_b.id)
+
+        assert evidence_all["data_inventory"]["users"] >= 3
+        assert evidence_a["data_inventory"]["users"] == 1
+        assert evidence_b["data_inventory"]["users"] == 2

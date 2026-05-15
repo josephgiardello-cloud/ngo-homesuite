@@ -117,6 +117,7 @@ def build_compliance_evidence(app: Flask, organization_id: int | None = None) ->
 
     if organization_id is None:
         organization_count = Organization.query.count()
+        user_count = User.query.count()
         donor_count = Donor.query.count()
         donation_count = Donation.query.count()
         expense_count = Expense.query.count()
@@ -124,6 +125,7 @@ def build_compliance_evidence(app: Flask, organization_id: int | None = None) ->
         fund_count = Fund.query.count()
     else:
         organization_count = Organization.query.filter_by(id=organization_id).count()
+        user_count = User.query.filter_by(organization_id=organization_id).count()
         donor_count = Donor.query.filter_by(organization_id=organization_id).count()
         donation_count = Donation.query.filter_by(organization_id=organization_id).count()
         expense_count = Expense.query.filter_by(organization_id=organization_id).count()
@@ -169,7 +171,7 @@ def build_compliance_evidence(app: Flask, organization_id: int | None = None) ->
         },
         "data_inventory": {
             "organizations": organization_count,
-            "users": User.query.count(),
+            "users": user_count,
             "donors": donor_count,
             "donations": donation_count,
             "expenses": expense_count,
