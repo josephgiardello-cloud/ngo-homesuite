@@ -68,8 +68,15 @@ class Config:
     APEX_AI_ENABLED = os.environ.get('APEX_AI_ENABLED', 'True') == 'True'  # kept for compat
     OLLAMA_HOST = os.environ.get('OLLAMA_HOST', os.environ.get('APEX_BASE_URL', 'http://localhost:11434'))
     OLLAMA_MODEL = os.environ.get('OLLAMA_MODEL', os.environ.get('APEX_MODEL', 'llama3.2'))
+    OLLAMA_EMBED_MODEL = os.environ.get('OLLAMA_EMBED_MODEL', 'nomic-embed-text')
     OLLAMA_TIMEOUT_S = float(os.environ.get('OLLAMA_TIMEOUT_S', os.environ.get('APEX_TIMEOUT_S', '120')))
     APEX_TENANT_ID = os.environ.get('APEX_TENANT_ID', 'ngo-default')
+
+    # HomeSuite Copilot (local-first)
+    COPILOT_ENABLED = os.environ.get('COPILOT_ENABLED', 'True') == 'True'
+    COPILOT_INDEX_DIR = os.environ.get('COPILOT_INDEX_DIR', 'data/copilot_index')
+    COPILOT_RAG_K = int(os.environ.get('COPILOT_RAG_K', 6))
+    COPILOT_ALLOW_WEB_TOOLS = os.environ.get('COPILOT_ALLOW_WEB_TOOLS', 'False') == 'True'
 
 
 class DevelopmentConfig(Config):

@@ -2,19 +2,19 @@
 
 import csv
 from collections import defaultdict
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Optional as TypingOptional
 
 from flask import Blueprint, render_template, redirect, url_for, request, flash, send_file
 from flask_login import login_required, current_user
 from flask_wtf import FlaskForm
-from wtforms import StringField, SelectField, TextAreaField, FloatField, SubmitField
+from wtforms import BooleanField, FloatField, SelectField, StringField, SubmitField, TextAreaField
 from wtforms.validators import DataRequired, Optional as WTOptional, NumberRange, Email
 from io import BytesIO
 from openpyxl import Workbook
 
 from ngo_homesuite.models.core import (
-    Organization, Beneficiary, Project, Donation, Donor, Fund, Expense, db
+    Organization, Beneficiary, Project, Donation, Donor, Fund, Expense, DonationReceipt, RecurringDonationPlan, db
 )
 from sqlalchemy import func
 from ngo_homesuite.web.rbac import roles_required
@@ -98,6 +98,45 @@ class ConfirmDeleteForm(FlaskForm):
     submit = SubmitField('Delete')
 
 
+class PublicDonationForm(FlaskForm):
+    donor_name = StringField('Full Name', validators=[DataRequired()])
+    donor_email = StringField('Email', validators=[WTOptional(), Email()])
+    donor_phone = StringField('Phone', validators=[WTOptional()])
+    amount = FloatField('Amount', validators=[DataRequired(), NumberRange(min=0.01)])
+    currency = SelectField('Currency', choices=[('USD', 'USD'), ('EUR', 'EUR'), ('GBP', 'GBP')], validators=[DataRequired()])
+    payment_method = SelectField(
+        'Payment Method',
+        choices=[('credit_card', 'Credit Card'), ('bank_transfer', 'Bank Transfer'), ('cash', 'Cash')],
+        validators=[DataRequired()],
+    )
+    purpose = StringField('Purpose', validators=[WTOptional()])
+    make_recurring = BooleanField('Make this a recurring donation')
+    recurring_frequency = SelectField(
+        'Recurring Frequency',
+        choices=[('monthly', 'Monthly'), ('quarterly', 'Quarterly'), ('yearly', 'Yearly')],
+        validators=[WTOptional()],
+    )
+    submit = SubmitField('Donate')
+
+
+class RecurringDonationForm(FlaskForm):
+    donor_id = SelectField('Donor', coerce=int, validators=[DataRequired()])
+    amount = FloatField('Amount', validators=[DataRequired(), NumberRange(min=0.01)])
+    currency = SelectField('Currency', choices=[('USD', 'USD'), ('EUR', 'EUR'), ('GBP', 'GBP')], validators=[DataRequired()])
+    payment_method = SelectField(
+        'Payment Method',
+        choices=[('credit_card', 'Credit Card'), ('bank_transfer', 'Bank Transfer'), ('cash', 'Cash')],
+        validators=[DataRequired()],
+    )
+    purpose = StringField('Purpose', validators=[WTOptional()])
+    frequency = SelectField(
+        'Frequency',
+        choices=[('monthly', 'Monthly'), ('quarterly', 'Quarterly'), ('yearly', 'Yearly')],
+        validators=[DataRequired()],
+    )
+    submit = SubmitField('Create Recurring Plan')
+
+
 def _current_org() -> TypingOptional[Organization]:
     """Pick assigned org first, then fallback to first active org for seeded demo users."""
     if current_user.organization:
@@ -137,12 +176,146 @@ def _parse_float(value: str):
         return None
 
 
+def _normalize_text(value: str) -> str:
+    return (value or '').strip().lower()
+
+
+def _normalize_phone(value: str) -> str:
+    return ''.join(ch for ch in (value or '') if ch.isdigit())
+
+
+def _next_charge_date(current: date, frequency: str) -> date:
+    if frequency == 'quarterly':
+        return current + timedelta(days=90)
+    if frequency == 'yearly':
+        return current + timedelta(days=365)
+    return current + timedelta(days=30)
+
+
+def _issue_receipt_for_donation(donation: Donation, recipient_email: str | None = None):
+    existing = DonationReceipt.query.filter_by(donation_id=donation.id).first()
+    if existing:
+        return existing
+
+    receipt_number = f"R-{donation.id:06d}-{datetime.utcnow().strftime('%Y%m%d')}"
+    receipt = DonationReceipt(
+        donation_id=donation.id,
+        receipt_number=receipt_number,
+        status='generated',
+        sent_to_email=recipient_email,
+    )
+    db.session.add(receipt)
+    donation.status = 'receipted'
+
+    # Generate bytes to ensure receipt content is always renderable.
+    donor = donation.donor
+    donation_payload = {
+        'amount_cents': int(round(float(donation.amount or 0) * 100)),
+        'currency': donation.currency,
+        'received_at': donation.donation_date.strftime('%Y-%m-%d') if donation.donation_date else datetime.utcnow().strftime('%Y-%m-%d'),
+    }
+    donor_payload = {
+        'name': donor.name if donor else donation.donor_name,
+        'address': '',
+    }
+    generate_receipt_pdf_bytes(donation_payload, donor_payload)
+
+    if recipient_email:
+        try:
+            from ngo_homesuite.utils.email_service import send_receipt
+
+            send_receipt(
+                recipient_email,
+                donor_payload['name'],
+                donation_payload['amount_cents'],
+                donation.currency,
+            )
+            receipt.status = 'sent'
+            receipt.sent_at = datetime.utcnow()
+        except Exception as exc:
+            receipt.status = 'failed'
+            receipt.error_message = str(exc)
+
+    return receipt
+
+
 @main_bp.route('/')
 def index():
     """Home/landing page."""
     if current_user.is_authenticated:
         return redirect(url_for('main.dashboard'))
     return render_template('index.html')
+
+
+@main_bp.route('/give', methods=['GET', 'POST'])
+def public_give():
+    """Public donation page for self-service online giving."""
+    org = Organization.query.filter_by(is_active=True).order_by(Organization.id.asc()).first()
+    if not org:
+        flash('Donation portal is not available yet. Please contact the organization.', 'error')
+        return redirect(url_for('main.index'))
+
+    form = PublicDonationForm()
+    if form.validate_on_submit():
+        donor_email = (form.donor_email.data or '').strip() or None
+        donor = None
+        if donor_email:
+            donor = Donor.query.filter_by(organization_id=org.id, email=donor_email).first()
+
+        if donor is None:
+            donor = Donor(
+                organization_id=org.id,
+                name=form.donor_name.data.strip(),
+                email=donor_email,
+                phone=(form.donor_phone.data or '').strip() or None,
+                donor_type='individual',
+                notes='Created from public donation portal.',
+            )
+            db.session.add(donor)
+            db.session.flush()
+
+        donation = Donation(
+            organization_id=org.id,
+            donor_id=donor.id,
+            donor_name=donor.name,
+            donor_email=donor.email,
+            donor_phone=donor.phone,
+            amount=form.amount.data,
+            currency=form.currency.data,
+            payment_method=form.payment_method.data,
+            purpose=form.purpose.data or 'General Fund',
+            status='received',
+            notes='Public portal donation',
+        )
+        db.session.add(donation)
+        db.session.flush()
+
+        if form.make_recurring.data:
+            if not donor.email:
+                flash('Recurring donations require an email to process retries and receipts.', 'error')
+                db.session.rollback()
+                return render_template('public_donation_form.html', form=form, active_page='give')
+
+            plan = RecurringDonationPlan(
+                organization_id=org.id,
+                donor_id=donor.id,
+                amount=form.amount.data,
+                currency=form.currency.data,
+                payment_method=form.payment_method.data,
+                purpose=form.purpose.data or 'General Fund',
+                frequency=form.recurring_frequency.data or 'monthly',
+                next_charge_date=_next_charge_date(date.today(), form.recurring_frequency.data or 'monthly'),
+                status='active',
+            )
+            db.session.add(plan)
+
+        _issue_receipt_for_donation(donation, recipient_email=donor.email)
+        db.session.commit()
+
+        flash('Thank you for your donation. Your receipt has been generated.', 'success')
+        return redirect(url_for('main.public_give'))
+
+    return render_template('public_donation_form.html', form=form, active_page='give')
 
 
 @main_bp.route('/dashboard')
@@ -349,6 +522,88 @@ def donor_delete(donor_id: int):
     return redirect(url_for('main.donors_list'))
 
 
+@main_bp.route('/donors/dedupe')
+@login_required
+@roles_required('admin', 'staff')
+def donor_dedupe():
+    """Surface probable duplicate donors for manual merge."""
+    org = _current_org()
+    if not org:
+        flash('No organization is available.', 'error')
+        return redirect(url_for('main.donors_list'))
+
+    donors = Donor.query.filter_by(organization_id=org.id).order_by(Donor.created_at.asc(), Donor.id.asc()).all()
+    seen_email = {}
+    seen_name_phone = {}
+    candidates = []
+    pair_keys = set()
+
+    for donor in donors:
+        email_key = _normalize_text(donor.email)
+        name_phone_key = f"{_normalize_text(donor.name)}::{_normalize_phone(donor.phone)}"
+
+        if email_key:
+            first = seen_email.get(email_key)
+            if first and first.id != donor.id:
+                key = tuple(sorted([first.id, donor.id]))
+                if key not in pair_keys:
+                    pair_keys.add(key)
+                    candidates.append({'primary': first, 'duplicate': donor, 'reason': 'Matching email'})
+            else:
+                seen_email[email_key] = donor
+
+        # Name + phone is a fallback when email is missing.
+        if _normalize_phone(donor.phone):
+            first = seen_name_phone.get(name_phone_key)
+            if first and first.id != donor.id:
+                key = tuple(sorted([first.id, donor.id]))
+                if key not in pair_keys:
+                    pair_keys.add(key)
+                    candidates.append({'primary': first, 'duplicate': donor, 'reason': 'Matching name + phone'})
+            else:
+                seen_name_phone[name_phone_key] = donor
+
+    return render_template('donor_dedupe.html', candidates=candidates, active_page='donors')
+
+
+@main_bp.route('/donors/merge', methods=['POST'])
+@login_required
+@roles_required('admin', 'staff')
+def donor_merge():
+    """Merge a duplicate donor into a primary donor."""
+    org = _current_org()
+    if not org:
+        flash('No organization is available.', 'error')
+        return redirect(url_for('main.donors_list'))
+
+    primary_id = request.form.get('primary_id', type=int)
+    duplicate_id = request.form.get('duplicate_id', type=int)
+    if not primary_id or not duplicate_id or primary_id == duplicate_id:
+        flash('Invalid merge request.', 'error')
+        return redirect(url_for('main.donor_dedupe'))
+
+    primary = Donor.query.filter_by(id=primary_id, organization_id=org.id).first_or_404()
+    duplicate = Donor.query.filter_by(id=duplicate_id, organization_id=org.id).first_or_404()
+
+    Donation.query.filter_by(organization_id=org.id, donor_id=duplicate.id).update(
+        {
+            Donation.donor_id: primary.id,
+            Donation.donor_name: primary.name,
+            Donation.donor_email: primary.email,
+            Donation.donor_phone: primary.phone,
+        },
+        synchronize_session=False,
+    )
+
+    if duplicate.notes and duplicate.notes not in (primary.notes or ''):
+        primary.notes = ((primary.notes or '').strip() + '\n' + f"[Merged from donor #{duplicate.id}] {duplicate.notes}").strip()
+
+    db.session.delete(duplicate)
+    db.session.commit()
+    flash('Duplicate donor merged successfully.', 'success')
+    return redirect(url_for('main.donors_list'))
+
+
 @main_bp.route('/donations/new', methods=['GET', 'POST'])
 @login_required
 @roles_required('admin', 'staff')
@@ -390,10 +645,114 @@ def donation_create():
         )
         db.session.add(donation)
         db.session.commit()
-        flash('Donation recorded successfully.', 'success')
+        _issue_receipt_for_donation(donation, recipient_email=donor.email)
+        db.session.commit()
+        flash('Donation recorded successfully and receipt generated.', 'success')
         return redirect(url_for('main.dashboard'))
 
     return render_template('donation_form.html', form=form, active_page='donations')
+
+
+@main_bp.route('/donations/recurring', methods=['GET', 'POST'])
+@login_required
+@roles_required('admin', 'staff')
+def recurring_donations():
+    """Create and view recurring donation plans."""
+    org = _current_org()
+    if not org:
+        flash('No organization is available.', 'error')
+        return redirect(url_for('main.dashboard'))
+
+    donor_options = [(0, 'Select a donor')] + [
+        (d.id, f"{d.name} ({d.email or 'no email'})")
+        for d in Donor.query.filter_by(organization_id=org.id).order_by(Donor.name.asc()).all()
+    ]
+
+    form = RecurringDonationForm()
+    form.donor_id.choices = donor_options
+
+    if form.validate_on_submit():
+        donor = Donor.query.filter_by(id=form.donor_id.data, organization_id=org.id).first()
+        if donor is None:
+            flash('Please select a valid donor.', 'error')
+            return render_template('recurring_donations.html', form=form, plans=[], active_page='donations')
+
+        plan = RecurringDonationPlan(
+            organization_id=org.id,
+            donor_id=donor.id,
+            amount=form.amount.data,
+            currency=form.currency.data,
+            payment_method=form.payment_method.data,
+            purpose=form.purpose.data,
+            frequency=form.frequency.data,
+            next_charge_date=_next_charge_date(date.today(), form.frequency.data),
+            status='active',
+        )
+        db.session.add(plan)
+        db.session.commit()
+        flash('Recurring donation plan created.', 'success')
+        return redirect(url_for('main.recurring_donations'))
+
+    plans = RecurringDonationPlan.query.filter_by(organization_id=org.id).order_by(RecurringDonationPlan.created_at.desc()).all()
+    return render_template('recurring_donations.html', form=form, plans=plans, active_page='donations')
+
+
+@main_bp.route('/donations/recurring/process', methods=['POST'])
+@login_required
+@roles_required('admin', 'staff')
+def process_recurring_donations():
+    """Run due recurring plans and handle failures for missing payment contact data."""
+    org = _current_org()
+    if not org:
+        flash('No organization is available.', 'error')
+        return redirect(url_for('main.dashboard'))
+
+    today = date.today()
+    plans = RecurringDonationPlan.query.filter(
+        RecurringDonationPlan.organization_id == org.id,
+        RecurringDonationPlan.status == 'active',
+        RecurringDonationPlan.next_charge_date <= today,
+    ).all()
+
+    processed = 0
+    failed = 0
+    for plan in plans:
+        donor = Donor.query.filter_by(id=plan.donor_id, organization_id=org.id).first()
+        if donor is None or (plan.payment_method in ('credit_card', 'bank_transfer') and not donor.email):
+            plan.status = 'failed'
+            plan.fail_count = int(plan.fail_count or 0) + 1
+            plan.last_error = 'Missing donor contact info for payment retry workflow.'
+            plan.updated_at = datetime.utcnow()
+            failed += 1
+            continue
+
+        donation = Donation(
+            organization_id=org.id,
+            donor_id=donor.id,
+            donor_name=donor.name,
+            donor_email=donor.email,
+            donor_phone=donor.phone,
+            amount=plan.amount,
+            currency=plan.currency,
+            payment_method=plan.payment_method,
+            purpose=plan.purpose,
+            status='received',
+            notes=f'Recurring donation charge from plan #{plan.id}',
+        )
+        db.session.add(donation)
+        db.session.flush()
+        _issue_receipt_for_donation(donation, recipient_email=donor.email)
+
+        plan.next_charge_date = _next_charge_date(plan.next_charge_date, plan.frequency)
+        plan.fail_count = 0
+        plan.last_error = None
+        plan.status = 'active'
+        plan.updated_at = datetime.utcnow()
+        processed += 1
+
+    db.session.commit()
+    flash(f'Recurring processing complete: {processed} processed, {failed} failed.', 'info')
+    return redirect(url_for('main.recurring_donations'))
 
 
 @main_bp.route('/donations')

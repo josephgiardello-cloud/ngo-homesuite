@@ -10,13 +10,22 @@ from flask import Blueprint, Response, current_app, jsonify, request, stream_wit
 from flask_login import current_user, login_required
 
 from ngo_homesuite.ai.apex_client import OllamaClient, OllamaClientError
+from ngo_homesuite.ai.copilot_service import HomeSuiteCopilot
 from ngo_homesuite.ai.pii_redact import redact_pii
+from ngo_homesuite.db.audit_log import log_event
 from ngo_homesuite.models.core import db, AIConversation, AIMessage
 from ngo_homesuite.prompts import NGO_APEX_POLICY_SYSTEM_PROMPT
 from ngo_homesuite.web.rbac import roles_required
 
 
 ai_bp = Blueprint("ai", __name__, url_prefix="/ai")
+
+
+def _audit_db_path() -> str:
+    uri = str(current_app.config.get("SQLALCHEMY_DATABASE_URI", "sqlite:///ngo_homesuite.db"))
+    if uri.startswith("sqlite:///"):
+        return uri.replace("sqlite:///", "", 1)
+    return "ngo_homesuite.db"
 
 
 def _resolve_session_id() -> str:
@@ -124,6 +133,21 @@ def _audit_interaction(user_prompt: str, model: str, tenant_id: str) -> None:
             },
         },
     )
+    try:
+        log_event(
+            _audit_db_path(),
+            actor=str(getattr(current_user, "username", "unknown")),
+            action="copilot_query",
+            entity="ai",
+            metadata={
+                "user_id": getattr(current_user, "id", None),
+                "tenant_id": tenant_id,
+                "model": model,
+                "prompt_sha256": digest,
+            },
+        )
+    except Exception as exc:
+        current_app.logger.warning("Could not append audit event for AI interaction: %s", exc)
 
 
 @ai_bp.route("/history", methods=["GET"])
@@ -258,3 +282,85 @@ def stream_chat() -> Response:
     response.headers["Cache-Control"] = "no-cache"
     response.headers["X-Accel-Buffering"] = "no"
     return response
+
+
+@ai_bp.route("/copilot/chat", methods=["POST"])
+@login_required
+@roles_required("admin", "staff", "viewer")
+def copilot_chat() -> Response:
+    if not current_app.config.get("COPILOT_ENABLED", True):
+        return jsonify({"error": "HomeSuite Copilot is disabled."}), 503
+
+    payload: Dict[str, Any] = request.get_json(silent=True) or {}
+    prompt = str(payload.get("prompt", "")).strip()
+    if not prompt:
+        return jsonify({"error": "Prompt is required."}), 400
+
+    context = payload.get("context") if isinstance(payload.get("context"), dict) else {}
+    model = str(payload.get("model") or current_app.config.get("OLLAMA_MODEL", "llama3.2"))
+    tenant_id = str(payload.get("tenant_id") or current_app.config.get("APEX_TENANT_ID", "ngo-default"))
+    session_id = _resolve_session_id()
+
+    # Only admin/staff can execute action tools; viewer is read-only.
+    role = str(getattr(current_user, "role", "viewer"))
+    allow_actions = bool(payload.get("allow_actions", False)) and role in {"admin", "staff"}
+    use_web = bool(payload.get("use_web", False))
+
+    _audit_interaction(prompt, model, tenant_id)
+
+    copilot = HomeSuiteCopilot.from_app()
+    response = copilot.answer(
+        prompt=prompt,
+        context=context,
+        runtime_ctx={
+            "actor": getattr(current_user, "username", "copilot"),
+            "organization_id": getattr(current_user, "organization_id", None),
+            "user_id": getattr(current_user, "id", None),
+        },
+        allow_actions=allow_actions,
+        use_web=use_web,
+    )
+
+    digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+    _persist_exchange(session_id, model, tenant_id, prompt, response.answer, digest)
+
+    return jsonify(
+        {
+            "response": response.answer,
+            "sources": response.sources,
+            "actions": response.actions,
+            "redactions": response.redactions,
+            "mode": "copilot",
+        }
+    )
+
+
+@ai_bp.route("/copilot/reindex", methods=["POST"])
+@login_required
+@roles_required("admin")
+def copilot_reindex() -> Response:
+    if not current_app.config.get("COPILOT_ENABLED", True):
+        return jsonify({"error": "HomeSuite Copilot is disabled."}), 503
+
+    payload: Dict[str, Any] = request.get_json(silent=True) or {}
+    user_summaries = payload.get("user_summaries") if isinstance(payload.get("user_summaries"), list) else []
+    user_summaries = [str(s) for s in user_summaries if isinstance(s, str)]
+
+    copilot = HomeSuiteCopilot.from_app()
+    total_chunks = copilot.reindex(user_summary_texts=user_summaries)
+
+    try:
+        log_event(
+            _audit_db_path(),
+            actor=str(getattr(current_user, "username", "unknown")),
+            action="copilot_reindex",
+            entity="ai",
+            metadata={
+                "chunks": total_chunks,
+                "user_summaries": len(user_summaries),
+            },
+        )
+    except Exception as exc:
+        current_app.logger.warning("Could not append audit event for reindex: %s", exc)
+
+    return jsonify({"ok": True, "chunks_indexed": total_chunks})

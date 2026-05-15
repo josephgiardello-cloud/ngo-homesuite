@@ -1,0 +1,93 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import pytest
+
+from ngo_homesuite.app_factory import create_app
+from ngo_homesuite.flask_config import TestingConfig
+from ngo_homesuite.models.core import User, db
+
+
+@dataclass
+class _FakeResponse:
+    answer: str
+    sources: list
+    actions: list
+    redactions: int
+
+
+class _FakeCopilot:
+    def answer(self, **kwargs):
+        return _FakeResponse(
+            answer="Copilot response",
+            sources=[{"source": "docs/sprint1_backlog.md", "text": "demo"}],
+            actions=[],
+            redactions=0,
+        )
+
+    def reindex(self, user_summary_texts=None):
+        return 42
+
+
+@pytest.fixture(scope="module")
+def app():
+    class _TestCfg(TestingConfig):
+        COPILOT_ENABLED = True
+
+    return create_app(_TestCfg)
+
+
+@pytest.fixture()
+def client(app):
+    return app.test_client()
+
+
+def _login(client, username: str, password: str) -> None:
+    client.post("/auth/login", data={"username": username, "password": password})
+
+
+def _ensure_user(app, username: str, email: str, role: str, password: str):
+    with app.app_context():
+        user = User.query.filter_by(username=username).first()
+        if user is None:
+            user = User(username=username, email=email, role=role, is_active=True)
+            user.set_password(password)
+            db.session.add(user)
+            db.session.commit()
+
+
+def test_copilot_chat_endpoint_returns_payload(client, app, monkeypatch):
+    _ensure_user(app, "copilot_admin", "copilot_admin@test.local", "admin", "admin_pass_123")
+    _login(client, "copilot_admin", "admin_pass_123")
+
+    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteCopilot.from_app", lambda: _FakeCopilot())
+
+    rv = client.post(
+        "/ai/copilot/chat",
+        json={"prompt": "How do I generate reports?", "context": {"active_page": "reports"}},
+    )
+    assert rv.status_code == 200
+    data = rv.get_json()
+    assert data["response"] == "Copilot response"
+    assert isinstance(data["sources"], list)
+    assert data["mode"] == "copilot"
+
+
+def test_copilot_reindex_admin_only(client, app, monkeypatch):
+    _ensure_user(app, "copilot_viewer", "copilot_viewer@test.local", "viewer", "viewer_pass_123")
+    _login(client, "copilot_viewer", "viewer_pass_123")
+    rv = client.post("/ai/copilot/reindex", json={"user_summaries": ["summary"]})
+    assert rv.status_code == 403
+    client.get("/auth/logout")
+
+    _ensure_user(app, "copilot_admin2", "copilot_admin2@test.local", "admin", "admin2_pass_123")
+    _login(client, "copilot_admin2", "admin2_pass_123")
+
+    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteCopilot.from_app", lambda: _FakeCopilot())
+
+    rv = client.post("/ai/copilot/reindex", json={"user_summaries": ["summary"]})
+    assert rv.status_code == 200
+    data = rv.get_json()
+    assert data["ok"] is True
+    assert data["chunks_indexed"] == 42

@@ -229,6 +229,52 @@ class Donation(db.Model):
         return f'<Donation {self.amount} {self.currency}>'
 
 
+class RecurringDonationPlan(db.Model):
+    """Recurring donation instructions tied to a donor profile."""
+
+    __tablename__ = 'recurring_donation_plans'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    donor_id = db.Column(db.Integer, db.ForeignKey('donors.id'), nullable=False, index=True)
+    amount = db.Column(db.Float, nullable=False)
+    currency = db.Column(db.String(3), default='USD', nullable=False)
+    frequency = db.Column(db.String(20), default='monthly', nullable=False)  # monthly, quarterly, yearly
+    payment_method = db.Column(db.String(50), nullable=True)
+    purpose = db.Column(db.String(200), nullable=True)
+    next_charge_date = db.Column(db.Date, nullable=False, index=True)
+    status = db.Column(db.String(20), default='active', nullable=False)  # active, paused, failed, cancelled
+    fail_count = db.Column(db.Integer, default=0, nullable=False)
+    last_error = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    donor = db.relationship('Donor', backref='recurring_plans')
+
+    def __repr__(self):
+        return f'<RecurringDonationPlan donor={self.donor_id} {self.frequency} {self.amount} {self.currency}>'
+
+
+class DonationReceipt(db.Model):
+    """Receipt generation/send tracking for a donation."""
+
+    __tablename__ = 'donation_receipts'
+
+    id = db.Column(db.Integer, primary_key=True)
+    donation_id = db.Column(db.Integer, db.ForeignKey('donations.id'), nullable=False, unique=True, index=True)
+    receipt_number = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    status = db.Column(db.String(20), default='generated', nullable=False)  # generated, sent, failed
+    sent_to_email = db.Column(db.String(120), nullable=True)
+    sent_at = db.Column(db.DateTime, nullable=True)
+    error_message = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    donation = db.relationship('Donation', backref='receipt')
+
+    def __repr__(self):
+        return f'<DonationReceipt donation={self.donation_id} status={self.status}>'
+
+
 class Donor(db.Model):
     """Donor profile and contact information."""
 
@@ -358,6 +404,8 @@ __all__ = [
     'Organization',
     'Donor',
     'Donation',
+    'RecurringDonationPlan',
+    'DonationReceipt',
     'Project',
     'Fund',
     'Volunteer',

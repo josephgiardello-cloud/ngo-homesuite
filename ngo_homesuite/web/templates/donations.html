@@ -8,6 +8,7 @@
 
 <div class="mb-3 mt-2 actions-row">
     <a href="{{ url_for('main.donation_create') }}" class="btn btn-primary">Add Donation</a>
+    <a href="{{ url_for('main.recurring_donations') }}" class="btn btn-secondary">Recurring Plans</a>
     <a href="{{ url_for('main.donations_export', file_type='csv', q=filter_q, payment_method=filter_payment_method, status=filter_status, min_amount=filter_min_amount, max_amount=filter_max_amount) }}" class="btn btn-secondary">Export CSV</a>
     <a href="{{ url_for('main.donations_export', file_type='xlsx', q=filter_q, payment_method=filter_payment_method, status=filter_status, min_amount=filter_min_amount, max_amount=filter_max_amount) }}" class="btn btn-secondary">Export Excel</a>
 </div>

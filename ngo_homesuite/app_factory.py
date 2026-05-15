@@ -32,7 +32,7 @@ def create_app(config=None):
         Configured Flask application instance
     """
     
-    app = Flask(__name__)
+    app = Flask(__name__, template_folder='web/templates')
     
     # Load configuration
     if config is None:

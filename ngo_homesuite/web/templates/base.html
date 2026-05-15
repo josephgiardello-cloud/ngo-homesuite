@@ -573,6 +573,7 @@
                 <button type="button" class="theme-toggle" id="themeToggle">Toggle Theme</button>
                 <a href="{{ url_for('auth.logout') }}">Logout</a>
             {% else %}
+                <a href="{{ url_for('main.public_give') }}">Donate</a>
                 <a href="{{ url_for('auth.login') }}">Login</a>
                 <a href="{{ url_for('auth.register') }}">Register</a>
             {% endif %}

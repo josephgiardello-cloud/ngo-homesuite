@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}Duplicate Donors - NGO HomeSuite{% endblock %}
+
+{% block content %}
+<h1>Duplicate Detection</h1>
+<p class="text-muted">Review likely duplicate donors and merge them into a single record.</p>
+
+{% if candidates %}
+<div class="table-wrap">
+<table>
+    <thead>
+        <tr>
+            <th>Reason</th>
+            <th>Primary Donor</th>
+            <th>Duplicate Donor</th>
+            <th>Action</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for item in candidates %}
+        <tr>
+            <td>{{ item.reason }}</td>
+            <td>
+                <strong>{{ item.primary.name }}</strong><br>
+                {{ item.primary.email or '-' }}<br>
+                {{ item.primary.phone or '-' }}
+            </td>
+            <td>
+                <strong>{{ item.duplicate.name }}</strong><br>
+                {{ item.duplicate.email or '-' }}<br>
+                {{ item.duplicate.phone or '-' }}
+            </td>
+            <td>
+                <form method="post" action="{{ url_for('main.donor_merge') }}" onsubmit="return confirm('Merge duplicate donor into primary record?');">
+                    <input type="hidden" name="primary_id" value="{{ item.primary.id }}">
+                    <input type="hidden" name="duplicate_id" value="{{ item.duplicate.id }}">
+                    <button type="submit" class="btn btn-primary">Merge</button>
+                </form>
+            </td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<div class="card">
+    <p>No duplicate candidates found.</p>
+</div>
+{% endif %}
+{% endblock %}

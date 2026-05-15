@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}Donate - NGO HomeSuite{% endblock %}
+
+{% block content %}
+<h1>Support Our Mission</h1>
+<p class="text-muted">Make a secure contribution. You can optionally make it recurring.</p>
+
+<form method="post" class="mt-2" style="max-width: 760px;">
+    {{ form.hidden_tag() }}
+
+    <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));">
+        <div class="form-group {% if form.donor_name.errors %}error{% endif %}">
+            {{ form.donor_name.label }}
+            {{ form.donor_name() }}
+            {% for error in form.donor_name.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        </div>
+
+        <div class="form-group {% if form.donor_email.errors %}error{% endif %}">
+            {{ form.donor_email.label }}
+            {{ form.donor_email() }}
+            {% for error in form.donor_email.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        </div>
+
+        <div class="form-group {% if form.donor_phone.errors %}error{% endif %}">
+            {{ form.donor_phone.label }}
+            {{ form.donor_phone() }}
+            {% for error in form.donor_phone.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        </div>
+
+        <div class="form-group {% if form.amount.errors %}error{% endif %}">
+            {{ form.amount.label }}
+            {{ form.amount() }}
+            {% for error in form.amount.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        </div>
+
+        <div class="form-group {% if form.currency.errors %}error{% endif %}">
+            {{ form.currency.label }}
+            {{ form.currency() }}
+            {% for error in form.currency.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        </div>
+
+        <div class="form-group {% if form.payment_method.errors %}error{% endif %}">
+            {{ form.payment_method.label }}
+            {{ form.payment_method() }}
+            {% for error in form.payment_method.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        </div>
+
+        <div class="form-group {% if form.purpose.errors %}error{% endif %}">
+            {{ form.purpose.label }}
+            {{ form.purpose(placeholder='General Fund, Education, Emergency Relief...') }}
+            {% for error in form.purpose.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        </div>
+
+        <div class="form-group {% if form.recurring_frequency.errors %}error{% endif %}">
+            {{ form.recurring_frequency.label }}
+            {{ form.recurring_frequency() }}
+            {% for error in form.recurring_frequency.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        </div>
+    </div>
+
+    <div class="form-group checkbox-group">
+        {{ form.make_recurring() }}
+        {{ form.make_recurring.label }}
+    </div>
+
+    <div class="actions-row">
+        {{ form.submit(class_='btn btn-primary') }}
+        <a href="{{ url_for('main.index') }}" class="btn btn-secondary">Back to Home</a>
+    </div>
+</form>
+{% endblock %}
