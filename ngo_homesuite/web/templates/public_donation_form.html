@@ -2,71 +2,190 @@
 
 {% block title %}Donate - NGO HomeSuite{% endblock %}
 
+{% block extra_css %}
+<style>
+    .donation-shell {
+        max-width: 860px;
+        margin: 0 auto;
+    }
+
+    .donation-hero {
+        background: linear-gradient(135deg, #0f355f 0%, #1574ca 52%, #38a3ef 100%);
+        border-radius: 14px;
+        color: #f4fbff;
+        padding: 1.2rem 1.1rem;
+        margin-bottom: 1rem;
+        box-shadow: 0 12px 28px rgba(16, 36, 61, 0.22);
+    }
+
+    .donation-hero p {
+        margin: 0.4rem 0 0;
+        color: rgba(244, 251, 255, 0.92);
+    }
+
+    .amount-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+        margin-top: 0.55rem;
+    }
+
+    .amount-chip {
+        border: 1px solid var(--border);
+        background: var(--surface-soft);
+        color: var(--text);
+        border-radius: 999px;
+        padding: 0.35rem 0.8rem;
+        font-size: 0.86rem;
+        font-weight: 600;
+        cursor: pointer;
+    }
+
+    .amount-chip:hover,
+    .amount-chip[aria-pressed="true"] {
+        border-color: var(--primary);
+        background: rgba(20, 118, 212, 0.15);
+    }
+
+    .recurring-row {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 0.65rem;
+        align-items: end;
+    }
+
+    .recurring-row.hidden {
+        display: none;
+    }
+
+    @media (min-width: 740px) {
+        .recurring-row {
+            grid-template-columns: 1fr 1fr;
+        }
+    }
+</style>
+{% endblock %}
+
 {% block content %}
-<h1>Support Our Mission</h1>
-<p class="text-muted">Make a secure contribution. You can optionally make it recurring.</p>
+<div class="donation-shell">
+    <section class="donation-hero">
+        <h1>Support Our Mission</h1>
+        <p>Make a secure contribution in under a minute. Receipts are sent automatically.</p>
+    </section>
 
-<form method="post" class="mt-2" style="max-width: 760px;">
-    {{ form.hidden_tag() }}
+    <form method="post" class="mt-2">
+        {{ form.hidden_tag() }}
 
-    <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));">
-        <div class="form-group {% if form.donor_name.errors %}error{% endif %}">
-            {{ form.donor_name.label }}
-            {{ form.donor_name() }}
-            {% for error in form.donor_name.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));">
+            <div class="form-group {% if form.donor_name.errors %}error{% endif %}">
+                {{ form.donor_name.label }}
+                {{ form.donor_name(autocomplete='name') }}
+                {% for error in form.donor_name.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            </div>
+
+            <div class="form-group {% if form.donor_email.errors %}error{% endif %}">
+                {{ form.donor_email.label }}
+                {{ form.donor_email(autocomplete='email') }}
+                {% for error in form.donor_email.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            </div>
+
+            <div class="form-group {% if form.donor_phone.errors %}error{% endif %}">
+                {{ form.donor_phone.label }}
+                {{ form.donor_phone(autocomplete='tel') }}
+                {% for error in form.donor_phone.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            </div>
+
+            <div class="form-group {% if form.amount.errors %}error{% endif %}">
+                {{ form.amount.label }}
+                {{ form.amount(id='donationAmount', inputmode='decimal', min='0.01', step='0.01') }}
+                <div class="amount-chips" role="group" aria-label="Suggested donation amounts">
+                    <button type="button" class="amount-chip" data-amount="25">$25</button>
+                    <button type="button" class="amount-chip" data-amount="50">$50</button>
+                    <button type="button" class="amount-chip" data-amount="100">$100</button>
+                    <button type="button" class="amount-chip" data-amount="250">$250</button>
+                </div>
+                {% for error in form.amount.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            </div>
+
+            <div class="form-group {% if form.currency.errors %}error{% endif %}">
+                {{ form.currency.label }}
+                {{ form.currency() }}
+                {% for error in form.currency.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            </div>
+
+            <div class="form-group {% if form.payment_method.errors %}error{% endif %}">
+                {{ form.payment_method.label }}
+                {{ form.payment_method() }}
+                {% for error in form.payment_method.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            </div>
+
+            <div class="form-group {% if form.purpose.errors %}error{% endif %}">
+                {{ form.purpose.label }}
+                {{ form.purpose(placeholder='General Fund, Education, Emergency Relief...') }}
+                {% for error in form.purpose.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            </div>
         </div>
 
-        <div class="form-group {% if form.donor_email.errors %}error{% endif %}">
-            {{ form.donor_email.label }}
-            {{ form.donor_email() }}
-            {% for error in form.donor_email.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        <div class="form-group checkbox-group">
+            {{ form.make_recurring(id='makeRecurring') }}
+            {{ form.make_recurring.label }}
         </div>
 
-        <div class="form-group {% if form.donor_phone.errors %}error{% endif %}">
-            {{ form.donor_phone.label }}
-            {{ form.donor_phone() }}
-            {% for error in form.donor_phone.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        <div class="recurring-row {% if not form.make_recurring.data %}hidden{% endif %}" id="recurringRow">
+            <div class="form-group {% if form.recurring_frequency.errors %}error{% endif %}" id="recurringFrequencyGroup">
+                {{ form.recurring_frequency.label }}
+                {{ form.recurring_frequency() }}
+                {% for error in form.recurring_frequency.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            </div>
         </div>
 
-        <div class="form-group {% if form.amount.errors %}error{% endif %}">
-            {{ form.amount.label }}
-            {{ form.amount() }}
-            {% for error in form.amount.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        <div class="actions-row">
+            {{ form.submit(class_='btn btn-primary') }}
+            <a href="{{ url_for('main.index') }}" class="btn btn-secondary">Back to Home</a>
         </div>
+    </form>
+</div>
 
-        <div class="form-group {% if form.currency.errors %}error{% endif %}">
-            {{ form.currency.label }}
-            {{ form.currency() }}
-            {% for error in form.currency.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
-        </div>
+<script>
+    (function() {
+        const amountField = document.getElementById('donationAmount');
+        const chips = Array.from(document.querySelectorAll('.amount-chip'));
+        const recurringToggle = document.getElementById('makeRecurring');
+        const recurringRow = document.getElementById('recurringRow');
 
-        <div class="form-group {% if form.payment_method.errors %}error{% endif %}">
-            {{ form.payment_method.label }}
-            {{ form.payment_method() }}
-            {% for error in form.payment_method.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
-        </div>
+        function syncChipState() {
+            if (!amountField) return;
+            const normalized = String(Number(amountField.value || 0));
+            chips.forEach((chip) => {
+                chip.setAttribute('aria-pressed', String(chip.dataset.amount === normalized));
+            });
+        }
 
-        <div class="form-group {% if form.purpose.errors %}error{% endif %}">
-            {{ form.purpose.label }}
-            {{ form.purpose(placeholder='General Fund, Education, Emergency Relief...') }}
-            {% for error in form.purpose.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
-        </div>
+        function toggleRecurringRow() {
+            if (!recurringToggle || !recurringRow) return;
+            recurringRow.classList.toggle('hidden', !recurringToggle.checked);
+        }
 
-        <div class="form-group {% if form.recurring_frequency.errors %}error{% endif %}">
-            {{ form.recurring_frequency.label }}
-            {{ form.recurring_frequency() }}
-            {% for error in form.recurring_frequency.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
-        </div>
-    </div>
+        chips.forEach((chip) => {
+            chip.addEventListener('click', function() {
+                if (amountField) {
+                    amountField.value = chip.dataset.amount || '';
+                    amountField.dispatchEvent(new Event('input', { bubbles: true }));
+                    amountField.focus();
+                    syncChipState();
+                }
+            });
+        });
 
-    <div class="form-group checkbox-group">
-        {{ form.make_recurring() }}
-        {{ form.make_recurring.label }}
-    </div>
+        if (amountField) {
+            amountField.addEventListener('input', syncChipState);
+            syncChipState();
+        }
 
-    <div class="actions-row">
-        {{ form.submit(class_='btn btn-primary') }}
-        <a href="{{ url_for('main.index') }}" class="btn btn-secondary">Back to Home</a>
-    </div>
-</form>
+        if (recurringToggle) {
+            recurringToggle.addEventListener('change', toggleRecurringRow);
+            toggleRecurringRow();
+        }
+    })();
+</script>
 {% endblock %}

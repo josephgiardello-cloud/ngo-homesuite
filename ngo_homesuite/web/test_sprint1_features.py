@@ -12,6 +12,7 @@ from ngo_homesuite.models.core import (
     Donor,
     Expense,
     Organization,
+    P2PPage,
     RecurringDonationPlan,
     db,
 )
@@ -75,6 +76,75 @@ def test_public_give_creates_donation_and_receipt(client, app):
         plan = RecurringDonationPlan.query.filter_by(organization_id=org.id, donor_id=donation.donor_id).order_by(RecurringDonationPlan.id.desc()).first()
         assert plan is not None
         assert plan.status == "active"
+
+
+def test_public_p2p_page_renders_html_and_json(client, app):
+    with app.app_context():
+        org = Organization.query.filter_by(is_active=True).first()
+        donor = Donor(
+            organization_id=org.id,
+            name="P2P Public Donor",
+            email="p2p.public@example.org",
+            donor_type="individual",
+        )
+        db.session.add(donor)
+        db.session.flush()
+
+        page = P2PPage(
+            organization_id=org.id,
+            donor_id=donor.id,
+            title="Spring Field Kits",
+            story="Funding community field kits for youth volunteers.",
+            goal_amount=500.0,
+            public_slug="spring-field-kits",
+            status="active",
+        )
+        db.session.add(page)
+        db.session.commit()
+
+    html_resp = client.get("/p2p/spring-field-kits", headers={"Accept": "text/html"})
+    assert html_resp.status_code == 200
+    html_body = html_resp.get_data(as_text=True)
+    assert "Spring Field Kits" in html_body
+    assert "Support this fundraiser" in html_body
+    assert "Embed This Fundraiser" in html_body
+
+    json_resp = client.get("/p2p/spring-field-kits", headers={"Accept": "application/json"})
+    assert json_resp.status_code == 200
+    payload = json_resp.get_json()
+    assert payload["title"] == "Spring Field Kits"
+    assert "progress" in payload
+
+
+def test_public_p2p_embed_script_endpoint(client, app):
+    with app.app_context():
+        org = Organization.query.filter_by(is_active=True).first()
+        donor = Donor(
+            organization_id=org.id,
+            name="P2P Embed Donor",
+            email="p2p.embed@example.org",
+            donor_type="individual",
+        )
+        db.session.add(donor)
+        db.session.flush()
+
+        page = P2PPage(
+            organization_id=org.id,
+            donor_id=donor.id,
+            title="Embed Fundraiser",
+            goal_amount=300.0,
+            public_slug="embed-fundraiser",
+            status="active",
+        )
+        db.session.add(page)
+        db.session.commit()
+
+    rv = client.get("/p2p/embed-fundraiser/embed.js")
+    assert rv.status_code == 200
+    assert rv.mimetype == "application/javascript"
+    body = rv.get_data(as_text=True)
+    assert "createElement('iframe')" in body
+    assert "/p2p/embed-fundraiser?embed=1" in body
 
 
 def test_donor_merge_relinks_donations(client, app):

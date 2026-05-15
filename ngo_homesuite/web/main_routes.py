@@ -635,6 +635,19 @@ def public_give():
         return redirect(url_for('main.index'))
 
     form = PublicDonationForm()
+    if request.method == 'GET':
+        purpose_prefill = (request.args.get('purpose') or '').strip()
+        amount_prefill = (request.args.get('amount') or '').strip()
+        if purpose_prefill and not form.purpose.data:
+            form.purpose.data = purpose_prefill[:120]
+        if amount_prefill and not form.amount.data:
+            try:
+                parsed_amount = float(amount_prefill)
+            except ValueError:
+                parsed_amount = 0.0
+            if parsed_amount > 0:
+                form.amount.data = round(parsed_amount, 2)
+
     if form.validate_on_submit():
         donor_email = (form.donor_email.data or '').strip() or None
         donor = None

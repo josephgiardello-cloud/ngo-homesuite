@@ -1,0 +1,225 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page.title }} - Fundraiser{% endblock %}
+
+{% block extra_css %}
+<style>
+    .p2p-shell {
+        max-width: 980px;
+        margin: 0 auto;
+    }
+
+    .p2p-hero {
+        border-radius: 14px;
+        padding: 1.2rem;
+        color: #f5fbff;
+        background: linear-gradient(125deg, #0c2c4f 0%, #1366b4 45%, #1d8cdc 100%);
+        box-shadow: 0 14px 28px rgba(7, 29, 54, 0.25);
+        margin-bottom: 1rem;
+    }
+
+    .p2p-hero h1 {
+        color: #f5fbff;
+        margin-bottom: 0.5rem;
+    }
+
+    .p2p-story {
+        margin-top: 0.55rem;
+        color: rgba(245, 251, 255, 0.94);
+        white-space: pre-wrap;
+    }
+
+    .goal-row {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 0.8rem;
+        margin-top: 0.9rem;
+    }
+
+    .goal-card {
+        background: var(--surface-soft);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 0.85rem;
+    }
+
+    .goal-label {
+        font-size: 0.84rem;
+        color: var(--muted);
+    }
+
+    .goal-value {
+        font-size: 1.25rem;
+        font-weight: 700;
+        margin-top: 0.15rem;
+    }
+
+    .thermometer {
+        width: 100%;
+        height: 14px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.25);
+        overflow: hidden;
+        border: 1px solid rgba(255, 255, 255, 0.28);
+        margin-top: 0.65rem;
+    }
+
+    .thermometer > span {
+        display: block;
+        height: 100%;
+        width: {{ progress.pct_of_goal or 0 }}%;
+        max-width: 100%;
+        background: linear-gradient(90deg, #3ff4c5 0%, #a7ff8a 100%);
+        transition: width 0.45s ease;
+    }
+
+    .leaderboard-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 0.5rem;
+    }
+
+    .leaderboard-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.75rem;
+        background: var(--surface-soft);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 0.55rem 0.7rem;
+        font-size: 0.9rem;
+    }
+
+    .leaderboard-item.current {
+        border-color: var(--primary);
+        box-shadow: 0 0 0 2px rgba(20, 118, 212, 0.16);
+    }
+
+    .embed-block {
+        margin-top: 1rem;
+        border: 1px solid var(--border);
+        background: var(--surface-soft);
+        border-radius: 10px;
+        padding: 0.75rem;
+    }
+
+    .embed-code {
+        width: 100%;
+        min-height: 72px;
+        font-family: Consolas, "Courier New", monospace;
+        font-size: 0.82rem;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 0.55rem;
+        color: var(--text);
+    }
+
+    .cta-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.55rem;
+        margin-top: 0.9rem;
+    }
+
+    body.embed-mode header,
+    body.embed-mode footer,
+    body.embed-mode .sidebar,
+    body.embed-mode .ai-fab,
+    body.embed-mode .ai-panel {
+        display: none !important;
+    }
+
+    body.embed-mode main {
+        margin: 0;
+        max-width: none;
+        padding: 0;
+    }
+
+    body.embed-mode .container,
+    body.embed-mode .content {
+        border: 0;
+        box-shadow: none;
+        border-radius: 0;
+        padding: 0;
+    }
+
+    @media (min-width: 760px) {
+        .goal-row {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<script>
+    (function() {
+        if ({{ 'true' if is_embed else 'false' }}) {
+            document.body.classList.add('embed-mode');
+        }
+    })();
+</script>
+
+<div class="p2p-shell">
+    <section class="p2p-hero">
+        <h1>{{ page.title }}</h1>
+        {% if page.story %}
+        <p class="p2p-story">{{ page.story }}</p>
+        {% endif %}
+
+        <div class="thermometer" aria-label="Progress toward fundraising goal">
+            <span></span>
+        </div>
+
+        <div class="goal-row">
+            <div class="goal-card">
+                <div class="goal-label">Raised</div>
+                <div class="goal-value">${{ '%.2f'|format(progress.total_raised) }}</div>
+            </div>
+            <div class="goal-card">
+                <div class="goal-label">Goal</div>
+                <div class="goal-value">${{ '%.2f'|format(progress.goal_amount) }}</div>
+            </div>
+            <div class="goal-card">
+                <div class="goal-label">Progress</div>
+                <div class="goal-value">{{ progress.pct_of_goal or 0 }}%</div>
+            </div>
+        </div>
+
+        <div class="cta-row">
+            <a class="btn btn-primary" href="{{ url_for('main.public_give', purpose='P2P: ' ~ page.title) }}">Support this fundraiser</a>
+            {% if not is_embed %}
+            <a class="btn btn-secondary" href="{{ url_for('main.public_give') }}">Donate to main fund</a>
+            {% endif %}
+        </div>
+    </section>
+
+    <section class="card">
+        <div class="card-title">Leaderboard</div>
+        {% if leaderboard_rows %}
+        <ol class="leaderboard-list">
+            {% for row in leaderboard_rows %}
+            <li class="leaderboard-item {{ 'current' if row.slug == page.public_slug else '' }}">
+                <span>{{ loop.index }}. {{ row.title }}</span>
+                <strong>${{ '%.2f'|format(row.raised) }}</strong>
+            </li>
+            {% endfor %}
+        </ol>
+        {% else %}
+        <p class="text-muted">No contributions recorded yet. Be the first to contribute.</p>
+        {% endif %}
+    </section>
+
+    {% if not is_embed %}
+    <section class="embed-block">
+        <div class="card-title">Embed This Fundraiser</div>
+        <p class="text-muted mb-1">Paste this script into your website to display the live fundraiser widget.</p>
+        <textarea class="embed-code" readonly><script src="{{ request.url_root.rstrip('/') }}/p2p/{{ page.public_slug }}/embed.js" data-height="560"></script></textarea>
+    </section>
+    {% endif %}
+</div>
+{% endblock %}
