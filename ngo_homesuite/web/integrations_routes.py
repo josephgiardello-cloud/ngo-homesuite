@@ -218,6 +218,146 @@ def sms_bulk_route():
 
 
 # ---------------------------------------------------------------------------
+# Accounting: QuickBooks + Xero
+# ---------------------------------------------------------------------------
+
+@integrations_bp.post("/accounting/quickbooks/oauth/callback")
+@login_required
+@roles_required("admin")
+def qbo_oauth_callback():
+    """Exchange OAuth2 code for QuickBooks tokens.
+
+    Body: {"code": "...", "redirect_uri": "..."}
+    """
+    from ngo_homesuite.services.accounting_sync_service import quickbooks_exchange_code
+    from flask_login import current_user
+    data = request.get_json(silent=True) or {}
+    code = data.get("code", "").strip()
+    redirect_uri = data.get("redirect_uri", "").strip()
+    if not code or not redirect_uri:
+        return jsonify({"error": "code and redirect_uri are required"}), 400
+    result = quickbooks_exchange_code(current_user.organization_id, code, redirect_uri)
+    if "error" in result:
+        return jsonify(result), 502
+    return jsonify({"status": "ok"})
+
+
+@integrations_bp.post("/accounting/xero/oauth/callback")
+@login_required
+@roles_required("admin")
+def xero_oauth_callback():
+    """Exchange OAuth2 code for Xero tokens.
+
+    Body: {"code": "...", "redirect_uri": "..."}
+    """
+    from ngo_homesuite.services.accounting_sync_service import xero_exchange_code
+    from flask_login import current_user
+    data = request.get_json(silent=True) or {}
+    code = data.get("code", "").strip()
+    redirect_uri = data.get("redirect_uri", "").strip()
+    if not code or not redirect_uri:
+        return jsonify({"error": "code and redirect_uri are required"}), 400
+    result = xero_exchange_code(current_user.organization_id, code, redirect_uri)
+    if "error" in result:
+        return jsonify(result), 502
+    return jsonify({"status": "ok"})
+
+
+@integrations_bp.post("/accounting/sync/donation/<int:donation_id>")
+@login_required
+@roles_required("admin")
+def sync_donation_route(donation_id: int):
+    """Push a single donation to QuickBooks or Xero.
+
+    Body: {"provider": "quickbooks"}  or  {"provider": "xero"}
+    """
+    from ngo_homesuite.services.accounting_sync_service import (
+        push_donation_to_quickbooks,
+        push_donation_to_xero,
+    )
+    from flask_login import current_user
+    data = request.get_json(silent=True) or {}
+    provider = (data.get("provider") or "").strip().lower()
+    if provider not in ("quickbooks", "xero"):
+        return jsonify({"error": "provider must be 'quickbooks' or 'xero'"}), 400
+
+    org_id = current_user.organization_id
+    if provider == "quickbooks":
+        result = push_donation_to_quickbooks(org_id, donation_id)
+    else:
+        result = push_donation_to_xero(org_id, donation_id)
+
+    record_integration_event(current_app, kind=f"{provider}_sync", status=result.get("status", "unknown"), details=result)
+    return jsonify(result)
+
+
+@integrations_bp.post("/accounting/sync/expense/<int:expense_id>")
+@login_required
+@roles_required("admin")
+def sync_expense_route(expense_id: int):
+    """Push a single expense to QuickBooks or Xero.
+
+    Body: {"provider": "quickbooks"}  or  {"provider": "xero"}
+    """
+    from ngo_homesuite.services.accounting_sync_service import (
+        push_expense_to_quickbooks,
+        push_expense_to_xero,
+    )
+    from flask_login import current_user
+    data = request.get_json(silent=True) or {}
+    provider = (data.get("provider") or "").strip().lower()
+    if provider not in ("quickbooks", "xero"):
+        return jsonify({"error": "provider must be 'quickbooks' or 'xero'"}), 400
+
+    org_id = current_user.organization_id
+    if provider == "quickbooks":
+        result = push_expense_to_quickbooks(org_id, expense_id)
+    else:
+        result = push_expense_to_xero(org_id, expense_id)
+
+    record_integration_event(current_app, kind=f"{provider}_sync", status=result.get("status", "unknown"), details=result)
+    return jsonify(result)
+
+
+@integrations_bp.get("/accounting/sync/logs")
+@login_required
+@roles_required("admin")
+def sync_logs_route():
+    """Return recent accounting sync log entries.
+
+    Query params: ?provider=quickbooks&sync_type=donation&status=failed&limit=50
+    """
+    from ngo_homesuite.services.accounting_sync_service import list_sync_logs
+    from flask_login import current_user
+    provider = request.args.get("provider")
+    sync_type = request.args.get("sync_type")
+    status = request.args.get("status")
+    limit = request.args.get("limit", 100, type=int)
+    logs = list_sync_logs(
+        current_user.organization_id,
+        provider=provider,
+        sync_type=sync_type,
+        status=status,
+        limit=min(limit, 500),
+    )
+    return jsonify([
+        {
+            "id": l.id,
+            "provider": l.provider,
+            "sync_type": l.sync_type,
+            "internal_id": l.internal_id,
+            "external_id": l.external_id,
+            "external_ref": l.external_ref,
+            "status": l.status,
+            "error_message": l.error_message,
+            "synced_at": l.synced_at.isoformat() if l.synced_at else None,
+            "created_at": l.created_at.isoformat(),
+        }
+        for l in logs
+    ])
+
+
+# ---------------------------------------------------------------------------
 # Mailchimp list sync
 # ---------------------------------------------------------------------------
 

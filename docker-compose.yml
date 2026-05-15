@@ -1,6 +1,15 @@
 version: "3.9"
 
+# Profiles:
+#   default          — app + Caddy edge (SQLite, development)
+#   postgres         — app + PostgreSQL (production DB)
+#   edge             — add Caddy TLS termination
+#   postgres,edge    — full production stack
+
 services:
+  # ---------------------------------------------------------------------------
+  # Application
+  # ---------------------------------------------------------------------------
   app:
     build:
       context: .
@@ -20,7 +29,76 @@ services:
       - ./logs:/app/logs
       - ./backups:/app/backups
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
 
+  # ---------------------------------------------------------------------------
+  # Application (PostgreSQL variant) — override DATABASE_URL when postgres profile active
+  # ---------------------------------------------------------------------------
+  app-pg:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ngo-homesuite-app-pg
+    profiles: ["postgres"]
+    command: gunicorn -w 3 -k gthread -b 0.0.0.0:8000 ngo_homesuite.wsgi:app
+    env_file:
+      - .env
+    environment:
+      FLASK_ENV: production
+      RATE_LIMIT_ENABLED: "True"
+      LOG_LEVEL: INFO
+      DATABASE_BACKEND: postgresql
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-ngohs}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-ngo_homesuite}
+      DB_POOL_SIZE: "10"
+      DB_MAX_OVERFLOW: "20"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./backups:/app/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: ngo-homesuite-postgres
+    profiles: ["postgres"]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ngo_homesuite}
+      POSTGRES_USER: ${POSTGRES_USER:-ngohs}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ngohs} -d ${POSTGRES_DB:-ngo_homesuite}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Caddy TLS termination
+  # ---------------------------------------------------------------------------
   caddy:
     image: caddy:2.8
     container_name: ngo-homesuite-caddy
@@ -39,3 +117,4 @@ services:
 volumes:
   caddy_data:
   caddy_config:
+  postgres_data:

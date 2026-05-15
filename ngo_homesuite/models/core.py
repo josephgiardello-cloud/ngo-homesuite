@@ -986,6 +986,105 @@ class ScheduledReport(db.Model):
 
 
 # Export all models
+class VolunteerShift(db.Model):
+    """A scheduled or completed volunteer shift."""
+
+    __tablename__ = 'volunteer_shifts'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    volunteer_id = db.Column(db.Integer, db.ForeignKey('volunteers.id'), nullable=False, index=True)
+    project_id = db.Column(db.Integer, db.ForeignKey('projects.id'), nullable=True, index=True)
+    title = db.Column(db.String(200), nullable=False)
+    shift_date = db.Column(db.Date, nullable=False, index=True)
+    start_time = db.Column(db.String(5), nullable=True)   # "HH:MM" 24h
+    end_time = db.Column(db.String(5), nullable=True)
+    hours = db.Column(db.Float, nullable=True)
+    location = db.Column(db.String(200), nullable=True)
+    status = db.Column(db.String(30), default='scheduled', nullable=False)
+    # scheduled / confirmed / completed / cancelled / no_show
+    notes = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
+
+    volunteer = db.relationship('Volunteer', backref='shifts')
+    project = db.relationship('Project', backref='volunteer_shifts')
+
+    def __repr__(self):
+        return f'<VolunteerShift {self.id} {self.title}>'
+
+
+class TrainingCourse(db.Model):
+    """A training course definition available for volunteers."""
+
+    __tablename__ = 'training_courses'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    name = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    category = db.Column(db.String(50), default='orientation', nullable=False)
+    # orientation / safety / skills / compliance
+    duration_hours = db.Column(db.Float, nullable=True)
+    is_required = db.Column(db.Boolean, default=False, nullable=False)
+    expires_after_days = db.Column(db.Integer, nullable=True)  # None = no expiry
+    created_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
+
+    created_by = db.relationship('User', foreign_keys=[created_by_id])
+
+    def __repr__(self):
+        return f'<TrainingCourse {self.name}>'
+
+
+class VolunteerTraining(db.Model):
+    """Assignment and completion record for a volunteer on a training course."""
+
+    __tablename__ = 'volunteer_trainings'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    volunteer_id = db.Column(db.Integer, db.ForeignKey('volunteers.id'), nullable=False, index=True)
+    course_id = db.Column(db.Integer, db.ForeignKey('training_courses.id'), nullable=False, index=True)
+    assigned_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    completed_at = db.Column(db.DateTime, nullable=True)
+    status = db.Column(db.String(30), default='pending', nullable=False)
+    # pending / in_progress / completed / expired
+    score = db.Column(db.Float, nullable=True)  # 0-100
+    expires_at = db.Column(db.DateTime, nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+
+    volunteer = db.relationship('Volunteer', backref='trainings')
+    course = db.relationship('TrainingCourse', backref='assignments')
+
+    def __repr__(self):
+        return f'<VolunteerTraining v={self.volunteer_id} c={self.course_id}>'
+
+
+class AccountingSyncLog(db.Model):
+    """Audit trail of records pushed to external accounting systems."""
+
+    __tablename__ = 'accounting_sync_logs'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    provider = db.Column(db.String(30), nullable=False, index=True)  # quickbooks / xero
+    sync_type = db.Column(db.String(30), nullable=False)             # donation / expense / fund / contact
+    internal_id = db.Column(db.Integer, nullable=True, index=True)   # FK to local record
+    external_id = db.Column(db.String(100), nullable=True)           # ID in remote system
+    external_ref = db.Column(db.String(200), nullable=True)          # human-readable ref e.g. INV-123
+    status = db.Column(db.String(20), default='pending', nullable=False, index=True)
+    # pending / synced / failed / skipped
+    error_message = db.Column(db.Text, nullable=True)
+    synced_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+
+    def __repr__(self):
+        return f'<AccountingSyncLog {self.provider} {self.sync_type} {self.status}>'
+
+
 __all__ = [
     'db',
     'User',
@@ -1021,4 +1120,8 @@ __all__ = [
     'BeneficiaryReferral',
     'BeneficiaryAppointment',
     'ScheduledReport',
+    'VolunteerShift',
+    'TrainingCourse',
+    'VolunteerTraining',
+    'AccountingSyncLog',
 ]
