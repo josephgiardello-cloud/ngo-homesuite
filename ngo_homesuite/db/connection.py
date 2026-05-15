@@ -59,26 +59,50 @@ def _check_and_handle_schema_migration(conn: sqlite3.Connection, db_path: str | 
     """Centralized schema hash check and migration escape hatch logic."""
     _ensure_metadata_table(conn)
     allow_migration = os.environ.get("NGO_HOMESUITE_ALLOW_SCHEMA_MIGRATION", "0") in {"1", "true", "yes", "on"}
-    if not check_metadata_hash(conn):
-        if not allow_migration:
+    cur = conn.execute("SELECT value FROM __db_metadata__ WHERE key='schema_hmac'")
+    row = cur.fetchone()
+    has_schema_hash = bool(row and row[0])
+
+    if not has_schema_hash:
+        schema_objects = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master "
+            "WHERE type IN ('table','index','trigger','view') "
+            "AND name NOT LIKE 'sqlite_%' "
+            "AND name NOT IN ('__db_metadata__', '__key_provenance__')"
+        ).fetchone()
+        has_user_schema = bool(schema_objects and int(schema_objects[0] or 0) > 0)
+
+        if has_user_schema and not allow_migration:
             if SchemaMigrationHook:
                 SchemaMigrationHook(conn, db_path)
             raise FatalDBError(
-                "Schema integrity check failed: stored HMAC does not match current schema. "
-                "Database may have been tampered with or corrupted. "
-                "Restore from a known-good backup or rekey with operator approval."
+                "Schema integrity check failed: no stored schema HMAC for a non-empty schema. "
+                "Database may be legacy, tampered with, or incompletely migrated. "
+                "Set NGO_HOMESUITE_ALLOW_SCHEMA_MIGRATION for a controlled migration window."
             )
-        else:
+
+        if has_user_schema and allow_migration:
             logger.warning(
-                "Schema hash mismatch, but NGO_HOMESUITE_ALLOW_SCHEMA_MIGRATION escape hatch is enabled. Proceeding for migration.",
+                "Schema hash missing, but NGO_HOMESUITE_ALLOW_SCHEMA_MIGRATION escape hatch is enabled. Proceeding for migration.",
                 extra={
                     "event_id": "db.schema.migration_escape",
-                    "extra_fields": {"db_path": db_path, "escape_hatch": True}
+                    "extra_fields": {"db_path": db_path, "escape_hatch": True, "reason": "missing_hash"}
                 },
             )
             if SchemaMigrationHook:
                 SchemaMigrationHook(conn, db_path)
-    else:
+            return
+
+        logger.info(
+            "No stored schema HMAC found for empty schema; allowing first-run bootstrap.",
+            extra={
+                "event_id": "db.schema.bootstrap_empty",
+                "extra_fields": {"db_path": db_path, "hmac_present": False}
+            },
+        )
+        return
+
+    if check_metadata_hash(conn):
         logger.info(
             "Database schema integrity verified (HMAC match)",
             extra={
@@ -86,6 +110,26 @@ def _check_and_handle_schema_migration(conn: sqlite3.Connection, db_path: str | 
                 "extra_fields": {"db_path": db_path, "hmac_verified": True}
             },
         )
+        return
+
+    if not allow_migration:
+        if SchemaMigrationHook:
+            SchemaMigrationHook(conn, db_path)
+        raise FatalDBError(
+            "Schema integrity check failed: stored HMAC does not match current schema. "
+            "Database may have been tampered with or corrupted. "
+            "Restore from a known-good backup or rekey with operator approval."
+        )
+
+    logger.warning(
+        "Schema hash mismatch, but NGO_HOMESUITE_ALLOW_SCHEMA_MIGRATION escape hatch is enabled. Proceeding for migration.",
+        extra={
+            "event_id": "db.schema.migration_escape",
+            "extra_fields": {"db_path": db_path, "escape_hatch": True, "reason": "hash_mismatch"}
+        },
+    )
+    if SchemaMigrationHook:
+        SchemaMigrationHook(conn, db_path)
 
 
 
@@ -849,41 +893,7 @@ def connect_db_at(path: str) -> DBConnection:
             else:
                 _sqlcipher_apply_key(conn, key)
 
-            # --- Tamper-evident schema hash check ---
-            try:
-                allow_migration = os.environ.get("NGO_HOMESUITE_ALLOW_SCHEMA_MIGRATION", "0") in {"1", "true", "yes", "on"}
-                if not check_metadata_hash(conn):
-                    if not allow_migration:
-                        raise FatalDBError(
-                            "Schema integrity check failed: stored HMAC does not match current schema. "
-                            "Database may have been tampered with or corrupted. "
-                            "Restore from a known-good backup or rekey with operator approval."
-                        )
-                    else:
-                        logger.warning(
-                            "Schema hash mismatch, but NGO_HOMESUITE_ALLOW_SCHEMA_MIGRATION escape hatch is enabled. Proceeding for migration.",
-                            extra={
-                                "event_id": "db.schema.migration_escape",
-                                "extra_fields": {"db_path": path, "escape_hatch": True}
-                            },
-                        )
-                else:
-                    logger.info(
-                        "Database schema integrity verified (HMAC match)",
-                        extra={
-                            "event_id": "db.schema.integrity_ok",
-                            "extra_fields": {"db_path": path, "hmac_verified": True}
-                        },
-                    )
-            except Exception as e:
-                logger.warning(
-                    f"Schema hash check failed: {e}",
-                    extra={
-                        "event_id": "db.schema.hash_check_failed",
-                        "extra_fields": {"db_path": path, "error": str(e)}
-                    },
-                    exc_info=True
-                )
+            _check_and_handle_schema_migration(conn, db_path=path)
             return conn
         except (ValueError, sqlite3.Error, OSError) as e:
             logger.exception(
@@ -904,18 +914,7 @@ def connect_db_at(path: str) -> DBConnection:
         os.makedirs(parent_dir, exist_ok=True)
     conn = sqlite3.connect(path)
     _install_attach_hardening(conn)
-    # --- Tamper-evident schema hash check for unencrypted DB ---
-    try:
-        _check_and_handle_schema_migration(conn, db_path=path)
-    except Exception as e:
-        logger.warning(
-            f"Schema hash check failed: {e}",
-            extra={
-                "event_id": "db.schema.hash_check_failed",
-                "extra_fields": {"db_path": path, "error": str(e)}
-            },
-            exc_info=True
-        )
+    _check_and_handle_schema_migration(conn, db_path=path)
     return conn
 
 

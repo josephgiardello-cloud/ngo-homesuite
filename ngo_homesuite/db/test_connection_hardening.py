@@ -95,3 +95,34 @@ def test_logger_handler_hijack_defense(monkeypatch):
     connection._setup_structured_logging()
     count = sum(isinstance(h, logging.StreamHandler) and isinstance(getattr(h, 'formatter', None), connection._StructuredLogFormatter) for h in log.handlers)
     assert count <= 1
+
+
+def test_connect_db_rejects_non_empty_schema_without_hash(monkeypatch, tmp_path):
+    db_path = tmp_path / 'legacy_nonempty.sqlite3'
+    conn = sqlite3.connect(db_path)
+    conn.execute('CREATE TABLE test_payload (id INTEGER PRIMARY KEY, value TEXT)')
+    conn.commit()
+    conn.close()
+
+    monkeypatch.delenv('NGO_HOMESUITE_DB_KEY', raising=False)
+    monkeypatch.delenv('NGO_DB_KEY', raising=False)
+    monkeypatch.setenv('NGO_HOMESUITE_SCHEMA_HMAC_KEY', 'test_hmac_key')
+    monkeypatch.setenv('NGO_HOMESUITE_SCHEMA_SIGNATURE', 'test_schema_sig')
+    monkeypatch.delenv('NGO_HOMESUITE_ALLOW_SCHEMA_MIGRATION', raising=False)
+
+    with pytest.raises(FatalDBError, match='no stored schema HMAC'):
+        connection.connect_db_at(str(db_path))
+
+
+def test_connect_db_allows_empty_schema_bootstrap(monkeypatch, tmp_path):
+    db_path = tmp_path / 'empty_bootstrap.sqlite3'
+
+    monkeypatch.delenv('NGO_HOMESUITE_DB_KEY', raising=False)
+    monkeypatch.delenv('NGO_DB_KEY', raising=False)
+    monkeypatch.setenv('NGO_HOMESUITE_SCHEMA_HMAC_KEY', 'test_hmac_key')
+    monkeypatch.setenv('NGO_HOMESUITE_SCHEMA_SIGNATURE', 'test_schema_sig')
+    monkeypatch.delenv('NGO_HOMESUITE_ALLOW_SCHEMA_MIGRATION', raising=False)
+
+    conn = connection.connect_db_at(str(db_path))
+    assert isinstance(conn, sqlite3.Connection)
+    conn.close()
