@@ -61,3 +61,8 @@ def test_api_docs_and_openapi_endpoints_return_content(client, app):
     assert "openapi: 3.0.3" in spec_text
     assert "/ai/copilot/chat" in spec_text
     assert "/api/swagger" in spec_text
+    assert "operationId: postCopilotChat" in spec_text
+    assert "operationId: getComplianceEvidence" in spec_text
+    assert "CopilotChatRequest:" in spec_text
+    assert "CopilotChatResponse:" in spec_text
+    assert "ErrorResponse:" in spec_text

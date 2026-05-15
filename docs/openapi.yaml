@@ -4,26 +4,42 @@ info:
   version: 0.1.0-beta
   description: |
     Starter OpenAPI contract for internal/beta integrations.
-    This spec is intentionally narrow and will evolve with endpoint hardening.
+    This contract emphasizes stable operationIds and reusable schemas to support
+    downstream tooling (client generation, docs, and contract checks).
 servers:
   - url: /
 paths:
   /api/docs:
     get:
+      operationId: getApiDocsIndex
       summary: API docs landing page
       tags: [Docs]
       responses:
         '200':
           description: HTML docs landing page
+          content:
+            text/html:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /api/swagger:
     get:
+      operationId: getApiSwaggerUi
       summary: Interactive Swagger UI page
       tags: [Docs]
       responses:
         '200':
           description: Swagger UI HTML page
+          content:
+            text/html:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /api/openapi.yaml:
     get:
+      operationId: getOpenApiSpec
       summary: OpenAPI specification
       tags: [Docs]
       responses:
@@ -33,8 +49,11 @@ paths:
             application/yaml:
               schema:
                 type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /reports/compliance/evidence:
     get:
+      operationId: getComplianceEvidence
       summary: Export compliance evidence packet
       tags: [Compliance]
       parameters:
@@ -58,14 +77,14 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  schema:
-                    type: string
-                  sha256:
-                    type: string
+                $ref: '#/components/schemas/ComplianceEvidence'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /ai/copilot/chat:
     post:
+      operationId: postCopilotChat
       summary: Query HomeSuite Copilot
       tags: [AI]
       requestBody:
@@ -73,47 +92,118 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [prompt]
-              properties:
-                prompt:
-                  type: string
-                context:
-                  type: object
-                allow_actions:
-                  type: boolean
-                approved_actions:
-                  type: array
-                  items:
-                    oneOf:
-                      - type: string
-                      - type: object
-                        properties:
-                          tool:
-                            type: string
-                          token:
-                            type: string
+              $ref: '#/components/schemas/CopilotChatRequest'
       responses:
         '200':
           description: Copilot response envelope
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  response:
-                    type: string
-                  sources:
-                    type: array
-                    items:
-                      type: object
-                  actions:
-                    type: array
-                    items:
-                      type: object
-                  mode:
-                    type: string
+                $ref: '#/components/schemas/CopilotChatResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 components:
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+    ComplianceEvidence:
+      type: object
+      properties:
+        schema:
+          type: string
+        sha256:
+          type: string
+        security_posture:
+          type: object
+          additionalProperties: true
+        data_inventory:
+          type: object
+          additionalProperties: true
+      required: [schema, sha256]
+    CopilotActionApprovalItem:
+      type: object
+      properties:
+        tool:
+          type: string
+        token:
+          type: string
+      required: [tool]
+    CopilotChatRequest:
+      type: object
+      properties:
+        prompt:
+          type: string
+        context:
+          type: object
+          additionalProperties: true
+        allow_actions:
+          type: boolean
+        approved_actions:
+          type: array
+          items:
+            oneOf:
+              - type: string
+              - $ref: '#/components/schemas/CopilotActionApprovalItem'
+      required: [prompt]
+    SourceSnippet:
+      type: object
+      additionalProperties: true
+    ToolAction:
+      type: object
+      additionalProperties: true
+    CopilotChatResponse:
+      type: object
+      properties:
+        response:
+          type: string
+        sources:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceSnippet'
+        actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ToolAction'
+        redactions:
+          type: integer
+        mode:
+          type: string
+      required: [response, sources, actions, mode]
+  responses:
+    BadRequest:
+      description: Invalid request payload
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ServiceUnavailable:
+      description: Service unavailable or disabled
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
   securitySchemes:
     sessionCookieAuth:
       type: apiKey
