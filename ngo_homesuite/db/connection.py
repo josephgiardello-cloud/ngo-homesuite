@@ -1086,6 +1086,9 @@ def run_db(
                 )
                 time.sleep(delay_s)
                 continue
+            if _is_transient_db_error(exc):
+                last_exc = exc
+                break
             raise
 
     raise FatalDBError(f"Database unavailable: {last_exc}")

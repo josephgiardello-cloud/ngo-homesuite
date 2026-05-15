@@ -3,8 +3,8 @@ import sqlite3
 import hashlib
 import sys
 import datetime
+import json
 from typing import Any, Callable, Dict
-from .connection import run_db
 import shutil
 
 # --- AUTOMATED ROLLBACK SUPPORT ---
@@ -58,10 +58,10 @@ def migration_v3(conn: Any, cur: Any) -> None:
         cur.execute(f"INSERT INTO donations_new ({insert_cols}) SELECT {select_cols} FROM donations;")
         # 4. Recreate indexes and triggers for donations
         cur.execute("SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name='donations' AND sql IS NOT NULL;")
-        for name, sql in cur.fetchall():
+        for _name, sql in cur.fetchall():
             cur.execute(sql.replace('donations', 'donations_new', 1))
         cur.execute("SELECT name, sql FROM sqlite_master WHERE type='trigger' AND tbl_name='donations' AND sql IS NOT NULL;")
-        for name, sql in cur.fetchall():
+        for _name, sql in cur.fetchall():
             cur.execute(sql.replace('donations', 'donations_new', 1))
         # 5. Drop old table and swap
         cur.execute("DROP TABLE donations;")
@@ -71,7 +71,7 @@ def migration_v3(conn: Any, cur: Any) -> None:
         log_migration_event(cur, 3, 'FAIL', f'Backwards-compatible schema evolution failed: {e}')
         raise
 
-def detect_schema_drift(cur: Any, expected_tables: set, migration_phase: str):
+def detect_schema_drift(cur: Any, expected_tables: set[str], migration_phase: str) -> None:
     # Version-aware drift detection: check tables, triggers, indexes for v2+
     cur.execute("SELECT name, type, sql FROM sqlite_master WHERE type IN ('table','view','trigger','index') AND name NOT LIKE 'sqlite_%';")
     actual = {row[0]: row[2] for row in cur.fetchall()}
@@ -90,16 +90,25 @@ def detect_schema_drift(cur: Any, expected_tables: set, migration_phase: str):
         # Retrieve expected hash from schema_version or migration definition
         cur.execute("SELECT expected_object_hashes FROM schema_version WHERE version = (SELECT MAX(version) FROM schema_version)")
         hash_row = cur.fetchone()
-        expected_hashes = {}
+        expected_hashes: dict[str, str] = {}
         if hash_row and hash_row[0]:
-            import json
             expected_hashes = json.loads(hash_row[0])
         expected_hash = expected_hashes.get(name)
-        import hashlib
         actual_hash = hashlib.sha256(norm_actual.encode('utf-8')).hexdigest() if norm_actual else None
         if expected_hash and actual_hash != expected_hash:
             print(f"[SCHEMA DRIFT][{migration_phase}] Object {name} hash mismatch: expected {expected_hash}, got {actual_hash}", file=sys.stderr)
             raise RuntimeError(f"Schema drift detected for object {name} during {migration_phase}")
+
+
+def _migration_lock_host() -> str:
+    uname_fn = getattr(os, 'uname', None)
+    if callable(uname_fn):
+        try:
+            host_info = uname_fn()
+            return str(getattr(host_info, 'nodename', 'unknown'))
+        except Exception:
+            pass
+    return os.environ.get('COMPUTERNAME', 'unknown')
 
 # --- CONFIGURATION & LOGGING ---
 
@@ -1136,7 +1145,7 @@ def migrate_schema(conn: Any, cur: Any) -> None:
     wait_interval = 1  # seconds
     waited = 0
     lock_id = 1
-    lock_owner = f"pid:{os.getpid()}@{os.uname().nodename if hasattr(os, 'uname') else os.environ.get('COMPUTERNAME', 'unknown')}"
+    lock_owner = f"pid:{os.getpid()}@{_migration_lock_host()}"
     while not lock_acquired and waited < max_wait:
         try:
             cur.execute("BEGIN IMMEDIATE")
