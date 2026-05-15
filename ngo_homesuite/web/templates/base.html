@@ -823,17 +823,19 @@
                         return;
                     }
 
-                    const toolNames = Array.from(
-                        new Set(
-                            pendingActions
-                                .map(function(actionItem) {
-                                    return String((actionItem && actionItem.tool) || '').trim();
-                                })
-                                .filter(Boolean)
-                        )
-                    );
+                    const toolMap = new Map();
+                    pendingActions.forEach(function(actionItem) {
+                        const toolName = String((actionItem && actionItem.tool) || '').trim();
+                        const token = String((actionItem && actionItem.approval_token) || '').trim();
+                        if (!toolName || !token) {
+                            return;
+                        }
+                        if (!toolMap.has(toolName)) {
+                            toolMap.set(toolName, token);
+                        }
+                    });
 
-                    if (toolNames.length === 0) {
+                    if (toolMap.size === 0) {
                         return;
                     }
 
@@ -845,13 +847,14 @@
                     title.textContent = 'Approval required before executing:';
                     card.appendChild(title);
 
-                    toolNames.forEach(function(toolName) {
+                    toolMap.forEach(function(token, toolName) {
                         const row = document.createElement('label');
                         row.className = 'ai-action-row ai-action-check';
 
                         const check = document.createElement('input');
                         check.type = 'checkbox';
                         check.value = toolName;
+                        check.setAttribute('data-token', token);
                         check.checked = true;
 
                         const label = document.createElement('div');
@@ -880,7 +883,7 @@
                         const selected = [];
                         checks.forEach(function(c) {
                             if (mode === 'all' || c.checked) {
-                                selected.push(c.value);
+                                selected.push({ tool: c.value, token: String(c.getAttribute('data-token') || '') });
                             }
                         });
 
@@ -891,7 +894,7 @@
 
                         approveSelectedBtn.disabled = true;
                         approveAllBtn.disabled = true;
-                        const selectedText = selected.join(', ');
+                        const selectedText = selected.map(function(item) { return item.tool; }).join(', ');
                         addMessage('Approved actions: ' + selectedText, 'user');
 
                         try {

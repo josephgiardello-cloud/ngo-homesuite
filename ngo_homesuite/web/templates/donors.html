@@ -46,9 +46,27 @@
     <button type="submit" class="btn btn-primary">Apply</button>
 </form>
 
+<div class="card mb-3" style="display:grid; gap:0.75rem; grid-template-columns: 1fr 220px auto; align-items:end;">
+    <div class="form-group" style="margin:0;">
+        <label for="client_filter">Quick Filter (in-page)</label>
+        <input type="text" id="client_filter" placeholder="Type to filter visible rows" />
+    </div>
+    <div class="form-group" style="margin:0;">
+        <label for="client_type">Type (in-page)</label>
+        <select id="client_type">
+            <option value="">All</option>
+            <option value="individual">Individual</option>
+            <option value="corporate">Corporate</option>
+            <option value="foundation">Foundation</option>
+            <option value="anonymous">Anonymous</option>
+        </select>
+    </div>
+    <div style="font-weight:600;">Showing <span id="client_visible_count">{{ donors|length }}</span> of {{ donors|length }}</div>
+</div>
+
 {% if donors %}
 <div class="table-wrap">
-<table>
+<table id="donor_table">
     <thead>
         <tr>
             <th>Name</th>
@@ -60,13 +78,14 @@
     </thead>
     <tbody>
     {% for donor in donors %}
-        <tr>
-            <td>{{ donor.name }}</td>
+        <tr data-donor-row data-name="{{ (donor.name or '')|lower }}" data-email="{{ (donor.email or '')|lower }}" data-phone="{{ (donor.phone or '')|lower }}" data-type="{{ (donor.donor_type or '')|lower }}">
+            <td><a href="{{ url_for('main.donor_detail', donor_id=donor.id) }}">{{ donor.name }}</a></td>
             <td>{{ donor.email or '-' }}</td>
             <td>{{ donor.phone or '-' }}</td>
             <td>{{ donor.donor_type }}</td>
             <td>
                 <div class="actions-row">
+                    <a href="{{ url_for('main.donor_detail', donor_id=donor.id) }}" class="btn btn-secondary">View</a>
                     <a href="{{ url_for('main.donor_edit', donor_id=donor.id) }}" class="btn btn-secondary">Edit</a>
                     <form method="post" action="{{ url_for('main.donor_delete', donor_id=donor.id) }}" onsubmit="return confirm('Delete this donor? This cannot be undone.');">
                         {{ delete_form.hidden_tag() }}
@@ -84,4 +103,42 @@
     <p>No donors yet. Add your first donor to get started.</p>
 </div>
 {% endif %}
+
+<script>
+(() => {
+    const textInput = document.getElementById('client_filter');
+    const typeInput = document.getElementById('client_type');
+    const visibleCountEl = document.getElementById('client_visible_count');
+    const rows = Array.from(document.querySelectorAll('[data-donor-row]'));
+
+    if (!textInput || !typeInput || !visibleCountEl || rows.length === 0) {
+        return;
+    }
+
+    const applyLocalFilter = () => {
+        const q = (textInput.value || '').trim().toLowerCase();
+        const t = (typeInput.value || '').trim().toLowerCase();
+        let visible = 0;
+        rows.forEach((row) => {
+            const blob = [
+                row.getAttribute('data-name') || '',
+                row.getAttribute('data-email') || '',
+                row.getAttribute('data-phone') || '',
+            ].join(' ');
+            const rowType = (row.getAttribute('data-type') || '').toLowerCase();
+            const textOk = !q || blob.includes(q);
+            const typeOk = !t || rowType === t;
+            const show = textOk && typeOk;
+            row.style.display = show ? '' : 'none';
+            if (show) {
+                visible += 1;
+            }
+        });
+        visibleCountEl.textContent = String(visible);
+    };
+
+    textInput.addEventListener('input', applyLocalFilter);
+    typeInput.addEventListener('change', applyLocalFilter);
+})();
+</script>
 {% endblock %}

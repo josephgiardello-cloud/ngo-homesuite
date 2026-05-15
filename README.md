@@ -10,7 +10,17 @@ A comprehensive nonprofit management system for managing donors, donations, fund
 
 - Description: Local-first nonprofit operations suite with integrated AI Copilot (RAG + internal tools)
 - Primary topics: nonprofit, flask, donations, donor-management, reporting, ai-copilot, rag
-- Screenshots: add screenshots to `docs/screenshots/` and link them in this section
+- Screenshots folder: `docs/screenshots/`
+- Demo guide: `docs/demo/README.md`
+
+### Screenshot Gallery (Add Your Captures)
+
+- `docs/screenshots/dashboard-overview.png`
+- `docs/screenshots/donors-list.png`
+- `docs/screenshots/donor-profile.png`
+- `docs/screenshots/donations-list.png`
+- `docs/screenshots/reports-compliance.png`
+- `docs/screenshots/copilot-approval-queue.png`
 
 ## Features
 
@@ -364,7 +374,9 @@ Check `ngo_homesuite/auth/models.py` for policy details.
 
 ## License
 
-Specify your license here (e.g., MIT, GPL, Apache 2.0)
+This project is licensed under the MIT License.
+
+See `LICENSE` for the full text.
 
 ## Support
 
@@ -374,13 +386,15 @@ Specify your license here (e.g., MIT, GPL, Apache 2.0)
 
 ## Roadmap
 
-- [ ] Web UI for donor management
+- [x] Web UI for donor management (list, detail, create/edit/delete, dedupe/merge)
 - [ ] Mobile app for volunteer check-in
 - [ ] Advanced reporting dashboard
 - [ ] Integration with popular accounting software
 - [ ] Multi-organization support
 - [ ] Workflow automation
 - [ ] API documentation (OpenAPI/Swagger)
+- [ ] Full frontend modernization (component system + richer interactivity)
+- [ ] Continuous compliance evidence publishing pipeline
 
 ---
 

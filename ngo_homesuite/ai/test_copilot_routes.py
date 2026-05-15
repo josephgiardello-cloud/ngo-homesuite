@@ -33,6 +33,29 @@ class _FakeCopilot:
         return 42
 
 
+class _FakeCopilotPending:
+    last_kwargs = None
+
+    def answer(self, **kwargs):
+        _FakeCopilotPending.last_kwargs = kwargs
+        return _FakeResponse(
+            answer="Approval required.",
+            sources=[],
+            actions=[
+                {
+                    "tool": "create_donor",
+                    "args": {"name": "Jane"},
+                    "status": "pending_approval",
+                    "reason": "explicit_approval_required",
+                }
+            ],
+            redactions=0,
+        )
+
+    def reindex(self, user_summary_texts=None):
+        return 1
+
+
 @pytest.fixture(scope="module")
 def app():
     class _TestCfg(TestingConfig):
@@ -102,12 +125,14 @@ def test_copilot_chat_forwards_action_gating_inputs(client, app, monkeypatch):
 
     monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteCopilot.from_app", lambda: _FakeCopilot())
 
+    monkeypatch.setattr("ngo_homesuite.web.ai_routes._verify_approval_token", lambda **kwargs: True)
+
     rv = client.post(
         "/ai/copilot/chat",
         json={
             "prompt": "Create a donor called Jane",
             "allow_actions": True,
-            "approved_actions": ["create_donor"],
+            "approved_actions": [{"tool": "create_donor", "token": "tok-123"}],
             "tool_allowlist": ["create_donor", "search_donors"],
         },
     )
@@ -129,12 +154,17 @@ def test_copilot_chat_route_allowlist_is_constrained_by_config(client, app, monk
     old_cfg = app.config.get("COPILOT_TOOL_ALLOWLIST")
     app.config["COPILOT_TOOL_ALLOWLIST"] = "search_donors"
     try:
+        monkeypatch.setattr("ngo_homesuite.web.ai_routes._verify_approval_token", lambda **kwargs: True)
+
         rv = client.post(
             "/ai/copilot/chat",
             json={
                 "prompt": "Create a donor called Jane",
                 "allow_actions": True,
-                "approved_actions": ["create_donor", "search_donors"],
+                "approved_actions": [
+                    {"tool": "create_donor", "token": "tok-a"},
+                    {"tool": "search_donors", "token": "tok-b"},
+                ],
                 "tool_allowlist": ["create_donor", "search_donors"],
             },
         )
@@ -147,3 +177,102 @@ def test_copilot_chat_route_allowlist_is_constrained_by_config(client, app, monk
         assert runtime_ctx["approved_actions"] == ["search_donors"]
     finally:
         app.config["COPILOT_TOOL_ALLOWLIST"] = old_cfg
+
+
+def test_copilot_chat_pending_action_includes_approval_token(client, app, monkeypatch):
+    _ensure_user(app, "copilot_admin_token", "copilot_admin_token@test.local", "admin", "admin_token_pass_123")
+    _login(client, "copilot_admin_token", "admin_token_pass_123")
+
+    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteCopilot.from_app", lambda: _FakeCopilotPending())
+
+    rv = client.post(
+        "/ai/copilot/chat",
+        json={"prompt": "Create donor Jane", "allow_actions": True},
+    )
+    assert rv.status_code == 200
+    data = rv.get_json()
+    assert isinstance(data.get("actions"), list)
+    assert data["actions"][0]["status"] == "pending_approval"
+    assert isinstance(data["actions"][0].get("approval_token"), str)
+    assert data["actions"][0]["approval_token"]
+
+
+def test_copilot_chat_rejects_approval_without_valid_token(client, app, monkeypatch):
+    _ensure_user(app, "copilot_admin_token2", "copilot_admin_token2@test.local", "admin", "admin_token2_pass_123")
+    _login(client, "copilot_admin_token2", "admin_token2_pass_123")
+
+    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteCopilot.from_app", lambda: _FakeCopilot())
+    monkeypatch.setattr("ngo_homesuite.web.ai_routes._verify_approval_token", lambda **kwargs: False)
+
+    rv = client.post(
+        "/ai/copilot/chat",
+        json={
+            "prompt": "Create donor Jane",
+            "allow_actions": True,
+            "approved_actions": [{"tool": "create_donor", "token": "bad-token"}],
+            "tool_allowlist": ["create_donor"],
+        },
+    )
+    assert rv.status_code == 200
+    passed = _FakeCopilot.last_kwargs
+    assert passed is not None
+    runtime_ctx = passed["runtime_ctx"]
+    assert runtime_ctx["approved_actions"] == []
+
+
+def test_copilot_chat_logs_approval_token_issue_verify_and_replay_reject(client, app, monkeypatch):
+    _ensure_user(app, "copilot_admin_token3", "copilot_admin_token3@test.local", "admin", "admin_token3_pass_123")
+    _login(client, "copilot_admin_token3", "admin_token3_pass_123")
+
+    captured: list[tuple[str, dict | None]] = []
+
+    def _capture_log_event(_db_path, actor, action, entity, metadata):
+        captured.append((action, metadata))
+
+    monkeypatch.setattr("ngo_homesuite.web.ai_routes.log_event", _capture_log_event)
+    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteCopilot.from_app", lambda: _FakeCopilotPending())
+
+    issue_rv = client.post(
+        "/ai/copilot/chat",
+        json={"prompt": "Create donor Jane", "allow_actions": True},
+    )
+    assert issue_rv.status_code == 200
+    issue_data = issue_rv.get_json()
+    token = issue_data["actions"][0]["approval_token"]
+
+    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteCopilot.from_app", lambda: _FakeCopilot())
+    verify_rv = client.post(
+        "/ai/copilot/chat",
+        json={
+            "prompt": "Create donor Jane",
+            "allow_actions": True,
+            "approved_actions": [{"tool": "create_donor", "token": token}],
+            "tool_allowlist": ["create_donor"],
+        },
+    )
+    assert verify_rv.status_code == 200
+    verify_passed = _FakeCopilot.last_kwargs
+    assert verify_passed is not None
+    assert verify_passed["runtime_ctx"]["approved_actions"] == ["create_donor"]
+
+    replay_rv = client.post(
+        "/ai/copilot/chat",
+        json={
+            "prompt": "Create donor Jane",
+            "allow_actions": True,
+            "approved_actions": [{"tool": "create_donor", "token": token}],
+            "tool_allowlist": ["create_donor"],
+        },
+    )
+    assert replay_rv.status_code == 200
+    replay_passed = _FakeCopilot.last_kwargs
+    assert replay_passed is not None
+    assert replay_passed["runtime_ctx"]["approved_actions"] == []
+
+    token_actions = [action for action, _ in captured if action.startswith("copilot_approval_token_")]
+    assert "copilot_approval_token_issued" in token_actions
+    assert "copilot_approval_token_verified" in token_actions
+    assert "copilot_approval_token_rejected" in token_actions
+
+    rejected_metadata = [metadata for action, metadata in captured if action == "copilot_approval_token_rejected"]
+    assert any((md or {}).get("reason") == "replay" for md in rejected_metadata)

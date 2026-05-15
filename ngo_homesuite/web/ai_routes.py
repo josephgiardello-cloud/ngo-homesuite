@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict
 
 from flask import Blueprint, Response, current_app, jsonify, request, stream_with_context
 from flask_login import current_user, login_required
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from ngo_homesuite.ai.apex_client import OllamaClient, OllamaClientError
 from ngo_homesuite.ai.copilot_service import HomeSuiteCopilot
@@ -20,6 +22,9 @@ from ngo_homesuite.web.rbac import roles_required
 
 ai_bp = Blueprint("ai", __name__, url_prefix="/ai")
 
+_USED_APPROVAL_TOKENS: dict[str, float] = {}
+_APPROVAL_TOKEN_TTL_SEC = 300
+
 
 def _parse_tool_list(raw: Any) -> list[str]:
     if raw is None:
@@ -29,6 +34,118 @@ def _parse_tool_list(raw: Any) -> list[str]:
     if isinstance(raw, list):
         return [str(p).strip() for p in raw if str(p).strip()]
     return []
+
+
+def _parse_approved_actions(raw: Any) -> list[dict[str, str]]:
+    if raw is None:
+        return []
+
+    items = raw if isinstance(raw, list) else [raw]
+    parsed: list[dict[str, str]] = []
+    for item in items:
+        if isinstance(item, dict):
+            tool = str(item.get("tool", "")).strip()
+            token = str(item.get("token", "")).strip()
+            if tool:
+                parsed.append({"tool": tool, "token": token})
+        elif isinstance(item, str):
+            tool = item.strip()
+            if tool:
+                parsed.append({"tool": tool, "token": ""})
+    return parsed
+
+
+def _approval_serializer() -> URLSafeTimedSerializer:
+    return URLSafeTimedSerializer(secret_key=str(current_app.secret_key), salt="ngohs-copilot-approval-v1")
+
+
+def _approval_fingerprint(prompt: str, tool: str, user_id: Any, organization_id: Any) -> str:
+    payload = {
+        "prompt_sha256": hashlib.sha256(str(prompt).encode("utf-8")).hexdigest(),
+        "tool": str(tool),
+        "user_id": str(user_id),
+        "organization_id": str(organization_id),
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _prune_used_approval_tokens(now_ts: float, ttl_sec: int) -> None:
+    stale = [tok for tok, ts in _USED_APPROVAL_TOKENS.items() if now_ts - ts > ttl_sec]
+    for tok in stale:
+        _USED_APPROVAL_TOKENS.pop(tok, None)
+
+
+def _audit_approval_event(event_name: str, prompt: str, tool: str, reason: str | None = None) -> None:
+    prompt_digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+    metadata = {
+        "user_id": getattr(current_user, "id", None),
+        "organization_id": getattr(current_user, "organization_id", None),
+        "tool": tool,
+        "prompt_sha256": prompt_digest,
+        "reason": reason,
+        "at_utc": datetime.now(timezone.utc).isoformat(),
+    }
+    current_app.logger.info(
+        "Approval token event",
+        extra={
+            "event_id": f"ai.approval_token.{event_name}",
+            "extra_fields": metadata,
+        },
+    )
+    try:
+        log_event(
+            _audit_db_path(),
+            actor=str(getattr(current_user, "username", "unknown")),
+            action=f"copilot_approval_token_{event_name}",
+            entity="ai",
+            metadata=metadata,
+        )
+    except Exception as exc:
+        current_app.logger.warning("Could not append audit event for approval token: %s", exc)
+
+
+def _mint_approval_token(prompt: str, tool: str, user_id: Any, organization_id: Any) -> str:
+    serializer = _approval_serializer()
+    nonce = uuid.uuid4().hex
+    token_data = {
+        "tool": str(tool),
+        "fp": _approval_fingerprint(prompt, tool, user_id, organization_id),
+        "nonce": nonce,
+    }
+    token = str(serializer.dumps(token_data))
+    _audit_approval_event("issued", prompt=prompt, tool=str(tool))
+    return token
+
+
+def _verify_approval_token(token: str, prompt: str, tool: str, user_id: Any, organization_id: Any) -> bool:
+    if not token:
+        _audit_approval_event("rejected", prompt=prompt, tool=str(tool), reason="missing")
+        return False
+    if token in _USED_APPROVAL_TOKENS:
+        _audit_approval_event("rejected", prompt=prompt, tool=str(tool), reason="replay")
+        return False
+
+    ttl = int(current_app.config.get("COPILOT_APPROVAL_TOKEN_TTL_SEC", _APPROVAL_TOKEN_TTL_SEC))
+    serializer = _approval_serializer()
+    try:
+        data = serializer.loads(token, max_age=ttl)
+    except (BadSignature, SignatureExpired):
+        _audit_approval_event("rejected", prompt=prompt, tool=str(tool), reason="invalid_or_expired")
+        return False
+
+    expected_fp = _approval_fingerprint(prompt, tool, user_id, organization_id)
+    token_tool = str(data.get("tool", ""))
+    token_fp = str(data.get("fp", ""))
+    if token_tool != str(tool) or token_fp != expected_fp:
+        _audit_approval_event("rejected", prompt=prompt, tool=str(tool), reason="mismatch")
+        return False
+
+    now_ts = time.time()
+    _prune_used_approval_tokens(now_ts, ttl)
+    _USED_APPROVAL_TOKENS[token] = now_ts
+    _audit_approval_event("verified", prompt=prompt, tool=str(tool))
+    return True
 
 
 def _audit_db_path() -> str:
@@ -315,7 +432,7 @@ def copilot_chat() -> Response:
     role = str(getattr(current_user, "role", "viewer"))
     allow_actions = bool(payload.get("allow_actions", False)) and role in {"admin", "staff"}
     use_web = bool(payload.get("use_web", False))
-    approved_actions = _parse_tool_list(payload.get("approved_actions"))
+    approved_action_items = _parse_approved_actions(payload.get("approved_actions"))
     route_allowlist_in_payload = "tool_allowlist" in payload
     route_allowlist = _parse_tool_list(payload.get("tool_allowlist"))
     config_allowlist = _parse_tool_list(current_app.config.get("COPILOT_TOOL_ALLOWLIST", ""))
@@ -331,7 +448,24 @@ def copilot_chat() -> Response:
 
     if tool_allowlist is not None:
         allowed_now = set(tool_allowlist)
-        approved_actions = [name for name in approved_actions if name in allowed_now]
+        approved_action_items = [item for item in approved_action_items if item["tool"] in allowed_now]
+
+    require_token = bool(current_app.config.get("COPILOT_REQUIRE_APPROVAL_TOKEN", True))
+    approved_actions: list[str] = []
+    for item in approved_action_items:
+        tool = item["tool"]
+        token = item.get("token", "")
+        if require_token:
+            if _verify_approval_token(
+                token=token,
+                prompt=prompt,
+                tool=tool,
+                user_id=getattr(current_user, "id", None),
+                organization_id=getattr(current_user, "organization_id", None),
+            ):
+                approved_actions.append(tool)
+        else:
+            approved_actions.append(tool)
 
     _audit_interaction(prompt, model, tenant_id)
 
@@ -352,6 +486,15 @@ def copilot_chat() -> Response:
 
     digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
     _persist_exchange(session_id, model, tenant_id, prompt, response.answer, digest)
+
+    for action in response.actions:
+        if action.get("status") == "pending_approval" and action.get("tool"):
+            action["approval_token"] = _mint_approval_token(
+                prompt=prompt,
+                tool=str(action.get("tool")),
+                user_id=getattr(current_user, "id", None),
+                organization_id=getattr(current_user, "organization_id", None),
+            )
 
     return jsonify(
         {

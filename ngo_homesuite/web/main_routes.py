@@ -410,6 +410,51 @@ def donors_list():
     )
 
 
+@main_bp.route('/donors/<int:donor_id>')
+@login_required
+def donor_detail(donor_id: int):
+    org = _current_org()
+    donor = Donor.query.filter_by(id=donor_id, organization_id=org.id).first_or_404()
+
+    donation_count, total_amount = (
+        db.session.query(func.count(Donation.id), func.coalesce(func.sum(Donation.amount), 0.0))
+        .filter_by(organization_id=org.id, donor_id=donor.id)
+        .first()
+    )
+
+    recent_donations = (
+        Donation.query.filter_by(organization_id=org.id, donor_id=donor.id)
+        .order_by(Donation.donation_date.desc())
+        .limit(10)
+        .all()
+    )
+    recurring_plans = (
+        RecurringDonationPlan.query.filter_by(organization_id=org.id, donor_id=donor.id)
+        .order_by(RecurringDonationPlan.created_at.desc())
+        .all()
+    )
+
+    ai_context = {
+        'active_page': 'donors',
+        'organization': org.name if org else None,
+        'donor_id': donor.id,
+        'donor_name': donor.name,
+        'donation_count': int(donation_count or 0),
+        'donation_total': float(total_amount or 0.0),
+    }
+
+    return render_template(
+        'donor_detail.html',
+        donor=donor,
+        donation_count=int(donation_count or 0),
+        donation_total=float(total_amount or 0.0),
+        recent_donations=recent_donations,
+        recurring_plans=recurring_plans,
+        active_page='donors',
+        ai_context=ai_context,
+    )
+
+
 @main_bp.route('/donors/export/<string:file_type>')
 @login_required
 def donors_export(file_type: str):

@@ -81,6 +81,8 @@ class Config:
         'COPILOT_TOOL_ALLOWLIST',
         'list_recent_donations,search_donors,organization_financial_summary,generate_report,create_donor,export_donors_snapshot',
     )
+    COPILOT_REQUIRE_APPROVAL_TOKEN = os.environ.get('COPILOT_REQUIRE_APPROVAL_TOKEN', 'True') == 'True'
+    COPILOT_APPROVAL_TOKEN_TTL_SEC = int(os.environ.get('COPILOT_APPROVAL_TOKEN_TTL_SEC', '300'))
 
 
 class DevelopmentConfig(Config):

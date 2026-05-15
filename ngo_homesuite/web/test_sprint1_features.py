@@ -148,3 +148,54 @@ def test_process_recurring_marks_failure_without_email(client, app):
         assert refreshed.status == "failed"
         assert refreshed.fail_count >= 1
         assert refreshed.last_error
+
+
+def test_donor_detail_page_shows_profile_metrics(client, app):
+    _login_admin(client)
+
+    with app.app_context():
+        org = Organization.query.filter_by(is_active=True).first()
+        donor = Donor(
+            organization_id=org.id,
+            name="Detail Donor",
+            email="detail.donor@example.org",
+            donor_type="individual",
+            notes="Long-time supporter",
+        )
+        db.session.add(donor)
+        db.session.flush()
+
+        donation = Donation(
+            organization_id=org.id,
+            donor_id=donor.id,
+            donor_name=donor.name,
+            donor_email=donor.email,
+            amount=55.0,
+            currency="USD",
+            status="received",
+            payment_method="bank_transfer",
+            purpose="Education",
+        )
+        db.session.add(donation)
+
+        plan = RecurringDonationPlan(
+            organization_id=org.id,
+            donor_id=donor.id,
+            amount=15.0,
+            currency="USD",
+            frequency="monthly",
+            payment_method="credit_card",
+            next_charge_date=date.today(),
+            status="active",
+        )
+        db.session.add(plan)
+        db.session.commit()
+        donor_id = donor.id
+
+    rv = client.get(f"/donors/{donor_id}")
+    assert rv.status_code == 200
+    body = rv.get_data(as_text=True)
+    assert "Detail Donor" in body
+    assert "Long-time supporter" in body
+    assert "Recent Donations" in body
+    assert "Recurring Plans" in body

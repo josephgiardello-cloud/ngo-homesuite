@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+
+{% block title %}Donor Profile - NGO HomeSuite{% endblock %}
+
+{% block content %}
+<h1>{{ donor.name }}</h1>
+<p class="text-muted">Donor profile and contribution history.</p>
+
+<div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); margin-bottom: 1rem;">
+    <div class="card">
+        <div class="card-text">Donations</div>
+        <div class="card-value">{{ donation_count }}</div>
+    </div>
+    <div class="card">
+        <div class="card-text">Total Giving</div>
+        <div class="card-value">{{ '%.2f'|format(donation_total) }}</div>
+    </div>
+    <div class="card">
+        <div class="card-text">Donor Type</div>
+        <div class="card-value" style="font-size: 1rem; text-transform: capitalize;">{{ donor.donor_type }}</div>
+    </div>
+</div>
+
+<div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; margin-bottom: 1rem;">
+    <div class="card">
+        <h3>Contact</h3>
+        <p><strong>Email:</strong> {{ donor.email or '-' }}</p>
+        <p><strong>Phone:</strong> {{ donor.phone or '-' }}</p>
+        <p><strong>Created:</strong> {{ donor.created_at.strftime('%Y-%m-%d') if donor.created_at else '-' }}</p>
+        <a href="{{ url_for('main.donor_edit', donor_id=donor.id) }}" class="btn btn-primary">Edit Donor</a>
+        <a href="{{ url_for('main.donations_list', donor_id=donor.id) }}" class="btn btn-secondary">Filter Donations</a>
+    </div>
+
+    <div class="card">
+        <h3>Notes</h3>
+        {% if donor.notes %}
+        <pre style="white-space: pre-wrap; margin: 0; font-family: inherit;">{{ donor.notes }}</pre>
+        {% else %}
+        <p class="text-muted">No notes yet.</p>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card" style="margin-bottom: 1rem;">
+    <h3>Recent Donations</h3>
+    {% if recent_donations %}
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Amount</th>
+                    <th>Method</th>
+                    <th>Purpose</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for donation in recent_donations %}
+                <tr>
+                    <td>{{ donation.donation_date.strftime('%Y-%m-%d') if donation.donation_date else '-' }}</td>
+                    <td>{{ donation.amount }} {{ donation.currency }}</td>
+                    <td>{{ donation.payment_method or '-' }}</td>
+                    <td>{{ donation.purpose or '-' }}</td>
+                    <td>{{ donation.status }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="text-muted">No donations recorded for this donor yet.</p>
+    {% endif %}
+</div>
+
+<div class="card" style="margin-bottom: 1rem;">
+    <h3>Recurring Plans</h3>
+    {% if recurring_plans %}
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Frequency</th>
+                    <th>Amount</th>
+                    <th>Payment Method</th>
+                    <th>Next Charge</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for plan in recurring_plans %}
+                <tr>
+                    <td>{{ plan.frequency }}</td>
+                    <td>{{ plan.amount }} {{ plan.currency }}</td>
+                    <td>{{ plan.payment_method or '-' }}</td>
+                    <td>{{ plan.next_charge_date.strftime('%Y-%m-%d') if plan.next_charge_date else '-' }}</td>
+                    <td>{{ plan.status }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="text-muted">No recurring plans set for this donor.</p>
+    {% endif %}
+</div>
+
+<a href="{{ url_for('main.donors_list') }}" class="btn btn-secondary">Back to Donors</a>
+{% endblock %}
