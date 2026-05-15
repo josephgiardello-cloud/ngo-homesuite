@@ -6,7 +6,7 @@ import sqlite3
 from typing import Any
 
 from ..config import DB_ENCRYPTION_KEY_ENV, DB_PATH
-from ..prompts import utc_now_compact, utc_now_iso, parse_utc_iso, print_table as _print_table_impl, _print_table as _print_table
+from ..prompts import utc_now_compact, utc_now_iso, parse_utc_iso, print_table as _print_table_impl
 from ..utils.backup_core import (
     backup_database_to,
     backup_reminder_on_startup,
@@ -14,7 +14,7 @@ from ..utils.backup_core import (
     get_app_meta_value,
     set_app_meta_value,
 )
-from .connection import _connect_db_at, _configure_connection, run_db
+from .connection import run_db
 from ..auth.session import CURRENT_USER
 
 print_table = _print_table_impl

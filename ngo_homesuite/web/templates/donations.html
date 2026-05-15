@@ -34,6 +34,7 @@
     <a href="{{ url_for('main.recurring_donations') }}" class="btn btn-secondary">Recurring Plans</a>
     <a href="{{ url_for('main.donations_export', file_type='csv', q=filter_q, payment_method=filter_payment_method, status=filter_status, min_amount=filter_min_amount, max_amount=filter_max_amount) }}" class="btn btn-secondary">Export CSV</a>
     <a href="{{ url_for('main.donations_export', file_type='xlsx', q=filter_q, payment_method=filter_payment_method, status=filter_status, min_amount=filter_min_amount, max_amount=filter_max_amount) }}" class="btn btn-secondary">Export Excel</a>
+    <a href="{{ url_for('main.donations_export', file_type='iif', q=filter_q, payment_method=filter_payment_method, status=filter_status, min_amount=filter_min_amount, max_amount=filter_max_amount) }}" class="btn btn-secondary">Export QuickBooks IIF</a>
 </div>
 
 <form method="get" class="mb-3" style="display:grid; gap:0.75rem; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); align-items:end;">

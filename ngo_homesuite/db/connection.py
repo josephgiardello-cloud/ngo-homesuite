@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 import os
-import sys
 import atexit
 import getpass
 import hashlib
@@ -15,11 +14,11 @@ import shutil
 import sqlite3
 import threading
 import time
-from contextlib import contextmanager, closing
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from typing import Any, Callable, Iterator, Tuple, TypeVar, TypeAlias
+from typing import Any, Callable, Iterator, Mapping, TypeAlias, TypeVar, cast
 
 # --- Security hooks (can be set by application for audit, policy, or custom checks) ---
 SchemaMigrationHook: Callable[[sqlite3.Connection, str | None], None] | None = None
@@ -111,11 +110,7 @@ def _key_fingerprint(key: str | None) -> str | None:
         return None
     return hashlib.sha256(key.encode()).hexdigest()[:16]
 
-def _get_provenance_log_path() -> str:
-    # External append-only provenance log file (outside DB, not modifiable by DB process)
-    return os.environ.get("NGO_HOMESUITE_PROVENANCE_LOG", "ngo_homesuite_provenance.log")
-
-def _append_external_audit_log(entry: dict, log_type: str = "audit") -> None:
+def _append_external_audit_log(entry: Mapping[str, Any], log_type: str = "audit") -> None:
     """Append a signed, tamper-evident entry to an external audit log (append-only, file-locked if possible)."""
     import json
     log_env = {
@@ -155,13 +150,13 @@ def _append_external_audit_log(entry: dict, log_type: str = "audit") -> None:
             raise FatalDBError(f"Failed to write to external {log_type} log: {e}")
 
 
-def _log_key_provenance(conn: sqlite3.Connection, old_key: str, new_key: str, operator: str | None = None) -> None:
+def log_key_provenance(conn: sqlite3.Connection, old_key: str, new_key: str, operator: str | None = None) -> None:
     ts = datetime.now(timezone.utc).isoformat()
     if operator is None:
         operator = os.environ.get("NGO_HOMESUITE_OPERATOR") or getpass.getuser()
     old_fp = _key_fingerprint(old_key)
     new_fp = _key_fingerprint(new_key)
-    entry = {
+    entry: dict[str, str | None] = {
         "ts": ts,
         "event": "key_rotation",
         "operator": operator,
@@ -198,7 +193,6 @@ def _log_key_provenance(conn: sqlite3.Connection, old_key: str, new_key: str, op
 
 
 # --- Tamper-evident metadata helpers (HMAC-based) ---
-import hmac
 
 def _ensure_metadata_table(conn: sqlite3.Connection) -> None:
     conn.execute("""
@@ -225,7 +219,7 @@ def _schema_hmac(items: list[tuple[str, str | None]]) -> str:
         h.update((sql or '').encode())
     return h.hexdigest()
 
-def _update_metadata_hash(conn: sqlite3.Connection) -> None:
+def update_metadata_hash(conn: sqlite3.Connection) -> None:
     # Require operator-supplied detached signature for schema hash update (check first, unconditionally)
     operator_signature = os.environ.get("NGO_HOMESUITE_SCHEMA_SIGNATURE")
     if not operator_signature:
@@ -285,7 +279,6 @@ def check_metadata_hash(conn: sqlite3.Connection) -> bool:
 
 
 # --- Dual-key window support (explicit, per-operation, thread-safe) ---
-import threading
 
 class DualKeyWindow:
     def __init__(self, old_key: str, new_key: str, expires_at: float) -> None:
@@ -316,38 +309,22 @@ class DualKeyWindow:
                     raise FatalDBError("Both new and old keys failed during dual-key window.")
 
 # --- Global dual-key window (thread-safe) ---
-_DUAL_KEY_WINDOW_LOCK = threading.Lock()
-_DUAL_KEY_WINDOW = None
+_dual_key_window_lock = threading.Lock()
+_dual_key_window: DualKeyWindow | None = None
 
 def set_global_dual_key_window(window: DualKeyWindow | None) -> None:
-    global _DUAL_KEY_WINDOW
-    with _DUAL_KEY_WINDOW_LOCK:
-        _DUAL_KEY_WINDOW = window
+    global _dual_key_window
+    with _dual_key_window_lock:
+        _dual_key_window = window
 
 def get_global_dual_key_window() -> DualKeyWindow | None:
-    with _DUAL_KEY_WINDOW_LOCK:
-        return _DUAL_KEY_WINDOW
+    with _dual_key_window_lock:
+        return _dual_key_window
 
 def make_dual_key_window(old_key: str, new_key: str, seconds: float) -> DualKeyWindow:
     return DualKeyWindow(old_key, new_key, time.time() + seconds)
 
 # (moved to top)
-
-
-import atexit
-import logging
-import json
-import os
-import queue
-import re
-import shutil
-import sqlite3
-import threading
-import time
-from contextlib import contextmanager
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Callable, Iterator, Tuple, TypeVar, TypeAlias
 
 # --- ATTACH DATABASE Hardening ---
 # Set to True to block all ATTACH DATABASE statements, or set a whitelist of allowed paths.
@@ -357,28 +334,18 @@ ATTACH_DATABASE_WHITELIST: set[str] = set()  # e.g., {"/allowed/path1.db", "/all
 # Thread-local context for trusted ATTACH (e.g., key rotation)
 _attach_trusted_ctx = threading.local()
 
-def _set_attach_trusted(val: bool) -> None:
-    setattr(_attach_trusted_ctx, "trusted", val)
-
 def _is_attach_trusted() -> bool:
     return getattr(_attach_trusted_ctx, "trusted", False)
 
-def _attach_database_hardening_hook(sql: str) -> None:
-    sql_lc = sql.strip().lower()
-    if sql_lc.startswith("attach "):
-        # Extract path if possible
-        # Example: ATTACH DATABASE 'path' AS alias [KEY 'key']
-        # TODO: For complex quoted paths, consider using a more robust SQL parser (e.g., sqlparse or custom logic for edge cases).
-        match = re.search(r"attach\s+database\s+(['\"]?)([^'\"\s]+)\1", sql_lc)
-        path = match.group(2) if match else None
-        if ATTACH_DATABASE_BLOCK_ALL:
-            raise sqlite3.DatabaseError("ATTACH DATABASE is blocked by security policy.")
-        if path and ATTACH_DATABASE_WHITELIST and path not in ATTACH_DATABASE_WHITELIST:
-            raise sqlite3.DatabaseError(f"ATTACH DATABASE to '{path}' is not allowed by whitelist.")
-
 def _install_attach_hardening(conn: sqlite3.Connection) -> None:
     # Use set_authorizer to intercept ATTACH
-    def authorizer_cb(action, arg1, arg2, dbname, source):
+    def authorizer_cb(
+        action: int,
+        arg1: str | None,
+        arg2: str | None,
+        dbname: str | None,
+        source: str | None,
+    ) -> int:
         # SQLITE_ATTACH = 24 (see https://sqlite.org/c3ref/c_alter_table.html)
         SQLITE_ATTACH = 24
         if action == SQLITE_ATTACH:
@@ -415,7 +382,7 @@ DBConnection: TypeAlias = sqlite3.Connection
 # --- Structured Logging Support ---
 class _StructuredLogFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
-        base = {
+        base: dict[str, Any] = {
             "timestamp": self.formatTime(record, self.datefmt),
             "level": record.levelname,
             "event": getattr(record, "event_id", record.getMessage().split()[0].lower()),
@@ -424,8 +391,9 @@ class _StructuredLogFormatter(logging.Formatter):
             "func": record.funcName,
             "line": record.lineno,
         }
-        if hasattr(record, "extra_fields") and isinstance(record.extra_fields, dict):
-            base.update(record.extra_fields)
+        extra_fields = getattr(record, "extra_fields", None)
+        if isinstance(extra_fields, dict):
+            base.update(cast(dict[str, Any], extra_fields))
         return json.dumps(base, separators=(",", ":"), sort_keys=True)
 
 def _setup_structured_logging():
@@ -461,19 +429,19 @@ logger = logging.getLogger(__name__)
 
 
 # Logging state lock for thread safety
-_LOG_STATE_LOCK = threading.Lock()
-_LOGGED_DB_DRIVER: bool | None = None
-_LOGGED_KEY_MODES: set[str] = set()
-_LOGGED_KDF_ITER: int | None = None
-_LOGGED_POOL: bool = False
-_LOGGED_SQLCIPHER_MEM_SECURITY: bool = False
+_log_state_lock = threading.Lock()
+_logged_db_driver: bool | None = None
+_logged_key_modes: set[str] = set()
+_logged_kdf_iter: int | None = None
+_logged_pool: bool = False
+_logged_sqlcipher_mem_security: bool = False
 
 # TODO: Consider an async-compatible pool (e.g., using asyncio.Queue or external async pool libraries)
-_POOL_LOCK = threading.Lock()
-_POOL_MAX_SIZE: int | None = None
-_POOL_CREATED = 0
-_POOL: queue.LifoQueue[DBConnection] | None = None
-_LAST_POOL_BLOCK_LOG_TS: float = 0.0
+_pool_lock = threading.Lock()
+_pool_max_size_value: int | None = None
+_pool_created = 0
+_pool: queue.LifoQueue[DBConnection] | None = None
+_last_pool_block_log_ts: float = 0.0
 
 
 def _pool_max_size() -> int:
@@ -483,25 +451,25 @@ def _pool_max_size() -> int:
 
 
 def _pool_init() -> None:
-    global _POOL, _POOL_MAX_SIZE, _LOGGED_POOL
-    if _POOL is not None:
+    global _pool, _pool_max_size_value, _logged_pool
+    if _pool is not None:
         return
-    _POOL_MAX_SIZE = _pool_max_size()
-    _POOL = queue.LifoQueue(maxsize=_POOL_MAX_SIZE)
+    _pool_max_size_value = _pool_max_size()
+    _pool = queue.LifoQueue(maxsize=_pool_max_size_value)
 
-    if not _LOGGED_POOL:
+    if not _logged_pool:
         logger.info(
             "DB connection pool enabled",
-            extra={"event_id": "db.pool.enabled", "extra_fields": {"pool_size": _POOL_MAX_SIZE}},
+            extra={"event_id": "db.pool.enabled", "extra_fields": {"pool_size": _pool_max_size_value}},
         )
-        _LOGGED_POOL = True
+        _logged_pool = True
 
     atexit.register(_pool_close_all)
 
 
 def _pool_close_all() -> None:
-    global _POOL
-    pool = _POOL
+    global _pool
+    pool = _pool
     if pool is None:
         return
 
@@ -580,12 +548,12 @@ def _backup_corrupt_db_copy() -> Path | None:
 
 
 def _pool_acquire_connection() -> DBConnection:
-    global _POOL_CREATED
-    global _LAST_POOL_BLOCK_LOG_TS
-    with _POOL_LOCK:
+    global _pool_created
+    global _last_pool_block_log_ts
+    with _pool_lock:
         _pool_init()
-        pool = _POOL
-        max_size = _POOL_MAX_SIZE
+        pool = _pool
+        max_size = _pool_max_size_value
 
     assert pool is not None
     assert max_size is not None
@@ -597,7 +565,10 @@ def _pool_acquire_connection() -> DBConnection:
         except Exception:
             return False
 
-    def _get_valid_conn_from_pool(pool, max_size):
+    def _get_valid_conn_from_pool(
+        pool: queue.LifoQueue[DBConnection],
+        max_size: int,
+    ) -> DBConnection | None:
         for _ in range(max_size):
             try:
                 conn = pool.get_nowait()
@@ -610,9 +581,9 @@ def _pool_acquire_connection() -> DBConnection:
                     conn.close()
                 except Exception:
                     pass
-                with _POOL_LOCK:
-                    global _POOL_CREATED
-                    _POOL_CREATED = max(0, _POOL_CREATED - 1)
+                with _pool_lock:
+                    global _pool_created
+                    _pool_created = max(0, _pool_created - 1)
         return None
 
     # Try to get a healthy connection from the pool (first pass)
@@ -620,23 +591,23 @@ def _pool_acquire_connection() -> DBConnection:
     if conn:
         return conn
 
-    with _POOL_LOCK:
+    with _pool_lock:
         # Re-check under lock in case another thread created/returned one.
         conn = _get_valid_conn_from_pool(pool, max_size)
         if conn:
             return conn
-        if _POOL_CREATED < max_size:
-            _POOL_CREATED += 1
+        if _pool_created < max_size:
+            _pool_created += 1
             return connect_db()
 
     # Pool is exhausted; block until someone returns a connection.
     now = time.monotonic()
-    if (now - _LAST_POOL_BLOCK_LOG_TS) >= 5.0:
+    if (now - _last_pool_block_log_ts) >= 5.0:
         logger.warning(
             "DB connection pool exhausted; waiting for a connection",
             extra={"event_id": "db.pool.exhausted", "extra_fields": {"pool_size": max_size}},
         )
-        _LAST_POOL_BLOCK_LOG_TS = now
+        _last_pool_block_log_ts = now
     # Add timeout to prevent indefinite blocking
     timeout_sec = 30.0
     try:
@@ -652,14 +623,14 @@ def _pool_acquire_connection() -> DBConnection:
                     conn.close()
                 except Exception:
                     pass
-                with _POOL_LOCK:
-                    _POOL_CREATED = max(0, _POOL_CREATED - 1)
+                with _pool_lock:
+                    _pool_created = max(0, _pool_created - 1)
     except Exception as e:
         raise FatalDBError(f"DB connection pool error: {e}")
 
 
 def _pool_release_connection(conn: DBConnection) -> None:
-    pool = _POOL
+    pool = _pool
     if pool is None:
         try:
             conn.close()
@@ -667,7 +638,7 @@ def _pool_release_connection(conn: DBConnection) -> None:
             pass
         return
 
-    with _POOL_LOCK:
+    with _pool_lock:
         try:
             pool.put_nowait(conn)
         except queue.Full:
@@ -741,7 +712,7 @@ def _sqlcipher_apply_key(conn: DBConnection, key: str) -> None:
       Example: NGO_HOMESUITE_DB_KEY=hex:001122... (even-length hex)
     """
 
-    global _LOGGED_KDF_ITER
+    global _logged_kdf_iter
 
     key = key.strip()
     kdf_iter, min_len, require_hex = _sqlcipher_policy()
@@ -757,23 +728,23 @@ def _sqlcipher_apply_key(conn: DBConnection, key: str) -> None:
             logger.error("Invalid SQLCipher hex key format")
             raise ValueError("Invalid hex key format")
 
-        with _LOG_STATE_LOCK:
-            if "hex" not in _LOGGED_KEY_MODES:
+        with _log_state_lock:
+            if "hex" not in _logged_key_modes:
                 logger.info(
                     "Using SQLCipher with hex key",
                     extra={"event_id": "db.sqlcipher.hex_key"},
                 )
-                _LOGGED_KEY_MODES.add("hex")
+                _logged_key_modes.add("hex")
         conn.execute(f"PRAGMA key = \"x'{hex_key.lower()}'\"")
         return
 
-    with _LOG_STATE_LOCK:
-        if "passphrase" not in _LOGGED_KEY_MODES:
+    with _log_state_lock:
+        if "passphrase" not in _logged_key_modes:
             logger.info(
                 "Using SQLCipher with passphrase key",
                 extra={"event_id": "db.sqlcipher.passphrase_key"},
             )
-            _LOGGED_KEY_MODES.add("passphrase")
+            _logged_key_modes.add("passphrase")
 
     if len(key) < min_len:
         raise ValueError(
@@ -782,10 +753,10 @@ def _sqlcipher_apply_key(conn: DBConnection, key: str) -> None:
 
     # Strengthen passphrase protection.
     conn.execute("PRAGMA kdf_iter = ?", (kdf_iter,))
-    with _LOG_STATE_LOCK:
-        if _LOGGED_KDF_ITER != kdf_iter:
+    with _log_state_lock:
+        if _logged_kdf_iter != kdf_iter:
             logger.info("SQLCipher kdf_iter=%s", kdf_iter)
-            _LOGGED_KDF_ITER = kdf_iter
+            _logged_kdf_iter = kdf_iter
 
     try:
         conn.execute("PRAGMA key = ?", (key,))
@@ -804,13 +775,13 @@ def _sqlcipher_apply_security_pragmas(conn: DBConnection) -> None:
     Enforces encrypted WAL mode (cipher_plaintext_header_size=0).
     """
 
-    global _LOGGED_SQLCIPHER_MEM_SECURITY
+    global _logged_sqlcipher_mem_security
     try:
         conn.execute("PRAGMA cipher_memory_security = ON")
-        with _LOG_STATE_LOCK:
-            if not _LOGGED_SQLCIPHER_MEM_SECURITY:
+        with _log_state_lock:
+            if not _logged_sqlcipher_mem_security:
                 logger.info("SQLCipher cipher_memory_security=ON")
-                _LOGGED_SQLCIPHER_MEM_SECURITY = True
+                _logged_sqlcipher_mem_security = True
     except Exception:
         pass
 
@@ -832,9 +803,9 @@ def connect_db_at(path: str) -> DBConnection:
     Automatically tries both keys if dual-key window is active.
     """
 
-    global _LOGGED_DB_DRIVER
+    global _logged_db_driver
     resolved_path = os.path.abspath(path)
-    file_info = {}
+    file_info: dict[str, Any] = {}
     try:
         stat = os.stat(resolved_path)
         file_info["owner_uid"] = stat.st_uid if hasattr(stat, "st_uid") else None
@@ -876,11 +847,12 @@ def connect_db_at(path: str) -> DBConnection:
                 "or unset the environment variable."
             )
         try:
-            conn = sqlcipher.connect(path)
-            with _LOG_STATE_LOCK:
-                if _LOGGED_DB_DRIVER is not True:
+            sqlcipher_any = cast(Any, sqlcipher)
+            conn = cast(DBConnection, sqlcipher_any.connect(path))
+            with _log_state_lock:
+                if _logged_db_driver is not True:
                     logger.info("Using SQLCipher database driver", extra={"event_id": "db.sqlcipher.driver", "extra_fields": {"driver": "pysqlcipher3"}})
-                    _LOGGED_DB_DRIVER = True
+                    _logged_db_driver = True
             _sqlcipher_apply_security_pragmas(conn)
             _install_attach_hardening(conn)
 
@@ -960,17 +932,8 @@ def connect_db_at(path: str) -> DBConnection:
     return conn
 
 
-# Back-compat aliases (match legacy NGOMG.py helper names)
-def _connect_db_at(path: str) -> DBConnection:
-    return connect_db_at(path)
-
-
 def connect_db() -> DBConnection:
     return connect_db_at(DB_PATH)
-
-
-def _connect_db() -> DBConnection:
-    return connect_db()
 
 
 
@@ -986,12 +949,7 @@ def configure_connection(conn: DBConnection) -> None:
     except sqlite3.DatabaseError:
         pass
     # Install ATTACH DATABASE hardening
-        _install_attach_hardening(conn)
-
-
-def _configure_connection(conn: DBConnection) -> None:
-    configure_connection(conn)
-
+    _install_attach_hardening(conn)
 
 @contextmanager
 def open_db() -> Iterator[tuple[DBConnection, sqlite3.Cursor]]:

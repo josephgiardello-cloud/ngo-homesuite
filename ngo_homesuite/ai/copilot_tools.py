@@ -220,6 +220,83 @@ class CopilotToolRegistry:
                 requires_approval=True,
                 mutates_state=True,
             ),
+            # ---- Engagement Scoring & AI Donor Insights ----
+            "get_donor_engagement_score": CopilotTool(
+                name="get_donor_engagement_score",
+                description=(
+                    "Return the persisted engagement score (0–100) for a donor, broken down into "
+                    "recency / frequency / monetary / engagement dimensions with segment and "
+                    "cultivation priority. Computes a fresh score if none exists."
+                ),
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "donor_id": {"type": "integer", "minimum": 1},
+                    },
+                    "required": ["donor_id"],
+                },
+                handler=self._get_donor_engagement_score,
+            ),
+            "get_ai_donor_recommendations": CopilotTool(
+                name="get_ai_donor_recommendations",
+                description=(
+                    "Generate AI-powered next-step recommendations for a specific donor using their "
+                    "engagement score, RFM signals, and giving history. Returns suggested outreach "
+                    "channel, ask amount, message tone, and timing — all computed locally with Ollama."
+                ),
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "donor_id": {"type": "integer", "minimum": 1},
+                    },
+                    "required": ["donor_id"],
+                },
+                handler=self._get_ai_donor_recommendations,
+            ),
+            "list_at_risk_donors": CopilotTool(
+                name="list_at_risk_donors",
+                description=(
+                    "Return lapsed and at-risk donors ranked by engagement score descending "
+                    "(highest-value donors to reactivate first), with recommended next action."
+                ),
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20},
+                    },
+                },
+                handler=self._list_at_risk_donors,
+            ),
+            "evaluate_smart_group": CopilotTool(
+                name="evaluate_smart_group",
+                description=(
+                    "Evaluate a saved Smart Group / Dynamic Audience and return current matching "
+                    "donors with key stats. Pass group_id to query a saved group."
+                ),
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "group_id": {"type": "integer", "minimum": 1},
+                    },
+                    "required": ["group_id"],
+                },
+                handler=self._evaluate_smart_group,
+            ),
+            "summarize_program_impact": CopilotTool(
+                name="summarize_program_impact",
+                description=(
+                    "Return a program impact summary across all cases, with outcome metric "
+                    "averages, case counts by status, and narrative context."
+                ),
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "case_type": {"type": "string"},
+                        "program_name": {"type": "string"},
+                    },
+                },
+                handler=self._summarize_program_impact,
+            ),
         }
 
     def _optional_donor_relationship_counts(self, donor_id: int) -> dict[str, int]:
@@ -825,3 +902,177 @@ class CopilotToolRegistry:
             donation_id=donation_id,
             actor=actor,
         )
+
+    # ------------------------------------------------------------------ #
+    # Engagement Scoring & AI Donor Insights handlers
+    # ------------------------------------------------------------------ #
+
+    def _get_donor_engagement_score(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
+        org_id = self._org_filter(runtime_ctx)
+        donor_id = int(args.get("donor_id", 0) or 0)
+        if org_id is None:
+            return {"error": "organization_id is required in runtime context"}
+        if donor_id <= 0:
+            return {"error": "donor_id is required"}
+
+        try:
+            from ngo_homesuite.services.engagement_scoring_service import compute_score, get_score
+
+            rec = get_score(org_id, donor_id) or compute_score(org_id, donor_id)
+            return {
+                "donor_id": rec.donor_id,
+                "score": float(rec.score),
+                "segment": rec.segment,
+                "cultivation_priority": rec.cultivation_priority,
+                "breakdown": {
+                    "recency": float(rec.recency_score),
+                    "frequency": float(rec.frequency_score),
+                    "monetary": float(rec.monetary_score),
+                    "engagement": float(rec.engagement_score),
+                },
+                "explanation": rec.explanation,
+                "computed_at": rec.computed_at.isoformat() if rec.computed_at else None,
+            }
+        except Exception as exc:  # noqa: BLE001
+            return {"error": str(exc)}
+
+    def _get_ai_donor_recommendations(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
+        """Generate Ollama-powered contextual recommendations for a donor."""
+        org_id = self._org_filter(runtime_ctx)
+        donor_id = int(args.get("donor_id", 0) or 0)
+        if org_id is None:
+            return {"error": "organization_id is required in runtime context"}
+        if donor_id <= 0:
+            return {"error": "donor_id is required"}
+
+        donor = Donor.query.filter_by(organization_id=org_id, id=donor_id).first()
+        if donor is None:
+            return {"error": f"donor {donor_id} not found"}
+
+        rfm = self._compute_rfm_signals(donor, org_id)
+        related = self._optional_donor_relationship_counts(donor.id)
+
+        # Enrich with persisted engagement score if available
+        try:
+            from ngo_homesuite.services.engagement_scoring_service import get_score
+
+            score_rec = get_score(org_id, donor_id)
+            score_block = (
+                f"Engagement Score: {score_rec.score}/100 (segment: {score_rec.segment}, "
+                f"priority: {score_rec.cultivation_priority})"
+                if score_rec
+                else "Engagement Score: not yet computed"
+            )
+        except Exception:  # noqa: BLE001
+            score_block = "Engagement Score: unavailable"
+
+        prompt = (
+            f"You are a nonprofit fundraising advisor. Based on the following donor profile, "
+            f"provide specific, actionable outreach recommendations. Be concise and concrete.\n\n"
+            f"Donor: {donor.name} | Type: {donor.donor_type or 'individual'}\n"
+            f"{score_block}\n"
+            f"Last gift: {rfm['recency_days']} days ago | 12-month gifts: {rfm['frequency_12m']} "
+            f"(${rfm['monetary_12m']:,.2f}) | Lifetime: ${rfm['lifetime_total']:,.2f}\n"
+            f"Interactions: {related['interactions']} | Pledges: {related['pledges']} | Events: {related['events']}\n"
+            f"Churn risk: {rfm['predictions']['churn_risk']}/100 | "
+            f"Giving likelihood: {rfm['predictions']['giving_likelihood']}/100 | "
+            f"Major gift potential: {rfm['predictions']['major_gift_potential']}/100\n\n"
+            "Please provide:\n"
+            "1. Recommended outreach channel (call/email/letter/visit) and timing\n"
+            "2. Suggested ask amount with rationale\n"
+            "3. Key talking points personalized to this donor\n"
+            "4. Any retention red flags to address\n"
+        )
+
+        # Attempt Ollama generation; fall back to rule-based if unavailable
+        try:
+            import importlib
+            ollama = importlib.import_module("ollama")
+            model = runtime_ctx.get("ollama_model", "llama3.2")
+            response = ollama.chat(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            ai_text = response["message"]["content"] if isinstance(response, dict) else str(response)
+        except Exception:  # noqa: BLE001
+            # Graceful fallback to rule-based summary
+            actions = self._recommended_actions(rfm, related)
+            ai_text = (
+                f"[Offline / Ollama unavailable — rule-based fallback]\n\n"
+                + "\n".join(f"• {a}" for a in actions)
+            )
+
+        return {
+            "donor_id": donor.id,
+            "donor_name": donor.name,
+            "signals": rfm["predictions"],
+            "recommendations": ai_text,
+            "prompt_used": prompt,
+        }
+
+    def _list_at_risk_donors(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
+        org_id = self._org_filter(runtime_ctx)
+        if org_id is None:
+            return {"error": "organization_id is required in runtime context"}
+        limit = max(1, min(int(args.get("limit", 20) or 20), 50))
+
+        try:
+            from ngo_homesuite.services.engagement_scoring_service import high_priority_lapsed
+
+            records = high_priority_lapsed(org_id, limit=limit)
+            result = []
+            for rec in records:
+                donor = db.session.get(Donor, rec.donor_id)
+                rfm = self._compute_rfm_signals(donor, org_id) if donor else {}
+                related = self._optional_donor_relationship_counts(rec.donor_id)
+                actions = self._recommended_actions(rfm, related) if rfm else []
+                result.append(
+                    {
+                        "donor_id": rec.donor_id,
+                        "donor_name": donor.name if donor else "Unknown",
+                        "email": donor.email if donor else None,
+                        "score": float(rec.score),
+                        "segment": rec.segment,
+                        "cultivation_priority": rec.cultivation_priority,
+                        "suggested_action": actions[0] if actions else "Contact donor",
+                    }
+                )
+            return {"donors": result, "count": len(result)}
+        except Exception as exc:  # noqa: BLE001
+            return {"error": str(exc)}
+
+    def _evaluate_smart_group(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
+        org_id = self._org_filter(runtime_ctx)
+        group_id = int(args.get("group_id", 0) or 0)
+        if org_id is None:
+            return {"error": "organization_id is required in runtime context"}
+        if group_id <= 0:
+            return {"error": "group_id is required"}
+
+        try:
+            from ngo_homesuite.services.smart_groups_service import evaluate_group
+
+            members = evaluate_group(group_id, org_id)
+            return {
+                "group_id": group_id,
+                "count": len(members),
+                "members": members[:50],  # cap response size
+                "truncated": len(members) > 50,
+            }
+        except Exception as exc:  # noqa: BLE001
+            return {"error": str(exc)}
+
+    def _summarize_program_impact(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
+        org_id = self._org_filter(runtime_ctx)
+        if org_id is None:
+            return {"error": "organization_id is required in runtime context"}
+        case_type = str(args.get("case_type", "") or "").strip() or None
+        if not case_type:
+            case_type = str(args.get("program_name", "") or "").strip() or None
+
+        try:
+            from ngo_homesuite.services.program_impact_service import impact_report
+
+            return impact_report(org_id, case_type=case_type)
+        except Exception as exc:  # noqa: BLE001
+            return {"error": str(exc)}

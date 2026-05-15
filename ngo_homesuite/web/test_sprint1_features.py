@@ -10,6 +10,7 @@ from ngo_homesuite.models.core import (
     Donation,
     DonationReceipt,
     Donor,
+    Expense,
     Organization,
     RecurringDonationPlan,
     db,
@@ -201,3 +202,63 @@ def test_donor_detail_page_shows_profile_metrics(client, app):
     assert "Next Best Action:" in body
     assert "Recent Donations" in body
     assert "Recurring Plans" in body
+
+
+def test_donations_export_iif_returns_payload(client, app):
+    _login_admin(client)
+
+    with app.app_context():
+        org = Organization.query.filter_by(is_active=True).first()
+        donor = Donor(
+            organization_id=org.id,
+            name="IIF Donor",
+            email="iif.donor@example.org",
+            donor_type="individual",
+        )
+        db.session.add(donor)
+        db.session.flush()
+
+        donation = Donation(
+            organization_id=org.id,
+            donor_id=donor.id,
+            donor_name=donor.name,
+            donor_email=donor.email,
+            amount=42.5,
+            currency="USD",
+            status="received",
+            purpose="IIF Export",
+            payment_method="bank_transfer",
+        )
+        db.session.add(donation)
+        db.session.commit()
+
+    rv = client.get("/donations/export/iif")
+    assert rv.status_code == 200
+    assert rv.mimetype == "text/plain"
+    body = rv.get_data(as_text=True)
+    assert "!TRNS" in body
+    assert "DEPOSIT" in body
+
+
+def test_expenses_export_iif_returns_payload(client, app):
+    _login_admin(client)
+
+    with app.app_context():
+        org = Organization.query.filter_by(is_active=True).first()
+
+        expense = Expense(
+            organization_id=org.id,
+            amount=18.75,
+            currency="USD",
+            payee="IIF Vendor",
+            description="IIF Expense Export",
+        )
+        db.session.add(expense)
+        db.session.commit()
+
+    rv = client.get("/expenses/export/iif")
+    assert rv.status_code == 200
+    assert rv.mimetype == "text/plain"
+    body = rv.get_data(as_text=True)
+    assert "!TRNS" in body
+    assert "CHECK" in body

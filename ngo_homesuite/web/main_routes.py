@@ -186,6 +186,42 @@ def _build_xlsx_bytes(sheet_name, headers, rows):
     return output.read()
 
 
+def _build_iif_bytes(trns_type: str, rows):
+    """Build QuickBooks IIF payload bytes for TRNS/SPL/ENDTRNS batches.
+
+    Row schema: [txn_id, date_iso, name, amount, memo]
+    """
+    text_stream = []
+    text_stream.append("!TRNS\tTRNSID\tTRNSTYPE\tDATE\tACCNT\tNAME\tAMOUNT\tMEMO")
+    text_stream.append("!SPL\tSPLID\tTRNSTYPE\tDATE\tACCNT\tNAME\tAMOUNT\tMEMO")
+    text_stream.append("!ENDTRNS")
+
+    if trns_type == 'DEPOSIT':
+        trns_account = 'Undeposited Funds'
+        spl_account = 'Donations Income'
+        trns_sign = 1.0
+    else:
+        trns_account = 'Operating Bank'
+        spl_account = 'Program Expense'
+        trns_sign = -1.0
+
+    for txn_id, date_iso, name, amount, memo in rows:
+        amount_val = float(amount or 0)
+        trns_amt = trns_sign * amount_val
+        spl_amt = -trns_amt
+        date_value = (date_iso or '').strip() or datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        text_stream.append(
+            f"TRNS\t{txn_id}\t{trns_type}\t{date_value}\t{trns_account}\t{name}\t{trns_amt:.2f}\t{memo}"
+        )
+        text_stream.append(
+            f"SPL\t{txn_id}\t{trns_type}\t{date_value}\t{spl_account}\t{name}\t{spl_amt:.2f}\t{memo}"
+        )
+        text_stream.append("ENDTRNS")
+
+    payload = "\n".join(text_stream) + "\n"
+    return payload.encode('utf-8')
+
+
 def _parse_float(value: str):
     value = (value or '').strip()
     if not value:
@@ -1268,6 +1304,19 @@ def donations_export(file_type: str):
             as_attachment=True,
             download_name='donations.xlsx',
         )
+    if file_type == 'iif':
+        iif_rows = [
+            [
+                d.id,
+                d.donation_date.strftime('%Y-%m-%d') if d.donation_date else '',
+                d.donor_name or 'Unknown Donor',
+                d.amount,
+                d.purpose or 'Donation',
+            ]
+            for d in donations
+        ]
+        data = _build_iif_bytes('DEPOSIT', iif_rows)
+        return send_file(BytesIO(data), mimetype='text/plain', as_attachment=True, download_name='donations.iif')
     flash('Unsupported export type.', 'error')
     return redirect(url_for('main.donations_list'))
 
@@ -1419,6 +1468,19 @@ def expenses_export(file_type: str):
             as_attachment=True,
             download_name='expenses.xlsx',
         )
+    if file_type == 'iif':
+        iif_rows = [
+            [
+                e.id,
+                e.paid_at.strftime('%Y-%m-%d') if e.paid_at else '',
+                (e.payee or e.description or 'Expense'),
+                e.amount,
+                e.description or 'Expense',
+            ]
+            for e in expenses
+        ]
+        data = _build_iif_bytes('CHECK', iif_rows)
+        return send_file(BytesIO(data), mimetype='text/plain', as_attachment=True, download_name='expenses.iif')
     flash('Unsupported export type.', 'error')
     return redirect(url_for('main.expenses_list'))
 

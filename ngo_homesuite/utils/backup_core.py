@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from ..config import BACKUP_DIRECTORY, DB_PATH
-from ..db.connection import _connect_db_at, _configure_connection, run_db
-from ..prompts import parse_utc_iso, utc_now_compact, utc_now_iso
+from ..db.connection import connect_db_at, configure_connection, run_db
+from ..prompts import parse_utc_iso, utc_now_compact
 
 
 def get_app_meta_value(key: str) -> str | None:
@@ -52,11 +52,11 @@ def backup_database_to(dest_path: Path) -> None:
     dest_str = str(dest_path)
 
     def op(_conn: Any, _cur: Any) -> None:
-        src_conn = _connect_db_at(DB_PATH)
-        _configure_connection(src_conn)
+        src_conn = connect_db_at(DB_PATH)
+        configure_connection(src_conn)
         try:
-            dst_conn = _connect_db_at(dest_str)
-            _configure_connection(dst_conn)
+            dst_conn = connect_db_at(dest_str)
+            configure_connection(dst_conn)
             try:
                 src_conn.backup(dst_conn)
             finally:

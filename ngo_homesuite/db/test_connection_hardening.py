@@ -53,7 +53,7 @@ def test_env_var_fail_safe(monkeypatch):
     conn = sqlite3.connect(':memory:')
     connection._ensure_metadata_table(conn)
     with pytest.raises(FatalDBError) as excinfo:
-        connection._update_metadata_hash(conn)
+        connection.update_metadata_hash(conn)
     assert 'NGO_HOMESUITE_SCHEMA_SIGNATURE must be set' in str(excinfo.value)
 
 

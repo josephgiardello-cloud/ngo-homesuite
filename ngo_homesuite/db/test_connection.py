@@ -38,7 +38,7 @@ def test_connect_db_and_schema_hash(temp_db_file):
     assert isinstance(conn, sqlite3.Connection)
     # Should create metadata table and set schema hash
     connection._ensure_metadata_table(conn)
-    connection._update_metadata_hash(conn)
+    connection.update_metadata_hash(conn)
     assert connection.check_metadata_hash(conn) is True
     conn.close()
 

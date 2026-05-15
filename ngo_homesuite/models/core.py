@@ -401,6 +401,394 @@ class AIMessage(db.Model):
         return f'<AIMessage {self.role} conv={self.conversation_id}>'
 
 
+class Grant(db.Model):
+    """Grant opportunity tracked through full lifecycle (prospect → awarded → disbursed)."""
+
+    __tablename__ = 'grants'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    project_id = db.Column(db.Integer, db.ForeignKey('projects.id'), nullable=True)
+
+    # Funder details
+    funder_name = db.Column(db.String(200), nullable=False)
+    funder_type = db.Column(db.String(50), default='foundation', nullable=False)  # foundation, government, corporate, other
+    funder_contact = db.Column(db.String(200), nullable=True)
+    funder_email = db.Column(db.String(120), nullable=True)
+
+    # Grant details
+    title = db.Column(db.String(300), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    amount_requested = db.Column(db.Float, nullable=True)
+    amount_awarded = db.Column(db.Float, nullable=True)
+    currency = db.Column(db.String(3), default='USD', nullable=False)
+
+    # Dates
+    application_deadline = db.Column(db.Date, nullable=True, index=True)
+    submission_date = db.Column(db.Date, nullable=True)
+    award_date = db.Column(db.Date, nullable=True)
+    start_date = db.Column(db.Date, nullable=True)
+    end_date = db.Column(db.Date, nullable=True)
+    report_due_date = db.Column(db.Date, nullable=True)
+
+    # Status lifecycle
+    status = db.Column(
+        db.String(50), default='prospect', nullable=False, index=True
+    )  # prospect, in_progress, submitted, awarded, declined, closed, reporting
+
+    # Reporting
+    requirements = db.Column(db.Text, nullable=True)  # reporting requirements
+    notes = db.Column(db.Text, nullable=True)
+
+    # Timestamps
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
+
+    disbursements = db.relationship('GrantDisbursement', backref='grant', cascade='all, delete-orphan')
+    project = db.relationship('Project', backref='grants')
+    organization = db.relationship('Organization', backref='grants')
+
+    def __repr__(self):
+        return f'<Grant {self.title} [{self.status}]>'
+
+
+class GrantDisbursement(db.Model):
+    """Individual payment received from a grant award."""
+
+    __tablename__ = 'grant_disbursements'
+
+    id = db.Column(db.Integer, primary_key=True)
+    grant_id = db.Column(db.Integer, db.ForeignKey('grants.id'), nullable=False, index=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    amount = db.Column(db.Float, nullable=False)
+    currency = db.Column(db.String(3), default='USD', nullable=False)
+    received_date = db.Column(db.Date, nullable=False)
+    reference = db.Column(db.String(100), nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+
+    def __repr__(self):
+        return f'<GrantDisbursement grant={self.grant_id} {self.amount}>'
+
+
+class MembershipTier(db.Model):
+    """Configurable membership tier for an organization."""
+
+    __tablename__ = 'membership_tiers'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    name = db.Column(db.String(100), nullable=False)
+    price = db.Column(db.Float, nullable=False, default=0.0)
+    currency = db.Column(db.String(3), default='USD', nullable=False)
+    interval = db.Column(db.String(20), default='annual', nullable=False)  # monthly, quarterly, annual
+    benefits = db.Column(db.Text, nullable=True)   # newline-separated list of perks
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+
+    records = db.relationship('MembershipRecord', backref='tier', cascade='all, delete-orphan')
+    organization = db.relationship('Organization', backref='membership_tiers')
+
+    __table_args__ = (
+        db.UniqueConstraint('organization_id', 'name', name='uq_membership_tier_org_name'),
+    )
+
+    def __repr__(self):
+        return f'<MembershipTier {self.name}>'
+
+
+class MembershipRecord(db.Model):
+    """Active or historical membership for a donor."""
+
+    __tablename__ = 'membership_records'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    donor_id = db.Column(db.Integer, db.ForeignKey('donors.id'), nullable=False, index=True)
+    tier_id = db.Column(db.Integer, db.ForeignKey('membership_tiers.id'), nullable=False, index=True)
+    start_date = db.Column(db.Date, nullable=False)
+    end_date = db.Column(db.Date, nullable=True, index=True)
+    next_renewal_date = db.Column(db.Date, nullable=True, index=True)
+    status = db.Column(db.String(20), default='active', nullable=False, index=True)  # active, lapsed, cancelled
+    payment_reference = db.Column(db.String(100), nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
+
+    donor = db.relationship('Donor', backref='memberships')
+
+    def __repr__(self):
+        return f'<MembershipRecord donor={self.donor_id} tier={self.tier_id} [{self.status}]>'
+
+
+class StewardshipJourney(db.Model):
+    """Named automated communication sequence definition."""
+
+    __tablename__ = 'stewardship_journeys'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    name = db.Column(db.String(200), nullable=False)
+    trigger = db.Column(db.String(50), nullable=False)  # new_donor, lybunt, anniversary, lapsed_member
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+
+    steps = db.relationship('StewardshipStep', backref='journey', cascade='all, delete-orphan', order_by='StewardshipStep.step_order')
+    organization = db.relationship('Organization', backref='stewardship_journeys')
+
+    def __repr__(self):
+        return f'<StewardshipJourney {self.name}>'
+
+
+class StewardshipStep(db.Model):
+    """One step in a stewardship journey (send email, send SMS, wait)."""
+
+    __tablename__ = 'stewardship_steps'
+
+    id = db.Column(db.Integer, primary_key=True)
+    journey_id = db.Column(db.Integer, db.ForeignKey('stewardship_journeys.id'), nullable=False, index=True)
+    step_order = db.Column(db.Integer, nullable=False, default=0)
+    step_type = db.Column(db.String(20), nullable=False)  # email, sms, wait
+    delay_days = db.Column(db.Integer, default=0, nullable=False)  # days after previous step
+    template_name = db.Column(db.String(100), nullable=True)  # email/SMS template key
+    subject = db.Column(db.String(300), nullable=True)
+    body = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+
+    def __repr__(self):
+        return f'<StewardshipStep journey={self.journey_id} order={self.step_order} {self.step_type}>'
+
+
+class StewardshipEnrollment(db.Model):
+    """Tracks a donor's progress through a stewardship journey."""
+
+    __tablename__ = 'stewardship_enrollments'
+
+    id = db.Column(db.Integer, primary_key=True)
+    journey_id = db.Column(db.Integer, db.ForeignKey('stewardship_journeys.id'), nullable=False, index=True)
+    donor_id = db.Column(db.Integer, db.ForeignKey('donors.id'), nullable=False, index=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    current_step = db.Column(db.Integer, default=0, nullable=False)
+    status = db.Column(db.String(20), default='active', nullable=False)  # active, completed, cancelled
+    enrolled_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    next_step_due = db.Column(db.DateTime, nullable=True, index=True)
+    completed_at = db.Column(db.DateTime, nullable=True)
+
+    donor = db.relationship('Donor', backref='journey_enrollments')
+    journey = db.relationship('StewardshipJourney', backref='enrollments')
+
+    def __repr__(self):
+        return f'<StewardshipEnrollment journey={self.journey_id} donor={self.donor_id}>'
+
+
+# ---------------------------------------------------------------------------
+# Task Management (Moves Management)
+# ---------------------------------------------------------------------------
+
+class Task(db.Model):
+    """Actionable task linked to a donor, grant, donation, or project."""
+
+    __tablename__ = 'tasks'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    assigned_to_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+
+    # Polymorphic target (one optional FK per entity type)
+    donor_id = db.Column(db.Integer, db.ForeignKey('donors.id'), nullable=True, index=True)
+    grant_id = db.Column(db.Integer, db.ForeignKey('grants.id'), nullable=True, index=True)
+    donation_id = db.Column(db.Integer, db.ForeignKey('donations.id'), nullable=True, index=True)
+    project_id = db.Column(db.Integer, db.ForeignKey('projects.id'), nullable=True, index=True)
+
+    title = db.Column(db.String(300), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    task_type = db.Column(db.String(50), default='general', nullable=False)  # call, email, meeting, follow_up, general
+    priority = db.Column(db.String(20), default='medium', nullable=False)   # low, medium, high, urgent
+    status = db.Column(db.String(20), default='open', nullable=False, index=True)  # open, in_progress, done, cancelled
+    due_date = db.Column(db.DateTime, nullable=True, index=True)
+    completed_at = db.Column(db.DateTime, nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
+
+    assigned_to = db.relationship('User', backref='tasks')
+    donor = db.relationship('Donor', backref='tasks')
+
+    def __repr__(self):
+        return f'<Task {self.title[:40]} [{self.status}]>'
+
+
+# ---------------------------------------------------------------------------
+# Program / Impact Case Tracking
+# ---------------------------------------------------------------------------
+
+class ProgramCase(db.Model):
+    """Flexible case tracking for beneficiary services, grant deliverables, or advocacy."""
+
+    __tablename__ = 'program_cases'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    project_id = db.Column(db.Integer, db.ForeignKey('projects.id'), nullable=True, index=True)
+    grant_id = db.Column(db.Integer, db.ForeignKey('grants.id'), nullable=True, index=True)
+    donor_id = db.Column(db.Integer, db.ForeignKey('donors.id'), nullable=True, index=True)  # supporter link
+    beneficiary_id = db.Column(db.Integer, db.ForeignKey('beneficiaries.id'), nullable=True, index=True)
+
+    title = db.Column(db.String(300), nullable=False)
+    case_type = db.Column(db.String(50), default='service', nullable=False)  # service, grant_deliverable, advocacy, beneficiary
+    status = db.Column(db.String(50), default='open', nullable=False, index=True)  # open, in_progress, on_hold, closed
+    priority = db.Column(db.String(20), default='medium', nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    outcome = db.Column(db.Text, nullable=True)       # measured outcome / impact statement
+    outcome_metric = db.Column(db.String(200), nullable=True)  # e.g. "Families housed"
+    outcome_value = db.Column(db.Float, nullable=True)          # e.g. 12
+
+    opened_date = db.Column(db.Date, nullable=True)
+    closed_date = db.Column(db.Date, nullable=True)
+    next_review_date = db.Column(db.Date, nullable=True, index=True)
+
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
+
+    activities = db.relationship('CaseActivity', backref='case', cascade='all, delete-orphan', order_by='CaseActivity.created_at')
+    organization = db.relationship('Organization', backref='program_cases')
+
+    def __repr__(self):
+        return f'<ProgramCase {self.title[:40]} [{self.status}]>'
+
+
+class CaseActivity(db.Model):
+    """Immutable activity/note on a program case (every status change recorded)."""
+
+    __tablename__ = 'case_activities'
+
+    id = db.Column(db.Integer, primary_key=True)
+    case_id = db.Column(db.Integer, db.ForeignKey('program_cases.id'), nullable=False, index=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    actor_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+
+    activity_type = db.Column(db.String(50), nullable=False)  # note, status_change, document, call, email
+    content = db.Column(db.Text, nullable=True)
+    previous_status = db.Column(db.String(50), nullable=True)
+    new_status = db.Column(db.String(50), nullable=True)
+
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+
+    actor = db.relationship('User', backref='case_activities')
+
+    def __repr__(self):
+        return f'<CaseActivity case={self.case_id} {self.activity_type}>'
+
+
+# ---------------------------------------------------------------------------
+# Engagement Scoring
+# ---------------------------------------------------------------------------
+
+class DonorEngagementScore(db.Model):
+    """Computed engagement health score for a donor (0–100), broken down by dimension."""
+
+    __tablename__ = 'donor_engagement_scores'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    donor_id = db.Column(db.Integer, db.ForeignKey('donors.id'), nullable=False, index=True)
+
+    score = db.Column(db.Float, nullable=False, default=0.0)   # 0–100 composite
+
+    # Dimension breakdown
+    recency_score = db.Column(db.Float, default=0.0)    # 0–25
+    frequency_score = db.Column(db.Float, default=0.0)  # 0–25
+    monetary_score = db.Column(db.Float, default=0.0)   # 0–25
+    engagement_score = db.Column(db.Float, default=0.0) # 0–25 (membership, events, tasks)
+
+    # Human-readable explanation
+    explanation = db.Column(db.Text, nullable=True)
+    segment = db.Column(db.String(50), nullable=True)   # champion, loyal, at_risk, lapsed, new
+    cultivation_priority = db.Column(db.String(20), default='medium', nullable=False)  # low, medium, high
+
+    computed_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False, index=True)
+
+    donor = db.relationship('Donor', backref=db.backref('engagement_score', uselist=False))
+
+    __table_args__ = (
+        db.UniqueConstraint('organization_id', 'donor_id', name='uq_engagement_score_org_donor'),
+    )
+
+    def __repr__(self):
+        return f'<DonorEngagementScore donor={self.donor_id} score={self.score:.1f}>'
+
+
+# ---------------------------------------------------------------------------
+# Smart Groups / Dynamic Audiences
+# ---------------------------------------------------------------------------
+
+class SmartGroup(db.Model):
+    """Saved rules-based audience that auto-evaluates against live data."""
+
+    __tablename__ = 'smart_groups'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    name = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    rules_json = db.Column(JSON, nullable=False)  # serialized list of rule dicts
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    last_evaluated_at = db.Column(db.DateTime, nullable=True)
+    last_count = db.Column(db.Integer, default=0, nullable=False)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
+
+    organization = db.relationship('Organization', backref='smart_groups')
+
+    __table_args__ = (
+        db.UniqueConstraint('organization_id', 'name', name='uq_smart_group_org_name'),
+    )
+
+    def __repr__(self):
+        return f'<SmartGroup {self.name}>'
+
+
+# ---------------------------------------------------------------------------
+# P2P Fundraising (ORM-backed)
+# ---------------------------------------------------------------------------
+
+class P2PPage(db.Model):
+    """Supporter-created peer-to-peer fundraising page."""
+
+    __tablename__ = 'p2p_pages'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    donor_id = db.Column(db.Integer, db.ForeignKey('donors.id'), nullable=False, index=True)  # page owner
+    campaign_slug = db.Column(db.String(120), nullable=True, index=True)  # optional parent campaign
+
+    title = db.Column(db.String(300), nullable=False)
+    story = db.Column(db.Text, nullable=True)
+    goal_amount = db.Column(db.Float, nullable=False, default=0.0)
+    currency = db.Column(db.String(3), default='USD', nullable=False)
+    status = db.Column(db.String(20), default='active', nullable=False, index=True)  # draft, active, closed
+    public_slug = db.Column(db.String(80), unique=True, nullable=False, index=True)
+
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
+
+    donations = db.relationship('Donation', secondary='p2p_page_donations', backref='p2p_pages')
+    owner = db.relationship('Donor', backref='p2p_pages')
+
+    def __repr__(self):
+        return f'<P2PPage {self.title[:40]} [{self.status}]>'
+
+
+class P2PPageDonation(db.Model):
+    """Association table linking P2P pages to donations."""
+
+    __tablename__ = 'p2p_page_donations'
+
+    page_id = db.Column(db.Integer, db.ForeignKey('p2p_pages.id'), primary_key=True)
+    donation_id = db.Column(db.Integer, db.ForeignKey('donations.id'), primary_key=True)
+
+
 # Export all models
 __all__ = [
     'db',
@@ -417,4 +805,18 @@ __all__ = [
     'Beneficiary',
     'AIConversation',
     'AIMessage',
+    'Grant',
+    'GrantDisbursement',
+    'MembershipTier',
+    'MembershipRecord',
+    'StewardshipJourney',
+    'StewardshipStep',
+    'StewardshipEnrollment',
+    'Task',
+    'ProgramCase',
+    'CaseActivity',
+    'DonorEngagementScore',
+    'SmartGroup',
+    'P2PPage',
+    'P2PPageDonation',
 ]

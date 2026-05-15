@@ -33,14 +33,6 @@ def prompt_optional(label: str) -> str:
     return input(label).strip()
 
 
-def _prompt_non_empty(label: str) -> str:
-    return prompt_non_empty(label)
-
-
-def _prompt_optional(label: str) -> str:
-    return prompt_optional(label)
-
-
 def prompt_int(label: str) -> int:
     while True:
         raw = input(label).strip()
@@ -48,10 +40,6 @@ def prompt_int(label: str) -> int:
             return int(raw)
         except ValueError:
             print("Please enter a valid integer.")
-
-
-def _prompt_int(label: str) -> int:
-    return prompt_int(label)
 
 
 def prompt_positive_amount(label: str) -> float:
@@ -68,10 +56,6 @@ def prompt_positive_amount(label: str) -> float:
         return value
 
 
-def _prompt_positive_amount(label: str) -> float:
-    return prompt_positive_amount(label)
-
-
 def prompt_non_negative_amount(label: str) -> float:
     while True:
         raw = input(label).strip()
@@ -86,10 +70,6 @@ def prompt_non_negative_amount(label: str) -> float:
         return value
 
 
-def _prompt_non_negative_amount(label: str) -> float:
-    return prompt_non_negative_amount(label)
-
-
 def prompt_positive_amount_allowing_zero(label: str) -> float:
     """Prompts for a number >= 0, but nudges users away from zero allocations."""
 
@@ -97,10 +77,6 @@ def prompt_positive_amount_allowing_zero(label: str) -> float:
     if value == 0:
         print("Note: 0 has no effect.")
     return value
-
-
-def _prompt_positive_amount_allowing_zero(label: str) -> float:
-    return prompt_positive_amount_allowing_zero(label)
 
 
 def prompt_date_iso(label: str) -> str:
@@ -119,10 +95,6 @@ def prompt_date_iso(label: str) -> str:
         return raw
 
 
-def _prompt_date_iso(label: str) -> str:
-    return prompt_date_iso(label)
-
-
 def looks_like_email(value: str) -> bool:
     value = value.strip()
     if not value:
@@ -132,17 +104,9 @@ def looks_like_email(value: str) -> bool:
     return re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value) is not None
 
 
-def _looks_like_email(value: str) -> bool:
-    return looks_like_email(value)
-
-
 def normalize_optional_email(value: str) -> str | None:
     value = value.strip()
     return value or None
-
-
-def _normalize_optional_email(value: str) -> str | None:
-    return normalize_optional_email(value)
 
 
 def looks_like_phone(value: str) -> bool:
@@ -153,10 +117,6 @@ def looks_like_phone(value: str) -> bool:
         return False
     digits = re.sub(r"\D", "", value)
     return PHONE_MIN_DIGITS <= len(digits) <= PHONE_MAX_DIGITS
-
-
-def _looks_like_phone(value: str) -> bool:
-    return looks_like_phone(value)
 
 
 def normalize_optional_phone(value: str) -> str | None:
@@ -171,10 +131,6 @@ def normalize_optional_phone(value: str) -> str | None:
     return f"+{digits}" if plus else digits
 
 
-def _normalize_optional_phone(value: str) -> str | None:
-    return normalize_optional_phone(value)
-
-
 def normalize_tag(value: str) -> str | None:
     value = re.sub(r"\s+", " ", value.strip().lower())
     if not value:
@@ -184,10 +140,6 @@ def normalize_tag(value: str) -> str | None:
     if re.fullmatch(r"[a-z0-9 _\-\.]+", value) is None:
         return None
     return value
-
-
-def _normalize_tag(value: str) -> str | None:
-    return normalize_tag(value)
 
 
 def print_table(headers: list[str], rows: list[tuple[Any, ...]]) -> None:
@@ -212,12 +164,6 @@ def print_table(headers: list[str], rows: list[tuple[Any, ...]]) -> None:
     print(sep_line)
     for r in normalized_rows:
         print(" | ".join(r[i].ljust(widths[i]) for i in range(col_count)))
-
-
-def _print_table(headers: list[str], rows: list[tuple[Any, ...]]) -> None:
-    print_table(headers, rows)
-
-
 def parse_utc_iso(value: str) -> datetime | None:
     try:
         dt = datetime.fromisoformat(value)

@@ -86,7 +86,14 @@ def create_app(config=None):
     from ngo_homesuite.web.main_routes import main_bp
     from ngo_homesuite.web.auth_routes import auth_bp
     from ngo_homesuite.web.ai_routes import ai_bp
+    from ngo_homesuite.web.grants_routes import grants_bp
+    from ngo_homesuite.web.membership_routes import membership_bp
+    from ngo_homesuite.web.tasks_routes import tasks_bp
+    from ngo_homesuite.web.program_routes import program_bp
+    from ngo_homesuite.web.smart_groups_routes import smart_groups_bp
+    from ngo_homesuite.web.p2p_routes import p2p_bp
     from ngo_homesuite.api.v1 import api_v1_bp
+    from ngo_homesuite.web.v2_routes import v2_bp
 
     with app.app_context():
         app.extensions['v2_container'] = AppContainer.build_default()
@@ -95,7 +102,14 @@ def create_app(config=None):
     app.register_blueprint(main_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(ai_bp)
+    app.register_blueprint(grants_bp)
+    app.register_blueprint(membership_bp)
+    app.register_blueprint(tasks_bp)
+    app.register_blueprint(program_bp)
+    app.register_blueprint(smart_groups_bp)
+    app.register_blueprint(p2p_bp)
     app.register_blueprint(api_v1_bp)
+    app.register_blueprint(v2_bp)
     
     # Setup logging
     setup_logging(app)
