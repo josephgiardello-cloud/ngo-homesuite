@@ -17,7 +17,7 @@ from io import BytesIO
 from openpyxl import Workbook
 
 from ngo_homesuite.models.core import (
-    Organization, Beneficiary, Project, Donation, Donor, Fund, Expense, DonationReceipt, RecurringDonationPlan, db
+    Organization, Beneficiary, Project, Donation, Donor, Fund, Expense, DonationReceipt, P2PPage, RecurringDonationPlan, db
 )
 from ngo_homesuite.domain import (
     BeneficiaryEntity,
@@ -137,6 +137,15 @@ class PublicDonationForm(FlaskForm):
         validators=[WTOptional()],
     )
     submit = SubmitField('Donate')
+
+
+class P2PPageForm(FlaskForm):
+    donor_id = SelectField('Fundraiser Owner', coerce=int, validators=[DataRequired()])
+    title = StringField('Fundraiser Title', validators=[DataRequired()])
+    goal_amount = FloatField('Goal Amount', validators=[WTOptional(), NumberRange(min=0)])
+    story = TextAreaField('Story', validators=[WTOptional()])
+    campaign_slug = StringField('Campaign Slug (optional)', validators=[WTOptional()])
+    submit = SubmitField('Create Fundraiser')
 
 
 class RecurringDonationForm(FlaskForm):
@@ -762,6 +771,78 @@ def dashboard():
         'total_funds': stats['total_funds'],
     }
     return render_template('dashboard.html', stats=stats, active_page='dashboard', ai_context=ai_context)
+
+
+@main_bp.route('/p2p/manage', methods=['GET', 'POST'])
+@login_required
+@roles_required('admin', 'staff')
+def p2p_manage():
+    from ngo_homesuite.services.p2p_service import close_page, create_page, list_pages, publish_page
+
+    org = _current_org()
+    if not org:
+        flash('No organization found for your account.', 'error')
+        return redirect(url_for('main.dashboard'))
+
+    form = P2PPageForm()
+    donors = (
+        Donor.query.filter_by(organization_id=org.id)
+        .order_by(Donor.name.asc())
+        .all()
+    )
+    form.donor_id.choices = [(int(d.id), d.name) for d in donors]
+
+    status_filter = (request.args.get('status') or '').strip().lower() or None
+
+    if request.method == 'POST':
+        action = (request.form.get('action') or '').strip().lower()
+
+        if action in {'publish', 'close'}:
+            page_id = request.form.get('page_id', type=int)
+            if not page_id:
+                flash('A valid fundraiser page id is required.', 'error')
+                return redirect(url_for('main.p2p_manage'))
+
+            try:
+                if action == 'publish':
+                    publish_page(page_id, org.id)
+                    flash('Fundraiser published.', 'success')
+                else:
+                    close_page(page_id, org.id)
+                    flash('Fundraiser closed.', 'success')
+            except Exception:
+                flash('Unable to update fundraiser status.', 'error')
+            return redirect(url_for('main.p2p_manage'))
+
+        if not donors:
+            flash('Create at least one donor before creating a fundraiser page.', 'error')
+            pages = list_pages(org.id, status=status_filter)
+            return render_template('p2p_manage.html', form=form, pages=pages, active_page='p2p')
+
+        if form.validate_on_submit():
+            try:
+                create_page(
+                    organization_id=org.id,
+                    donor_id=int(form.donor_id.data),
+                    title=(form.title.data or '').strip(),
+                    goal_amount=float(form.goal_amount.data or 0.0),
+                    story=(form.story.data or '').strip() or None,
+                    campaign_slug=(form.campaign_slug.data or '').strip() or None,
+                )
+                flash('Fundraiser page created.', 'success')
+                return redirect(url_for('main.p2p_manage'))
+            except ValueError:
+                flash('Invalid fundraiser data.', 'error')
+        else:
+            flash('Please fix the highlighted form issues.', 'error')
+
+    pages = list_pages(org.id, status=status_filter)
+    ai_context = {
+        'active_page': 'p2p',
+        'organization': org.name,
+        'p2p_page_count': len(pages),
+    }
+    return render_template('p2p_manage.html', form=form, pages=pages, active_page='p2p', ai_context=ai_context)
 
 
 @main_bp.route('/donors')

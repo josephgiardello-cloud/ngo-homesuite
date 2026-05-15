@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+
+{% block title %}P2P Fundraising - NGO HomeSuite{% endblock %}
+
+{% block content %}
+<h1>P2P Fundraising</h1>
+<p class="text-muted">Create and operate peer fundraising pages without leaving the admin dashboard.</p>
+
+<div class="grid" style="grid-template-columns: minmax(280px, 1fr) minmax(360px, 1.3fr); align-items: start;">
+    <section class="card">
+        <div class="card-title">Create Fundraiser</div>
+        <form method="post">
+            {{ form.hidden_tag() }}
+
+            <div class="form-group {% if form.donor_id.errors %}error{% endif %}">
+                {{ form.donor_id.label }}
+                {{ form.donor_id() }}
+                {% for error in form.donor_id.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            </div>
+
+            <div class="form-group {% if form.title.errors %}error{% endif %}">
+                {{ form.title.label }}
+                {{ form.title(placeholder='Run for Clean Water 2026') }}
+                {% for error in form.title.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            </div>
+
+            <div class="form-group {% if form.goal_amount.errors %}error{% endif %}">
+                {{ form.goal_amount.label }}
+                {{ form.goal_amount(placeholder='1000.00', min='0', step='0.01') }}
+                {% for error in form.goal_amount.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            </div>
+
+            <div class="form-group {% if form.story.errors %}error{% endif %}">
+                {{ form.story.label }}
+                {{ form.story(rows='4', placeholder='Share why this campaign matters...') }}
+                {% for error in form.story.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            </div>
+
+            <div class="form-group {% if form.campaign_slug.errors %}error{% endif %}">
+                {{ form.campaign_slug.label }}
+                {{ form.campaign_slug(placeholder='spring-campaign-2026') }}
+                {% for error in form.campaign_slug.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            </div>
+
+            <div class="actions-row">
+                {{ form.submit(class_='btn btn-primary') }}
+            </div>
+        </form>
+    </section>
+
+    <section class="card">
+        <div class="card-title">Fundraiser Pages</div>
+        {% if pages %}
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Title</th>
+                        <th>Status</th>
+                        <th>Goal</th>
+                        <th>Public URL</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for page in pages %}
+                    <tr>
+                        <td>{{ page.title }}</td>
+                        <td>{{ page.status }}</td>
+                        <td>${{ '%.2f'|format(page.goal_amount or 0) }}</td>
+                        <td>
+                            <a href="{{ url_for('p2p.public_page_route', slug=page.public_slug) }}" target="_blank" rel="noopener">
+                                /p2p/{{ page.public_slug }}
+                            </a>
+                        </td>
+                        <td>
+                            <div class="actions-row">
+                                {% if page.status != 'active' %}
+                                <form method="post" style="display:inline;">
+                                    <input type="hidden" name="action" value="publish">
+                                    <input type="hidden" name="page_id" value="{{ page.id }}">
+                                    <button class="btn btn-primary" type="submit">Publish</button>
+                                </form>
+                                {% endif %}
+                                {% if page.status != 'closed' %}
+                                <form method="post" style="display:inline;">
+                                    <input type="hidden" name="action" value="close">
+                                    <input type="hidden" name="page_id" value="{{ page.id }}">
+                                    <button class="btn btn-secondary" type="submit">Close</button>
+                                </form>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-muted">No fundraiser pages yet. Create your first one using the form.</p>
+        {% endif %}
+    </section>
+</div>
+{% endblock %}

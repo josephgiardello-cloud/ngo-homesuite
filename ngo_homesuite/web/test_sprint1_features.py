@@ -147,6 +147,69 @@ def test_public_p2p_embed_script_endpoint(client, app):
     assert "/p2p/embed-fundraiser?embed=1" in body
 
 
+def test_staff_p2p_manage_page_create_publish_close(client, app):
+    _login_admin(client)
+
+    with app.app_context():
+        org = Organization.query.filter_by(is_active=True).first()
+        org_id = int(org.id)
+        donor = Donor(
+            organization_id=org_id,
+            name="P2P Staff Owner",
+            email="p2p.staff.owner@example.org",
+            donor_type="individual",
+        )
+        db.session.add(donor)
+        db.session.commit()
+        donor_id = donor.id
+
+    manage = client.get("/p2p/manage")
+    assert manage.status_code == 200
+    assert "Create Fundraiser" in manage.get_data(as_text=True)
+
+    create_resp = client.post(
+        "/p2p/manage",
+        data={
+            "donor_id": str(donor_id),
+            "title": "Staff Managed Page",
+            "goal_amount": "900",
+            "story": "A page created through the staff dashboard.",
+            "campaign_slug": "staff-managed-campaign",
+        },
+        follow_redirects=True,
+    )
+    assert create_resp.status_code == 200
+
+    with app.app_context():
+        page = P2PPage.query.filter_by(title="Staff Managed Page", organization_id=org_id).first()
+        assert page is not None
+        page_id = int(page.id)
+
+    publish_resp = client.post(
+        "/p2p/manage",
+        data={"action": "publish", "page_id": str(page_id)},
+        follow_redirects=True,
+    )
+    assert publish_resp.status_code == 200
+
+    with app.app_context():
+        db.session.expire_all()
+        page = db.session.get(P2PPage, page_id)
+        assert page.status == "active"
+
+    close_resp = client.post(
+        "/p2p/manage",
+        data={"action": "close", "page_id": str(page_id)},
+        follow_redirects=True,
+    )
+    assert close_resp.status_code == 200
+
+    with app.app_context():
+        db.session.expire_all()
+        page = db.session.get(P2PPage, page_id)
+        assert page.status == "closed"
+
+
 def test_donor_merge_relinks_donations(client, app):
     _login_admin(client)
 

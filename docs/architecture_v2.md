@@ -67,3 +67,5 @@ Next implementation phases should focus on:
 - workflow DSL and visual builder
 
 Roadmap tracker: `docs/phase2_roadmap.md`
+
+Architecture decisions are tracked in ADRs: `docs/adr/README.md`
