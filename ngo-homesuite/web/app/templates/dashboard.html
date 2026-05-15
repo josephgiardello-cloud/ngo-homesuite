@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>NGO Dashboard</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+</head>
+<body>
+    <h1>Fundraising Dashboard</h1>
+    <div id="donations_chart" style="width:600px;height:400px;"></div>
+    <script>
+        // Example data, replace with AJAX call to API
+        var data = [{
+            x: ['Jan', 'Feb', 'Mar', 'Apr'],
+            y: [1200, 1500, 1800, 2000],
+            type: 'bar'
+        }];
+        Plotly.newPlot('donations_chart', data);
+    </script>
+</body>
+</html>

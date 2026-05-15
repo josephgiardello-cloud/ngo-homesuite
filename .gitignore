@@ -1,0 +1,59 @@
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Testing
+.pytest_cache/
+.tox/
+coverage.xml
+*.cover
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environments and configs
+.env
+.env.local
+*.yaml.example
+
+# Database
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+ngo_database.db*
+
+# Logs and backups
+*.log
+backups/
+*.backup
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dependencies and caches
+opentimestamps-client/
+
+# Backups
+ngo-homesuite-backup-*/
+
+# Temp files
+*.tmp
+.cache/
