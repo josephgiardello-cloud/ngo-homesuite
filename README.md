@@ -415,6 +415,15 @@ If you see "database is locked":
    python -m ngo_homesuite.db.migrate --dry-run --verify-backup
    ```
 
+### Legacy Schema Fallback (Emergency Only)
+The legacy fallback path in `ngo_homesuite/db/schema.py` is disabled by default.
+If delegation to the active SQL-file migration runner fails and you must use the legacy path for emergency recovery:
+```bash
+# PowerShell
+$env:NGO_HOMESUITE_ALLOW_LEGACY_SCHEMA_FALLBACK = "1"
+```
+Use this only for emergency recovery, then disable it again.
+
 ### Ollama Unavailable
 If Copilot requests fail or timeout:
 1. Ensure Ollama is running locally (`http://localhost:11434` by default)

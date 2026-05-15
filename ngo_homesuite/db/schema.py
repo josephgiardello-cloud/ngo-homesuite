@@ -1142,7 +1142,16 @@ def migrate_schema(conn: Any, cur: Any) -> None:
         auto_migrate_fn(db_path or None)
         return
     except Exception as delegated_exc:
-        print(f"[MIGRATION] Delegation fallback failed: {delegated_exc}. Running legacy migration path.", file=sys.stderr)
+        allow_legacy_fallback = os.getenv("NGO_HOMESUITE_ALLOW_LEGACY_SCHEMA_FALLBACK", "0").lower() in {"1", "true", "yes", "on"}
+        if not allow_legacy_fallback:
+            raise RuntimeError(
+                "Delegated migration failed and legacy fallback is disabled. "
+                "Set NGO_HOMESUITE_ALLOW_LEGACY_SCHEMA_FALLBACK=1 only for emergency recovery."
+            ) from delegated_exc
+        print(
+            f"[MIGRATION] Delegation fallback failed: {delegated_exc}. Running legacy migration path because NGO_HOMESUITE_ALLOW_LEGACY_SCHEMA_FALLBACK is enabled.",
+            file=sys.stderr,
+        )
 
     def backup_db_file():
         db_path = getattr(conn, 'database', None)

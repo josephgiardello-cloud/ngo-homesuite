@@ -4,7 +4,14 @@ from pathlib import Path
 
 import pytest
 
-from ngo_homesuite.db.migrate import MigrationError, auto_migrate, plan_migrations
+from ngo_homesuite.db.migrate import (
+    MigrationApplyError,
+    MigrationError,
+    MigrationPlan,
+    auto_migrate,
+    plan_migrations,
+)
+from ngo_homesuite.db import schema as legacy_schema
 
 
 @pytest.fixture()
@@ -123,12 +130,13 @@ def test_plan_migrations_reports_pending_versions(tmp_path, monkeypatch):
 
     db_path = tmp_path / "preflight.db"
     plan_before = plan_migrations(str(db_path))
-    assert plan_before["pending_count"] == 2
+    assert isinstance(plan_before, MigrationPlan)
+    assert plan_before.pending_count == 2
 
     auto_migrate(str(db_path))
 
     plan_after = plan_migrations(str(db_path))
-    assert plan_after["pending_count"] == 0
+    assert plan_after.pending_count == 0
 
 
 def test_plan_migrations_detects_version_gaps(tmp_path, monkeypatch):
@@ -157,3 +165,55 @@ def test_plan_migrations_detects_version_gaps(tmp_path, monkeypatch):
 
     with pytest.raises(MigrationError):
         plan_migrations(str(tmp_path / "gap.db"))
+
+
+def test_auto_migrate_wraps_invalid_sql_in_apply_error(tmp_path, monkeypatch):
+    migrations_dir = tmp_path / "migrations"
+    migrations_dir.mkdir(parents=True, exist_ok=True)
+    _write_migration(
+        migrations_dir,
+        "0001_initial.sql",
+        """
+        CREATE TABLE IF NOT EXISTS schema_version (
+            version INTEGER PRIMARY KEY,
+            applied_at_utc TEXT NOT NULL,
+            hash TEXT NOT NULL
+        );
+        """,
+    )
+    _write_migration(
+        migrations_dir,
+        "0002_invalid.sql",
+        "CREATE TABL malformed_sql_statement;",
+    )
+
+    import ngo_homesuite.migrations as migrations_module
+
+    monkeypatch.setattr(migrations_module, "MIGRATIONS_DIR", migrations_dir)
+
+    with pytest.raises(MigrationApplyError):
+        auto_migrate(str(tmp_path / "broken.db"))
+
+
+def test_legacy_schema_migrate_requires_explicit_fallback_opt_in(monkeypatch):
+    class _FakeCursor:
+        def execute(self, _sql):
+            return None
+
+        def fetchall(self):
+            return []
+
+    class _FakeConn:
+        database = "memory"
+
+    monkeypatch.setenv("NGO_HOMESUITE_ALLOW_LEGACY_SCHEMA_FALLBACK", "0")
+
+    import ngo_homesuite.db.migrate as migrate_module
+
+    def _raise_delegate(_db_path=None):
+        raise RuntimeError("delegate failed")
+
+    monkeypatch.setattr(migrate_module, "auto_migrate", _raise_delegate)
+
+    with pytest.raises(RuntimeError, match="legacy fallback is disabled"):
+        legacy_schema.migrate_schema(_FakeConn(), _FakeCursor())
