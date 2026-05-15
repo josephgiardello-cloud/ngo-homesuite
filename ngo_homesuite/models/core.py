@@ -736,6 +736,60 @@ class CaseOutcomeMetric(db.Model):
         return f'<CaseOutcomeMetric case={self.case_id} {self.metric_name}={self.current_value}>'
 
 
+class ProgramCaseGoal(db.Model):
+    """Goal/milestone target attached to a program case."""
+
+    __tablename__ = 'program_case_goals'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    case_id = db.Column(db.Integer, db.ForeignKey('program_cases.id'), nullable=False, index=True)
+    title = db.Column(db.String(300), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    metric_name = db.Column(db.String(120), nullable=True)
+    target_value = db.Column(db.Float, nullable=True)
+    current_value = db.Column(db.Float, nullable=True)
+    unit = db.Column(db.String(40), nullable=True)
+    status = db.Column(db.String(30), default='planned', nullable=False, index=True)  # planned, in_progress, achieved, blocked, cancelled
+    target_date = db.Column(db.Date, nullable=True, index=True)
+    achieved_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
+
+    case = db.relationship('ProgramCase', backref='goals')
+
+    def __repr__(self):
+        return f'<ProgramCaseGoal case={self.case_id} {self.title[:30]} [{self.status}]>'
+
+
+class ProgramCaseTask(db.Model):
+    """Concrete action item for progressing a case goal."""
+
+    __tablename__ = 'program_case_tasks'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    case_id = db.Column(db.Integer, db.ForeignKey('program_cases.id'), nullable=False, index=True)
+    goal_id = db.Column(db.Integer, db.ForeignKey('program_case_goals.id'), nullable=True, index=True)
+    assigned_to_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+    title = db.Column(db.String(300), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    status = db.Column(db.String(30), default='todo', nullable=False, index=True)  # todo, in_progress, done, blocked, cancelled
+    priority = db.Column(db.String(20), default='medium', nullable=False)  # low, medium, high, urgent
+    due_date = db.Column(db.Date, nullable=True, index=True)
+    is_milestone = db.Column(db.Boolean, default=False, nullable=False, index=True)
+    completed_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
+
+    case = db.relationship('ProgramCase', backref='tasks')
+    goal = db.relationship('ProgramCaseGoal', backref='tasks')
+    assigned_to = db.relationship('User', backref='program_case_tasks')
+
+    def __repr__(self):
+        return f'<ProgramCaseTask case={self.case_id} {self.title[:30]} [{self.status}]>'
+
+
 # ---------------------------------------------------------------------------
 # Engagement Scoring
 # ---------------------------------------------------------------------------
@@ -1112,6 +1166,8 @@ __all__ = [
     'CaseActivity',
     'BeneficiaryServiceLog',
     'CaseOutcomeMetric',
+    'ProgramCaseGoal',
+    'ProgramCaseTask',
     'DonorEngagementScore',
     'SmartGroup',
     'P2PPage',

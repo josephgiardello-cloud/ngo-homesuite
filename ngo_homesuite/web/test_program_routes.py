@@ -309,3 +309,123 @@ def test_beneficiary_profile_and_timeline_routes(client, app):
     assert "assessment" in event_types
     assert "referral" in event_types
     assert "appointment" in event_types
+
+
+def test_case_goals_tasks_and_milestones_routes(client, app):
+    org_id = _ensure_user(app, "program_goals", "program_goals@test.local", "staff", "program_goals_pass_123")
+    _login(client, "program_goals", "program_goals_pass_123")
+
+    create_beneficiary_rv = client.post(
+        "/programs/intake/beneficiaries",
+        json={
+            "first_name": "Maya",
+            "last_name": "Ortiz",
+            "program": "Housing",
+            "status": "active",
+        },
+    )
+    assert create_beneficiary_rv.status_code == 201
+    beneficiary_id = create_beneficiary_rv.get_json()["id"]
+
+    create_case_rv = client.post(
+        "/programs/cases",
+        json={
+            "title": "Housing stabilization plan",
+            "beneficiary_id": beneficiary_id,
+            "case_type": "service",
+            "intake_stage": "active_service",
+        },
+    )
+    assert create_case_rv.status_code == 201
+    case_id = create_case_rv.get_json()["id"]
+
+    # Goal create/list/update
+    goal_create_rv = client.post(
+        f"/programs/cases/{case_id}/goals",
+        json={
+            "title": "Secure long-term housing",
+            "metric_name": "stable_months",
+            "target_value": 6,
+            "current_value": 1,
+            "unit": "months",
+            "target_date": "2026-12-31",
+        },
+    )
+    assert goal_create_rv.status_code == 201
+    goal_id = goal_create_rv.get_json()["id"]
+
+    goals_list_rv = client.get(f"/programs/cases/{case_id}/goals")
+    assert goals_list_rv.status_code == 200
+    assert any(g["id"] == goal_id for g in goals_list_rv.get_json())
+
+    goal_update_rv = client.patch(
+        f"/programs/cases/{case_id}/goals/{goal_id}",
+        json={"status": "in_progress", "current_value": 2},
+    )
+    assert goal_update_rv.status_code == 200
+    assert goal_update_rv.get_json()["status"] == "in_progress"
+
+    # Task create/list/update (including milestone)
+    task_create_rv = client.post(
+        f"/programs/cases/{case_id}/tasks",
+        json={
+            "title": "Submit housing application",
+            "goal_id": goal_id,
+            "priority": "high",
+            "due_date": "2026-06-30",
+            "is_milestone": True,
+        },
+    )
+    assert task_create_rv.status_code == 201
+    task_id = task_create_rv.get_json()["id"]
+    assert task_create_rv.get_json()["is_milestone"] is True
+
+    tasks_list_rv = client.get(f"/programs/cases/{case_id}/tasks?milestone_only=true")
+    assert tasks_list_rv.status_code == 200
+    assert any(t["id"] == task_id for t in tasks_list_rv.get_json())
+
+    task_update_rv = client.patch(
+        f"/programs/cases/{case_id}/tasks/{task_id}",
+        json={"status": "done"},
+    )
+    assert task_update_rv.status_code == 200
+    task_payload = task_update_rv.get_json()
+    assert task_payload["status"] == "done"
+    assert task_payload["completed_at"] is not None
+
+    # Milestone summary
+    milestone_rv = client.get(f"/programs/cases/{case_id}/milestones/progress")
+    assert milestone_rv.status_code == 200
+    milestone_payload = milestone_rv.get_json()
+    assert milestone_payload["total_milestones"] >= 1
+    assert milestone_payload["completed_milestones"] >= 1
+    assert milestone_payload["completion_percent"] >= 100.0
+
+
+def test_case_goals_and_tasks_validation(client, app):
+    _ensure_user(app, "program_goals_admin", "program_goals_admin@test.local", "admin", "program_goals_admin_pass_123")
+    _login(client, "program_goals_admin", "program_goals_admin_pass_123")
+
+    with app.app_context():
+        org = Organization.query.filter_by(is_active=True).first()
+        case = ProgramCase(
+            organization_id=org.id,
+            title="Goal validation case",
+            case_type="service",
+            status="open",
+        )
+        db.session.add(case)
+        db.session.commit()
+        case_id = case.id
+
+    missing_goal_title_rv = client.post(f"/programs/cases/{case_id}/goals", json={})
+    assert missing_goal_title_rv.status_code == 400
+
+    missing_task_title_rv = client.post(f"/programs/cases/{case_id}/tasks", json={})
+    assert missing_task_title_rv.status_code == 400
+
+    empty_goal_patch_rv = client.patch(f"/programs/cases/{case_id}/goals/999999", json={})
+    assert empty_goal_patch_rv.status_code == 400
+
+    empty_task_patch_rv = client.patch(f"/programs/cases/{case_id}/tasks/999999", json={})
+    assert empty_task_patch_rv.status_code == 400

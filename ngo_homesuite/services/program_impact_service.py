@@ -18,6 +18,8 @@ from ngo_homesuite.models.core import (
     CaseActivity,
     CaseOutcomeMetric,
     ProgramCase,
+    ProgramCaseGoal,
+    ProgramCaseTask,
     db,
 )
 
@@ -670,7 +672,7 @@ def create_appointment(
     db.session.add(appt)
     db.session.commit()
     if case_id:
-        case = ProgramCase.query.get(case_id)
+        case = db.session.get(ProgramCase, case_id)
         if case and case.organization_id == organization_id:
             _log_activity(case.id, organization_id, "appointment_scheduled", f"{title} at {appt.scheduled_at.isoformat()}")
             db.session.commit()
@@ -731,6 +733,230 @@ def cancel_appointment(appointment_id: int, organization_id: int) -> None:
     ).first_or_404()
     appt.status = "cancelled"
     db.session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Case goals, tasks, milestones
+# ---------------------------------------------------------------------------
+
+def create_case_goal(
+    case_id: int,
+    organization_id: int,
+    *,
+    title: str,
+    description: Optional[str] = None,
+    metric_name: Optional[str] = None,
+    target_value: Optional[float] = None,
+    current_value: Optional[float] = None,
+    unit: Optional[str] = None,
+    status: str = "planned",
+    target_date: Optional[Any] = None,
+) -> ProgramCaseGoal:
+    case = ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    goal = ProgramCaseGoal(
+        organization_id=organization_id,
+        case_id=case.id,
+        title=title,
+        description=description,
+        metric_name=metric_name,
+        target_value=target_value,
+        current_value=current_value,
+        unit=unit,
+        status=status,
+        target_date=_coerce_date(target_date) if target_date is not None else None,
+    )
+    if status == "achieved":
+        goal.achieved_at = _utcnow()
+    db.session.add(goal)
+    _log_activity(case.id, organization_id, "goal_created", f"Goal created: {title}")
+    db.session.commit()
+    return goal
+
+
+def list_case_goals(case_id: int, organization_id: int, *, status: Optional[str] = None) -> List[ProgramCaseGoal]:
+    ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    q = ProgramCaseGoal.query.filter_by(case_id=case_id, organization_id=organization_id)
+    if status:
+        q = q.filter_by(status=status)
+    return q.order_by(ProgramCaseGoal.target_date.asc(), ProgramCaseGoal.created_at.asc()).all()
+
+
+def update_case_goal(
+    goal_id: int,
+    case_id: int,
+    organization_id: int,
+    **fields: Any,
+) -> ProgramCaseGoal:
+    ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    goal = ProgramCaseGoal.query.filter_by(
+        id=goal_id,
+        case_id=case_id,
+        organization_id=organization_id,
+    ).first_or_404()
+
+    allowed = {
+        "title",
+        "description",
+        "metric_name",
+        "target_value",
+        "current_value",
+        "unit",
+        "status",
+        "target_date",
+    }
+    for key, value in fields.items():
+        if key not in allowed:
+            continue
+        if key == "target_date":
+            value = _coerce_date(value) if value is not None else None
+        setattr(goal, key, value)
+
+    if goal.status == "achieved" and goal.achieved_at is None:
+        goal.achieved_at = _utcnow()
+    if goal.status != "achieved":
+        goal.achieved_at = None
+
+    _log_activity(case_id, organization_id, "goal_updated", f"Goal updated: {goal.title}")
+    db.session.commit()
+    return goal
+
+
+def create_case_task(
+    case_id: int,
+    organization_id: int,
+    *,
+    title: str,
+    description: Optional[str] = None,
+    goal_id: Optional[int] = None,
+    assigned_to_user_id: Optional[int] = None,
+    status: str = "todo",
+    priority: str = "medium",
+    due_date: Optional[Any] = None,
+    is_milestone: bool = False,
+) -> ProgramCaseTask:
+    ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    if goal_id is not None:
+        ProgramCaseGoal.query.filter_by(
+            id=goal_id,
+            case_id=case_id,
+            organization_id=organization_id,
+        ).first_or_404()
+
+    task = ProgramCaseTask(
+        organization_id=organization_id,
+        case_id=case_id,
+        goal_id=goal_id,
+        assigned_to_user_id=assigned_to_user_id,
+        title=title,
+        description=description,
+        status=status,
+        priority=priority,
+        due_date=_coerce_date(due_date) if due_date is not None else None,
+        is_milestone=bool(is_milestone),
+    )
+    if status == "done":
+        task.completed_at = _utcnow()
+
+    db.session.add(task)
+    _log_activity(case_id, organization_id, "task_created", f"Task created: {title}")
+    db.session.commit()
+    return task
+
+
+def list_case_tasks(
+    case_id: int,
+    organization_id: int,
+    *,
+    goal_id: Optional[int] = None,
+    status: Optional[str] = None,
+    milestone_only: bool = False,
+) -> List[ProgramCaseTask]:
+    ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    q = ProgramCaseTask.query.filter_by(case_id=case_id, organization_id=organization_id)
+    if goal_id is not None:
+        q = q.filter_by(goal_id=goal_id)
+    if status:
+        q = q.filter_by(status=status)
+    if milestone_only:
+        q = q.filter_by(is_milestone=True)
+    return q.order_by(ProgramCaseTask.due_date.asc(), ProgramCaseTask.created_at.asc()).all()
+
+
+def update_case_task(
+    task_id: int,
+    case_id: int,
+    organization_id: int,
+    **fields: Any,
+) -> ProgramCaseTask:
+    ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    task = ProgramCaseTask.query.filter_by(
+        id=task_id,
+        case_id=case_id,
+        organization_id=organization_id,
+    ).first_or_404()
+
+    allowed = {
+        "title",
+        "description",
+        "goal_id",
+        "assigned_to_user_id",
+        "status",
+        "priority",
+        "due_date",
+        "is_milestone",
+    }
+    for key, value in fields.items():
+        if key not in allowed:
+            continue
+        if key == "goal_id" and value is not None:
+            ProgramCaseGoal.query.filter_by(
+                id=value,
+                case_id=case_id,
+                organization_id=organization_id,
+            ).first_or_404()
+        if key == "due_date":
+            value = _coerce_date(value) if value is not None else None
+        if key == "is_milestone":
+            value = bool(value)
+        setattr(task, key, value)
+
+    if task.status == "done" and task.completed_at is None:
+        task.completed_at = _utcnow()
+    if task.status != "done":
+        task.completed_at = None
+
+    _log_activity(case_id, organization_id, "task_updated", f"Task updated: {task.title}")
+    db.session.commit()
+    return task
+
+
+def milestone_progress(case_id: int, organization_id: int) -> Dict[str, Any]:
+    ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    milestones = ProgramCaseTask.query.filter_by(
+        case_id=case_id,
+        organization_id=organization_id,
+        is_milestone=True,
+    ).all()
+
+    total = len(milestones)
+    completed = sum(1 for m in milestones if m.status == "done")
+    pending = total - completed
+    pct = round((completed / total) * 100.0, 2) if total else 0.0
+    now_date = _utcnow().date()
+    overdue = sum(
+        1
+        for m in milestones
+        if m.status != "done" and m.due_date is not None and m.due_date < now_date
+    )
+
+    return {
+        "case_id": case_id,
+        "total_milestones": total,
+        "completed_milestones": completed,
+        "pending_milestones": pending,
+        "overdue_milestones": overdue,
+        "completion_percent": pct,
+    }
 
 
 # ---------------------------------------------------------------------------

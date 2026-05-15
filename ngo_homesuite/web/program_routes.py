@@ -144,6 +144,159 @@ def add_note_route(case_id: int):
     return jsonify({"id": activity.id, "activity_type": activity.activity_type}), 201
 
 
+@program_bp.post("/cases/<int:case_id>/goals")
+@login_required
+@roles_required("admin", "staff")
+def create_case_goal_route(case_id: int):
+    from ngo_homesuite.services.program_impact_service import create_case_goal
+
+    data = request.get_json(silent=True) or {}
+    if not data.get("title"):
+        return jsonify({"error": "title is required"}), 400
+
+    goal = create_case_goal(case_id, _org_id(), **data)
+    return jsonify(
+        {
+            "id": goal.id,
+            "title": goal.title,
+            "status": goal.status,
+            "target_date": goal.target_date.isoformat() if goal.target_date else None,
+            "is_achieved": goal.status == "achieved",
+        }
+    ), 201
+
+
+@program_bp.get("/cases/<int:case_id>/goals")
+@login_required
+def list_case_goals_route(case_id: int):
+    from ngo_homesuite.services.program_impact_service import list_case_goals
+
+    goals = list_case_goals(case_id, _org_id(), status=request.args.get("status"))
+    return jsonify(
+        [
+            {
+                "id": g.id,
+                "title": g.title,
+                "description": g.description,
+                "metric_name": g.metric_name,
+                "target_value": g.target_value,
+                "current_value": g.current_value,
+                "unit": g.unit,
+                "status": g.status,
+                "target_date": g.target_date.isoformat() if g.target_date else None,
+                "achieved_at": g.achieved_at.isoformat() if g.achieved_at else None,
+            }
+            for g in goals
+        ]
+    )
+
+
+@program_bp.patch("/cases/<int:case_id>/goals/<int:goal_id>")
+@login_required
+@roles_required("admin", "staff")
+def update_case_goal_route(case_id: int, goal_id: int):
+    from ngo_homesuite.services.program_impact_service import update_case_goal
+
+    data = request.get_json(silent=True) or {}
+    if not data:
+        return jsonify({"error": "no fields provided"}), 400
+
+    goal = update_case_goal(goal_id, case_id, _org_id(), **data)
+    return jsonify(
+        {
+            "id": goal.id,
+            "title": goal.title,
+            "status": goal.status,
+            "target_date": goal.target_date.isoformat() if goal.target_date else None,
+            "achieved_at": goal.achieved_at.isoformat() if goal.achieved_at else None,
+        }
+    )
+
+
+@program_bp.post("/cases/<int:case_id>/tasks")
+@login_required
+@roles_required("admin", "staff")
+def create_case_task_route(case_id: int):
+    from ngo_homesuite.services.program_impact_service import create_case_task
+
+    data = request.get_json(silent=True) or {}
+    if not data.get("title"):
+        return jsonify({"error": "title is required"}), 400
+
+    task = create_case_task(case_id, _org_id(), **data)
+    return jsonify(
+        {
+            "id": task.id,
+            "title": task.title,
+            "status": task.status,
+            "is_milestone": task.is_milestone,
+            "due_date": task.due_date.isoformat() if task.due_date else None,
+        }
+    ), 201
+
+
+@program_bp.get("/cases/<int:case_id>/tasks")
+@login_required
+def list_case_tasks_route(case_id: int):
+    from ngo_homesuite.services.program_impact_service import list_case_tasks
+
+    milestone_only = request.args.get("milestone_only", "false").lower() in {"1", "true", "yes"}
+    tasks = list_case_tasks(
+        case_id,
+        _org_id(),
+        goal_id=request.args.get("goal_id", type=int),
+        status=request.args.get("status"),
+        milestone_only=milestone_only,
+    )
+    return jsonify(
+        [
+            {
+                "id": t.id,
+                "goal_id": t.goal_id,
+                "title": t.title,
+                "description": t.description,
+                "status": t.status,
+                "priority": t.priority,
+                "is_milestone": t.is_milestone,
+                "due_date": t.due_date.isoformat() if t.due_date else None,
+                "completed_at": t.completed_at.isoformat() if t.completed_at else None,
+            }
+            for t in tasks
+        ]
+    )
+
+
+@program_bp.patch("/cases/<int:case_id>/tasks/<int:task_id>")
+@login_required
+@roles_required("admin", "staff")
+def update_case_task_route(case_id: int, task_id: int):
+    from ngo_homesuite.services.program_impact_service import update_case_task
+
+    data = request.get_json(silent=True) or {}
+    if not data:
+        return jsonify({"error": "no fields provided"}), 400
+
+    task = update_case_task(task_id, case_id, _org_id(), **data)
+    return jsonify(
+        {
+            "id": task.id,
+            "title": task.title,
+            "status": task.status,
+            "is_milestone": task.is_milestone,
+            "due_date": task.due_date.isoformat() if task.due_date else None,
+            "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+        }
+    )
+
+
+@program_bp.get("/cases/<int:case_id>/milestones/progress")
+@login_required
+def milestone_progress_route(case_id: int):
+    from ngo_homesuite.services.program_impact_service import milestone_progress
+
+    return jsonify(milestone_progress(case_id, _org_id()))
+
+
 @program_bp.get("/impact")
 @login_required
 def impact_route():
