@@ -10,7 +10,7 @@ import re
 import unicodedata
 from typing import Any, Dict, List, Optional
 
-from ngo_homesuite.models.core import Donation, P2PPage, P2PPageDonation, db
+from ngo_homesuite.models.core import Donation, Donor, P2PPage, P2PPageDonation, db
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +47,10 @@ def create_page(
     campaign_slug: Optional[str] = None,
     slug: Optional[str] = None,
 ) -> P2PPage:
+    donor = Donor.query.filter_by(id=donor_id, organization_id=organization_id).first()
+    if donor is None:
+        raise ValueError("donor_id must belong to the same organization")
+
     public_slug = _unique_slug(slug or title)
     page = P2PPage(
         organization_id=organization_id,
@@ -128,6 +132,10 @@ def list_pages(
 def link_donation(page_id: int, organization_id: int, donation_id: int) -> P2PPageDonation:
     """Associate an existing donation record with a P2P page."""
     P2PPage.query.filter_by(id=page_id, organization_id=organization_id).first_or_404()
+    donation = Donation.query.filter_by(id=donation_id, organization_id=organization_id).first()
+    if donation is None:
+        raise ValueError("donation_id must belong to the same organization")
+
     existing = P2PPageDonation.query.filter_by(page_id=page_id, donation_id=donation_id).first()
     if existing:
         return existing
@@ -156,7 +164,10 @@ def get_progress(page_id: int, organization_id: int) -> Dict[str, Any]:
     donation_ids = [lnk.donation_id for lnk in links]
 
     if donation_ids:
-        donations = Donation.query.filter(Donation.id.in_(donation_ids)).all()
+        donations = Donation.query.filter(
+            Donation.id.in_(donation_ids),
+            Donation.organization_id == organization_id,
+        ).all()
         total_raised = sum(d.amount for d in donations if d.amount)
         donor_ids = {d.donor_id for d in donations if d.donor_id}
     else:
@@ -189,7 +200,8 @@ def leaderboard(organization_id: int, campaign_slug: Optional[str] = None, limit
             total = sum(
                 d.amount
                 for d in Donation.query.filter(
-                    Donation.id.in_([l.donation_id for l in links])
+                    Donation.id.in_([l.donation_id for l in links]),
+                    Donation.organization_id == organization_id,
                 ).all()
                 if d.amount
             )

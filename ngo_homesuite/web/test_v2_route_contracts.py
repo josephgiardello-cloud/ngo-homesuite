@@ -4,6 +4,7 @@ import pytest
 
 from ngo_homesuite.app_factory import create_app
 from ngo_homesuite.flask_config import TestingConfig
+from ngo_homesuite.models.core import Donation, Donor, Organization, db
 
 
 @pytest.fixture(scope="module")
@@ -70,3 +71,44 @@ def test_v2_p2p_detail_endpoints_require_auth(client):
     progress_resp = client.get("/api/v2/p2p/pages/1/progress", follow_redirects=False)
     assert page_resp.status_code in (302, 401)
     assert progress_resp.status_code in (302, 401)
+
+
+def test_v2_p2p_link_rejects_cross_tenant_donation(client, app):
+    _login_admin(client)
+
+    create_page_resp = client.post(
+        "/api/v2/p2p/pages",
+        json={"donor_id": 1, "title": "Tenant Safety Page"},
+    )
+    assert create_page_resp.status_code == 201
+    page_id = create_page_resp.get_json()["id"]
+
+    with app.app_context():
+        org2 = Organization(name="Route Org Two", slug="route-org-two", is_active=True)
+        db.session.add(org2)
+        db.session.flush()
+
+        donor2 = Donor(organization_id=org2.id, name="Org2 Donor", email="org2.donor@example.org")
+        db.session.add(donor2)
+        db.session.flush()
+
+        donation2 = Donation(
+            organization_id=org2.id,
+            donor_id=donor2.id,
+            donor_name=donor2.name,
+            donor_email=donor2.email,
+            amount=25.0,
+            currency="USD",
+            status="received",
+            payment_method="bank_transfer",
+        )
+        db.session.add(donation2)
+        db.session.commit()
+        foreign_donation_id = donation2.id
+
+    rv = client.post(
+        f"/api/v2/p2p/pages/{page_id}/link-donation",
+        json={"donation_id": foreign_donation_id},
+    )
+    assert rv.status_code == 400
+    assert "same organization" in (rv.get_json() or {}).get("error", "")

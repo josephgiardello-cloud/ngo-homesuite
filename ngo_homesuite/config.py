@@ -77,6 +77,7 @@ class RuntimeSettings(BaseModel):
     migration_backup_warn_only: bool = Field(default=False)
 
     demo_admin_password: str = Field(default="admin123!")
+    enable_demo_seed: bool = Field(default=False)
 
     @field_validator("flask_env")
     @classmethod
@@ -275,6 +276,7 @@ def load_runtime_settings() -> RuntimeSettings:
         "require_backup_before_migrate": _parse_bool(os.environ.get("NGO_HOMESUITE_REQUIRE_BACKUP_BEFORE_MIGRATE"), True),
         "migration_backup_warn_only": _parse_bool(os.environ.get("NGO_HOMESUITE_MIGRATION_BACKUP_WARN_ONLY"), False),
         "demo_admin_password": os.environ.get("NGO_DEMO_ADMIN_PASSWORD", "admin123!"),
+        "enable_demo_seed": _parse_bool(os.environ.get("NGO_HOMESUITE_ENABLE_DEMO_SEED"), False),
     }
 
     try:

@@ -258,6 +258,25 @@ class TestP2PFundraising:
         db.session.rollback()
         assert isinstance(result, list)
 
+    def test_link_donation_rejects_cross_org_donation(self, ctx):
+        from ngo_homesuite.services.p2p_service import create_page, link_donation
+        from ngo_homesuite.models.core import Organization
+
+        org2 = Organization(name="Org Two", slug="org-two", is_active=True)
+        db.session.add(org2)
+        db.session.flush()
+
+        donor_org1 = _make_donor(org_id=1, name="Org1 Donor")
+        donor_org2 = _make_donor(org_id=org2.id, name="Org2 Donor")
+
+        page = create_page(1, donor_org1.id, "Org1 Page", goal_amount=100.0)
+        donation_org2 = _make_donation(org2.id, donor_org2.id, 75.0)
+
+        with pytest.raises(ValueError, match="same organization"):
+            link_donation(page.id, 1, donation_org2.id)
+
+        db.session.rollback()
+
 
 # ============================================================
 # Copilot Tools — Engagement Score integration

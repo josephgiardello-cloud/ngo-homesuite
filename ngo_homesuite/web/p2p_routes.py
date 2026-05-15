@@ -42,7 +42,11 @@ def create_page_route():
     if data.get("donor_id") is None or not data.get("title"):
         return jsonify({"error": "donor_id and title are required"}), 400
 
-    page = create_page(_org_id(), **data)
+    try:
+        page = create_page(_org_id(), **data)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
     return jsonify({"id": page.id, "public_slug": page.public_slug, "status": page.status}), 201
 
 

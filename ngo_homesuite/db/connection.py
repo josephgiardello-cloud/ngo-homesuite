@@ -362,19 +362,6 @@ def _install_attach_hardening(conn: sqlite3.Connection) -> None:
     except Exception:
         pass
 
-from ..config import (
-    BACKUP_DIRECTORY,
-    DB_ENCRYPTION_KEY_ENV,
-    DB_PATH,
-    DB_POOL_SIZE,
-    DB_SQLCIPHER_KDF_ITERATIONS,
-    DB_SQLCIPHER_MIN_KDF_ITERATIONS,
-    DB_SQLCIPHER_MIN_PASSPHRASE_LENGTH,
-    DB_SQLCIPHER_REQUIRE_HEX_KEY,
-)
-
-
-
 T = TypeVar("T")
 DBConnection: TypeAlias = sqlite3.Connection
 

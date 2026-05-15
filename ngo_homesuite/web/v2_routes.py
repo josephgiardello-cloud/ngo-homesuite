@@ -315,7 +315,11 @@ def list_p2p_pages():
 def create_p2p_page():
     from ngo_homesuite.services.p2p_service import create_page
     data = _json_or_400(required=["donor_id", "title"])
-    page = create_page(_org_id(), **data)
+    try:
+        page = create_page(_org_id(), **data)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
     return jsonify(_p2p_dict(page)), 201
 
 
@@ -351,7 +355,11 @@ def p2p_progress(page_id: int):
 def link_p2p_donation(page_id: int):
     from ngo_homesuite.services.p2p_service import link_donation
     data = _json_or_400(required=["donation_id"])
-    link = link_donation(page_id, _org_id(), int(data["donation_id"]))
+    try:
+        link = link_donation(page_id, _org_id(), int(data["donation_id"]))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
     return jsonify({"page_id": link.page_id, "donation_id": link.donation_id}), 201
 
 

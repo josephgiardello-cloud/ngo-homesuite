@@ -77,7 +77,8 @@ def create_app(config=None):
         if db_uri.startswith('sqlite:///') and ':memory:' not in db_uri:
             auto_migrate(db_uri.replace('sqlite:///', '', 1))
         db.create_all()
-        seed_demo_data(app)
+        if bool(app.config.get('ENABLE_DEMO_SEED', False)):
+            seed_demo_data(app)
     
     # Register error handlers
     init_error_handlers(app)

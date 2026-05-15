@@ -85,6 +85,7 @@ class Config:
     COPILOT_TOOL_TIMEOUT_SEC = _RUNTIME_SETTINGS.copilot_tool_timeout_sec
     COPILOT_CONVERSATION_MAX_MESSAGES = _RUNTIME_SETTINGS.copilot_conversation_max_messages
     CORS_ALLOWED_ORIGINS = _RUNTIME_SETTINGS.cors_allowed_origins
+    ENABLE_DEMO_SEED = _RUNTIME_SETTINGS.enable_demo_seed
 
 
 class DevelopmentConfig(Config):
@@ -104,6 +105,7 @@ class TestingConfig(Config):
     SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
     WTF_CSRF_ENABLED = False
     RATELIMIT_ENABLED = False
+    ENABLE_DEMO_SEED = True
 
 
 class ProductionConfig(Config):
