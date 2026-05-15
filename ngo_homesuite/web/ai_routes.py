@@ -9,7 +9,7 @@ from typing import Any, Dict
 from flask import Blueprint, Response, current_app, jsonify, request, stream_with_context
 from flask_login import current_user, login_required
 
-from ngo_homesuite.ai.apex_client import ApexClient, ApexClientError
+from ngo_homesuite.ai.apex_client import OllamaClient, OllamaClientError
 from ngo_homesuite.ai.pii_redact import redact_pii
 from ngo_homesuite.models.core import db, AIConversation, AIMessage
 from ngo_homesuite.prompts import NGO_APEX_POLICY_SYSTEM_PROMPT
@@ -61,11 +61,11 @@ def _persist_exchange(session_id: str, model: str, tenant_id: str,
         current_app.logger.warning("AI persistence failed: %s", exc)
 
 
-def _client() -> ApexClient:
-    return ApexClient(
-        base_url=current_app.config["APEX_BASE_URL"],
-        api_token=current_app.config.get("APEX_API_TOKEN"),
-        timeout_s=float(current_app.config.get("APEX_TIMEOUT_S", 120.0)),
+def _client() -> OllamaClient:
+    return OllamaClient(
+        host=current_app.config.get("OLLAMA_HOST", current_app.config.get("APEX_BASE_URL", "http://localhost:11434")),
+        model=str(current_app.config.get("OLLAMA_MODEL", current_app.config.get("APEX_MODEL", "llama3.2"))),
+        timeout_s=float(current_app.config.get("OLLAMA_TIMEOUT_S", current_app.config.get("APEX_TIMEOUT_S", 120.0))),
     )
 
 
@@ -154,7 +154,7 @@ def chat_once() -> Response:
             session_id=session_id,
             system_prompt=NGO_APEX_POLICY_SYSTEM_PROMPT,
         )
-    except ApexClientError as exc:
+    except OllamaClientError as exc:
         return jsonify({"error": str(exc)}), 502
 
     digest = hashlib.sha256(redacted_prompt.encode("utf-8")).hexdigest()
@@ -209,7 +209,7 @@ def stream_chat() -> Response:
                     session_id, model, tenant_id,
                     redacted_prompt, "".join(tokens), digest,
                 )
-        except ApexClientError as exc:
+        except OllamaClientError as exc:
             yield f"data: {json.dumps({'error': str(exc)})}\n\n"
 
     response = Response(stream_with_context(event_stream()), mimetype="text/event-stream")
