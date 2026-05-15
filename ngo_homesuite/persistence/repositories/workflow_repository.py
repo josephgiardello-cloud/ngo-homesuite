@@ -43,6 +43,8 @@ class WorkflowRepository:
     def save(self, instance: WorkflowInstance, *, uow: UnitOfWorkPort | None = None) -> WorkflowInstance:
         self._assert_org_id(instance.org_id)
         record = WorkflowInstanceRecord.query.filter_by(instance_id=instance.instance_id).first()
+        if record is not None and record.org_id != instance.org_id:
+            raise PermissionError("Cross-tenant workflow instance collision detected")
         history_json = self._to_record_history(instance.history)
         if record is None:
             record = WorkflowInstanceRecord(

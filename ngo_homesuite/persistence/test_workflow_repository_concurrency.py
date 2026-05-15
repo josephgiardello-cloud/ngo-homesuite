@@ -5,6 +5,8 @@ import pytest
 from ngo_homesuite.app_factory import create_app
 from ngo_homesuite.flask_config import TestingConfig
 from ngo_homesuite.models.core import Organization
+from ngo_homesuite.workflow_engine import WorkflowInstance
+from ngo_homesuite.workflow_engine.instance import WorkflowStatus
 
 
 @pytest.fixture(scope="module")
@@ -35,3 +37,42 @@ def test_workflow_repository_optimistic_lock_conflict(app):
 
         with pytest.raises(RuntimeError, match="Optimistic lock conflict"):
             repository.save(stale_b)
+
+
+def test_workflow_repository_rejects_cross_org_instance_collision(app):
+    with app.app_context():
+        repository = app.extensions["v2_container"].workflow_repository
+        org_a = Organization.query.filter_by(is_active=True).first()
+        assert org_a is not None
+        org_b = Organization(name="Workflow Collision Org B", slug="workflow-collision-org-b", is_active=True)
+        from ngo_homesuite.models.core import db
+
+        db.session.add(org_b)
+        db.session.flush()
+
+        shared_id = "workflow-collision-test-123"
+        saved_a = repository.save(
+            WorkflowInstance(
+                instance_id=shared_id,
+                org_id=str(org_a.id),
+                workflow_type="case_intake",
+                current_step="step_one",
+                status=WorkflowStatus.ACTIVE,
+            )
+        )
+        assert saved_a.current_step == "step_one"
+
+        with pytest.raises(PermissionError, match="Cross-tenant workflow instance collision detected"):
+            repository.save(
+                WorkflowInstance(
+                    instance_id=shared_id,
+                    org_id=str(org_b.id),
+                    workflow_type="case_intake",
+                    current_step="step_two",
+                    status=WorkflowStatus.ACTIVE,
+                )
+            )
+
+        fetched_a = repository.get(shared_id, org_id=str(org_a.id))
+        assert fetched_a is not None
+        assert fetched_a.current_step == "step_one"
