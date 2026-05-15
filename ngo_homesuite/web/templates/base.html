@@ -493,10 +493,29 @@
             margin-top: 0.35rem;
         }
 
+        .ai-action-check {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            font-size: 0.82rem;
+        }
+
+        .ai-action-check input {
+            width: 0.9rem;
+            height: 0.9rem;
+        }
+
         .ai-action-label {
             font-size: 0.82rem;
             font-family: Consolas, "Courier New", monospace;
             color: var(--text);
+        }
+
+        .ai-action-bulk {
+            margin-top: 0.5rem;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.4rem;
         }
 
         .ai-approve-btn {
@@ -804,6 +823,20 @@
                         return;
                     }
 
+                    const toolNames = Array.from(
+                        new Set(
+                            pendingActions
+                                .map(function(actionItem) {
+                                    return String((actionItem && actionItem.tool) || '').trim();
+                                })
+                                .filter(Boolean)
+                        )
+                    );
+
+                    if (toolNames.length === 0) {
+                        return;
+                    }
+
                     const card = document.createElement('div');
                     card.className = 'ai-action-card';
 
@@ -812,41 +845,71 @@
                     title.textContent = 'Approval required before executing:';
                     card.appendChild(title);
 
-                    pendingActions.forEach(function(actionItem) {
-                        const toolName = String((actionItem && actionItem.tool) || '').trim();
-                        if (!toolName) {
-                            return;
-                        }
+                    toolNames.forEach(function(toolName) {
+                        const row = document.createElement('label');
+                        row.className = 'ai-action-row ai-action-check';
 
-                        const row = document.createElement('div');
-                        row.className = 'ai-action-row';
+                        const check = document.createElement('input');
+                        check.type = 'checkbox';
+                        check.value = toolName;
+                        check.checked = true;
 
                         const label = document.createElement('div');
                         label.className = 'ai-action-label';
                         label.textContent = toolName;
+                        row.appendChild(check);
+                        row.appendChild(label);
+                        card.appendChild(row);
+                    });
 
-                        const btn = document.createElement('button');
-                        btn.type = 'button';
-                        btn.className = 'ai-approve-btn';
-                        btn.textContent = 'Approve & re-run';
-                        btn.addEventListener('click', async function() {
-                            btn.disabled = true;
-                            btn.textContent = 'Running...';
-                            addMessage('Approved action: ' + toolName, 'user');
-                            try {
-                                await streamAssistantReply(promptText, [toolName]);
-                            } catch (err) {
-                                addMessage((err && err.message) ? err.message : 'Approval execution failed.', 'error');
-                            } finally {
-                                btn.disabled = false;
-                                btn.textContent = 'Approve & re-run';
+                    const bulk = document.createElement('div');
+                    bulk.className = 'ai-action-bulk';
+
+                    const approveSelectedBtn = document.createElement('button');
+                    approveSelectedBtn.type = 'button';
+                    approveSelectedBtn.className = 'ai-approve-btn';
+                    approveSelectedBtn.textContent = 'Approve selected and re-run';
+
+                    const approveAllBtn = document.createElement('button');
+                    approveAllBtn.type = 'button';
+                    approveAllBtn.className = 'ai-approve-btn';
+                    approveAllBtn.textContent = 'Approve all';
+
+                    async function runApproval(mode) {
+                        const checks = card.querySelectorAll('input[type="checkbox"]');
+                        const selected = [];
+                        checks.forEach(function(c) {
+                            if (mode === 'all' || c.checked) {
+                                selected.push(c.value);
                             }
                         });
 
-                        row.appendChild(label);
-                        row.appendChild(btn);
-                        card.appendChild(row);
-                    });
+                        if (selected.length === 0) {
+                            addMessage('No pending actions selected for approval.', 'error');
+                            return;
+                        }
+
+                        approveSelectedBtn.disabled = true;
+                        approveAllBtn.disabled = true;
+                        const selectedText = selected.join(', ');
+                        addMessage('Approved actions: ' + selectedText, 'user');
+
+                        try {
+                            await streamAssistantReply(promptText, selected);
+                        } catch (err) {
+                            addMessage((err && err.message) ? err.message : 'Approval execution failed.', 'error');
+                        } finally {
+                            approveSelectedBtn.disabled = false;
+                            approveAllBtn.disabled = false;
+                        }
+                    }
+
+                    approveSelectedBtn.addEventListener('click', function() { runApproval('selected'); });
+                    approveAllBtn.addEventListener('click', function() { runApproval('all'); });
+
+                    bulk.appendChild(approveSelectedBtn);
+                    bulk.appendChild(approveAllBtn);
+                    card.appendChild(bulk);
 
                     if (card.childNodes.length > 1) {
                         container.appendChild(card);
