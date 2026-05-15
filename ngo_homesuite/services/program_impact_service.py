@@ -18,6 +18,8 @@ from ngo_homesuite.models.core import (
     CaseActivity,
     CaseOutcomeMetric,
     ProgramCase,
+    ProgramCaseDocument,
+    ProgramCaseFollowUp,
     ProgramCaseGoal,
     ProgramCaseTask,
     db,
@@ -960,6 +962,220 @@ def milestone_progress(case_id: int, organization_id: int) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Case documents
+# ---------------------------------------------------------------------------
+
+def add_case_document(
+    case_id: int,
+    organization_id: int,
+    *,
+    title: str,
+    category: str = "attachment",
+    file_name: Optional[str] = None,
+    mime_type: Optional[str] = None,
+    storage_key: Optional[str] = None,
+    external_url: Optional[str] = None,
+    notes: Optional[str] = None,
+    uploaded_by_user_id: Optional[int] = None,
+) -> ProgramCaseDocument:
+    case = ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    doc = ProgramCaseDocument(
+        organization_id=organization_id,
+        case_id=case.id,
+        uploaded_by_user_id=uploaded_by_user_id,
+        category=category,
+        title=title,
+        file_name=file_name,
+        mime_type=mime_type,
+        storage_key=storage_key,
+        external_url=external_url,
+        notes=notes,
+    )
+    db.session.add(doc)
+    _log_activity(case.id, organization_id, "document_added", f"Document added: {title}")
+    db.session.commit()
+    return doc
+
+
+def list_case_documents(
+    case_id: int,
+    organization_id: int,
+    *,
+    category: Optional[str] = None,
+) -> List[ProgramCaseDocument]:
+    ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    q = ProgramCaseDocument.query.filter_by(case_id=case_id, organization_id=organization_id)
+    if category:
+        q = q.filter_by(category=category)
+    return q.order_by(ProgramCaseDocument.created_at.desc()).all()
+
+
+# ---------------------------------------------------------------------------
+# Follow-up workflow (reminder/escalation aware)
+# ---------------------------------------------------------------------------
+
+def create_followup(
+    case_id: int,
+    organization_id: int,
+    *,
+    title: str,
+    due_at: Any,
+    description: Optional[str] = None,
+    follow_up_type: str = "general",
+    status: str = "scheduled",
+    reminder_at: Optional[Any] = None,
+    assigned_to_user_id: Optional[int] = None,
+    created_by_user_id: Optional[int] = None,
+    notes: Optional[str] = None,
+) -> ProgramCaseFollowUp:
+    case = ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    followup = ProgramCaseFollowUp(
+        organization_id=organization_id,
+        case_id=case.id,
+        beneficiary_id=case.beneficiary_id,
+        assigned_to_user_id=assigned_to_user_id,
+        created_by_user_id=created_by_user_id,
+        title=title,
+        description=description,
+        follow_up_type=follow_up_type,
+        status=status,
+        due_at=_coerce_datetime(due_at),
+        reminder_at=_coerce_datetime(reminder_at) if reminder_at is not None else None,
+        notes=notes,
+    )
+
+    if followup.status == "completed":
+        followup.completed_at = _utcnow()
+
+    db.session.add(followup)
+    _log_activity(case.id, organization_id, "followup_created", f"Follow-up created: {title}")
+    db.session.commit()
+    return followup
+
+
+def list_followups(
+    case_id: int,
+    organization_id: int,
+    *,
+    status: Optional[str] = None,
+    due_before: Optional[Any] = None,
+    include_escalated: bool = True,
+) -> List[ProgramCaseFollowUp]:
+    ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    q = ProgramCaseFollowUp.query.filter_by(case_id=case_id, organization_id=organization_id)
+    if status:
+        q = q.filter_by(status=status)
+    if due_before is not None:
+        q = q.filter(ProgramCaseFollowUp.due_at <= _coerce_datetime(due_before))
+    if not include_escalated:
+        q = q.filter(ProgramCaseFollowUp.status != "escalated")
+    return q.order_by(ProgramCaseFollowUp.due_at.asc()).all()
+
+
+def update_followup(
+    followup_id: int,
+    case_id: int,
+    organization_id: int,
+    **fields: Any,
+) -> ProgramCaseFollowUp:
+    ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    followup = ProgramCaseFollowUp.query.filter_by(
+        id=followup_id,
+        case_id=case_id,
+        organization_id=organization_id,
+    ).first_or_404()
+
+    allowed = {
+        "title",
+        "description",
+        "follow_up_type",
+        "status",
+        "due_at",
+        "reminder_at",
+        "assigned_to_user_id",
+        "notes",
+    }
+    for key, value in fields.items():
+        if key not in allowed:
+            continue
+        if key in {"due_at", "reminder_at"}:
+            value = _coerce_datetime(value) if value is not None else None
+        setattr(followup, key, value)
+
+    if followup.status == "completed" and followup.completed_at is None:
+        followup.completed_at = _utcnow()
+    if followup.status != "completed":
+        followup.completed_at = None
+
+    if followup.status == "escalated":
+        followup.escalation_level = max(int(followup.escalation_level or 0), 1)
+        if followup.escalated_at is None:
+            followup.escalated_at = _utcnow()
+
+    _log_activity(case_id, organization_id, "followup_updated", f"Follow-up updated: {followup.title}")
+    db.session.commit()
+    return followup
+
+
+def escalate_overdue_followups(
+    case_id: int,
+    organization_id: int,
+    *,
+    reason: str = "Follow-up overdue",
+) -> int:
+    ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    now = _utcnow()
+    overdue = (
+        ProgramCaseFollowUp.query
+        .filter_by(case_id=case_id, organization_id=organization_id)
+        .filter(ProgramCaseFollowUp.status.in_(["scheduled", "in_progress", "missed"]))
+        .filter(ProgramCaseFollowUp.due_at < now)
+        .all()
+    )
+
+    count = 0
+    for followup in overdue:
+        followup.status = "escalated"
+        followup.escalation_level = int(followup.escalation_level or 0) + 1
+        followup.escalation_reason = reason
+        followup.escalated_at = now
+        count += 1
+
+    if count:
+        _log_activity(case_id, organization_id, "followup_escalated", f"Escalated overdue follow-ups: {count}")
+    db.session.commit()
+    return count
+
+
+def followup_summary(case_id: int, organization_id: int) -> Dict[str, Any]:
+    ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    now = _utcnow()
+    followups = ProgramCaseFollowUp.query.filter_by(case_id=case_id, organization_id=organization_id).all()
+
+    by_status: Dict[str, int] = {}
+    overdue = 0
+    reminders_due = 0
+    escalated = 0
+    for item in followups:
+        by_status[item.status] = by_status.get(item.status, 0) + 1
+        if item.status != "completed" and item.due_at < now:
+            overdue += 1
+        if item.status in {"scheduled", "in_progress"} and item.reminder_at is not None and item.reminder_at <= now:
+            reminders_due += 1
+        if item.status == "escalated":
+            escalated += 1
+
+    return {
+        "case_id": case_id,
+        "total": len(followups),
+        "by_status": by_status,
+        "overdue": overdue,
+        "reminders_due": reminders_due,
+        "escalated": escalated,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Beneficiary profile + timeline
 # ---------------------------------------------------------------------------
 
@@ -1007,6 +1223,27 @@ def beneficiary_profile(beneficiary_id: int, organization_id: int) -> Dict[str, 
             .count()
         )
 
+    document_count = 0
+    followup_count = 0
+    escalated_followups = 0
+    if case_ids:
+        document_count = (
+            ProgramCaseDocument.query
+            .filter(ProgramCaseDocument.case_id.in_(case_ids))
+            .count()
+        )
+        followup_count = (
+            ProgramCaseFollowUp.query
+            .filter(ProgramCaseFollowUp.case_id.in_(case_ids))
+            .count()
+        )
+        escalated_followups = (
+            ProgramCaseFollowUp.query
+            .filter(ProgramCaseFollowUp.case_id.in_(case_ids))
+            .filter_by(status="escalated")
+            .count()
+        )
+
     now = _utcnow()
     upcoming_appointments = (
         BeneficiaryAppointment.query
@@ -1035,6 +1272,9 @@ def beneficiary_profile(beneficiary_id: int, organization_id: int) -> Dict[str, 
             "average_progress_percent": avg_progress,
             "service_log_count": service_count,
             "referral_count": referral_count,
+            "document_count": document_count,
+            "followup_count": followup_count,
+            "escalated_followups": escalated_followups,
             "upcoming_appointments": upcoming_appointments,
         },
         "latest_assessment": (
@@ -1119,6 +1359,43 @@ def beneficiary_timeline(
                     "provider_name": item.provider_name,
                     "service_type": item.service_type,
                     "status": item.status,
+                }
+            )
+
+        documents = (
+            ProgramCaseDocument.query
+            .filter(ProgramCaseDocument.organization_id == organization_id)
+            .filter(ProgramCaseDocument.case_id.in_(case_ids))
+            .all()
+        )
+        for item in documents:
+            events.append(
+                {
+                    "event_type": "document",
+                    "timestamp": item.created_at,
+                    "case_id": item.case_id,
+                    "title": item.title,
+                    "category": item.category,
+                    "file_name": item.file_name,
+                }
+            )
+
+        followups = (
+            ProgramCaseFollowUp.query
+            .filter(ProgramCaseFollowUp.organization_id == organization_id)
+            .filter(ProgramCaseFollowUp.case_id.in_(case_ids))
+            .all()
+        )
+        for item in followups:
+            events.append(
+                {
+                    "event_type": "followup",
+                    "timestamp": item.updated_at or item.created_at,
+                    "case_id": item.case_id,
+                    "title": item.title,
+                    "status": item.status,
+                    "due_at": item.due_at.isoformat() if item.due_at else None,
+                    "escalation_level": item.escalation_level,
                 }
             )
 

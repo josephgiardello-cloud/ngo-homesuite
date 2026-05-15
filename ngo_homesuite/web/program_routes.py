@@ -297,6 +297,171 @@ def milestone_progress_route(case_id: int):
     return jsonify(milestone_progress(case_id, _org_id()))
 
 
+@program_bp.post("/cases/<int:case_id>/documents")
+@login_required
+@roles_required("admin", "staff")
+def add_case_document_route(case_id: int):
+    from ngo_homesuite.services.program_impact_service import add_case_document
+
+    data = request.get_json(silent=True) or {}
+    if not data.get("title"):
+        return jsonify({"error": "title is required"}), 400
+
+    doc = add_case_document(
+        case_id,
+        _org_id(),
+        uploaded_by_user_id=current_user.id,
+        **data,
+    )
+    return jsonify(
+        {
+            "id": doc.id,
+            "title": doc.title,
+            "category": doc.category,
+            "file_name": doc.file_name,
+            "external_url": doc.external_url,
+            "created_at": doc.created_at.isoformat() if doc.created_at else None,
+        }
+    ), 201
+
+
+@program_bp.get("/cases/<int:case_id>/documents")
+@login_required
+def list_case_documents_route(case_id: int):
+    from ngo_homesuite.services.program_impact_service import list_case_documents
+
+    docs = list_case_documents(case_id, _org_id(), category=request.args.get("category"))
+    return jsonify(
+        [
+            {
+                "id": d.id,
+                "title": d.title,
+                "category": d.category,
+                "file_name": d.file_name,
+                "mime_type": d.mime_type,
+                "storage_key": d.storage_key,
+                "external_url": d.external_url,
+                "notes": d.notes,
+                "created_at": d.created_at.isoformat() if d.created_at else None,
+            }
+            for d in docs
+        ]
+    )
+
+
+@program_bp.post("/cases/<int:case_id>/followups")
+@login_required
+@roles_required("admin", "staff")
+def create_followup_route(case_id: int):
+    from ngo_homesuite.services.program_impact_service import create_followup
+
+    data = request.get_json(silent=True) or {}
+    if not data.get("title"):
+        return jsonify({"error": "title is required"}), 400
+    if not data.get("due_at"):
+        return jsonify({"error": "due_at is required"}), 400
+
+    followup = create_followup(
+        case_id,
+        _org_id(),
+        created_by_user_id=current_user.id,
+        **data,
+    )
+    return jsonify(
+        {
+            "id": followup.id,
+            "title": followup.title,
+            "status": followup.status,
+            "due_at": followup.due_at.isoformat() if followup.due_at else None,
+            "reminder_at": followup.reminder_at.isoformat() if followup.reminder_at else None,
+            "escalation_level": followup.escalation_level,
+        }
+    ), 201
+
+
+@program_bp.get("/cases/<int:case_id>/followups")
+@login_required
+def list_followups_route(case_id: int):
+    from ngo_homesuite.services.program_impact_service import list_followups
+
+    include_escalated = request.args.get("include_escalated", "true").lower() in {"1", "true", "yes"}
+    items = list_followups(
+        case_id,
+        _org_id(),
+        status=request.args.get("status"),
+        due_before=request.args.get("due_before"),
+        include_escalated=include_escalated,
+    )
+    return jsonify(
+        [
+            {
+                "id": f.id,
+                "title": f.title,
+                "status": f.status,
+                "follow_up_type": f.follow_up_type,
+                "due_at": f.due_at.isoformat() if f.due_at else None,
+                "reminder_at": f.reminder_at.isoformat() if f.reminder_at else None,
+                "escalation_level": f.escalation_level,
+                "escalation_reason": f.escalation_reason,
+                "escalated_at": f.escalated_at.isoformat() if f.escalated_at else None,
+                "completed_at": f.completed_at.isoformat() if f.completed_at else None,
+                "assigned_to_user_id": f.assigned_to_user_id,
+                "notes": f.notes,
+            }
+            for f in items
+        ]
+    )
+
+
+@program_bp.patch("/cases/<int:case_id>/followups/<int:followup_id>")
+@login_required
+@roles_required("admin", "staff")
+def update_followup_route(case_id: int, followup_id: int):
+    from ngo_homesuite.services.program_impact_service import update_followup
+
+    data = request.get_json(silent=True) or {}
+    if not data:
+        return jsonify({"error": "no fields provided"}), 400
+
+    followup = update_followup(followup_id, case_id, _org_id(), **data)
+    return jsonify(
+        {
+            "id": followup.id,
+            "title": followup.title,
+            "status": followup.status,
+            "due_at": followup.due_at.isoformat() if followup.due_at else None,
+            "reminder_at": followup.reminder_at.isoformat() if followup.reminder_at else None,
+            "escalation_level": followup.escalation_level,
+            "escalation_reason": followup.escalation_reason,
+            "escalated_at": followup.escalated_at.isoformat() if followup.escalated_at else None,
+            "completed_at": followup.completed_at.isoformat() if followup.completed_at else None,
+        }
+    )
+
+
+@program_bp.post("/cases/<int:case_id>/followups/escalate-overdue")
+@login_required
+@roles_required("admin", "staff")
+def escalate_overdue_followups_route(case_id: int):
+    from ngo_homesuite.services.program_impact_service import escalate_overdue_followups
+
+    data = request.get_json(silent=True) or {}
+    count = escalate_overdue_followups(
+        case_id,
+        _org_id(),
+        reason=data.get("reason", "Follow-up overdue"),
+    )
+    return jsonify({"escalated_count": count})
+
+
+@program_bp.get("/cases/<int:case_id>/followups/summary")
+@login_required
+def followup_summary_route(case_id: int):
+    from ngo_homesuite.services.program_impact_service import followup_summary
+
+    return jsonify(followup_summary(case_id, _org_id()))
+
+
 @program_bp.get("/impact")
 @login_required
 def impact_route():

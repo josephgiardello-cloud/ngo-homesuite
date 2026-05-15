@@ -790,6 +790,66 @@ class ProgramCaseTask(db.Model):
         return f'<ProgramCaseTask case={self.case_id} {self.title[:30]} [{self.status}]>'
 
 
+class ProgramCaseDocument(db.Model):
+    """Document metadata linked to a case (attachments, consent forms, plans)."""
+
+    __tablename__ = 'program_case_documents'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    case_id = db.Column(db.Integer, db.ForeignKey('program_cases.id'), nullable=False, index=True)
+    uploaded_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+    category = db.Column(db.String(50), default='attachment', nullable=False, index=True)  # attachment, consent, assessment, plan, referral, evidence
+    title = db.Column(db.String(300), nullable=False)
+    file_name = db.Column(db.String(255), nullable=True)
+    mime_type = db.Column(db.String(120), nullable=True)
+    storage_key = db.Column(db.String(500), nullable=True)  # object key/path in storage backend
+    external_url = db.Column(db.String(1000), nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+
+    case = db.relationship('ProgramCase', backref='documents')
+    uploaded_by = db.relationship('User', backref='program_case_documents')
+
+    def __repr__(self):
+        return f'<ProgramCaseDocument case={self.case_id} {self.title[:30]}>'
+
+
+class ProgramCaseFollowUp(db.Model):
+    """Follow-up workflow item with reminder and escalation metadata."""
+
+    __tablename__ = 'program_case_followups'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    case_id = db.Column(db.Integer, db.ForeignKey('program_cases.id'), nullable=False, index=True)
+    beneficiary_id = db.Column(db.Integer, db.ForeignKey('beneficiaries.id'), nullable=True, index=True)
+    assigned_to_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+
+    title = db.Column(db.String(300), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    status = db.Column(db.String(30), default='scheduled', nullable=False, index=True)  # scheduled, in_progress, completed, missed, escalated, cancelled
+    follow_up_type = db.Column(db.String(50), default='general', nullable=False)
+    due_at = db.Column(db.DateTime, nullable=False, index=True)
+    reminder_at = db.Column(db.DateTime, nullable=True, index=True)
+    escalation_level = db.Column(db.Integer, default=0, nullable=False)
+    escalation_reason = db.Column(db.Text, nullable=True)
+    escalated_at = db.Column(db.DateTime, nullable=True)
+    completed_at = db.Column(db.DateTime, nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
+
+    case = db.relationship('ProgramCase', backref='followups')
+    beneficiary = db.relationship('Beneficiary', backref='followups')
+    assigned_to = db.relationship('User', foreign_keys=[assigned_to_user_id], backref='program_case_followups_assigned')
+    created_by = db.relationship('User', foreign_keys=[created_by_user_id], backref='program_case_followups_created')
+
+    def __repr__(self):
+        return f'<ProgramCaseFollowUp case={self.case_id} {self.title[:30]} [{self.status}]>'
+
+
 # ---------------------------------------------------------------------------
 # Engagement Scoring
 # ---------------------------------------------------------------------------
@@ -1168,6 +1228,8 @@ __all__ = [
     'CaseOutcomeMetric',
     'ProgramCaseGoal',
     'ProgramCaseTask',
+    'ProgramCaseDocument',
+    'ProgramCaseFollowUp',
     'DonorEngagementScore',
     'SmartGroup',
     'P2PPage',

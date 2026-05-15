@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, UTC
+from datetime import datetime, UTC, timedelta
 
 import pytest
 
@@ -429,3 +429,135 @@ def test_case_goals_and_tasks_validation(client, app):
 
     empty_task_patch_rv = client.patch(f"/programs/cases/{case_id}/tasks/999999", json={})
     assert empty_task_patch_rv.status_code == 400
+
+
+def test_case_documents_and_followup_workflow_routes(client, app):
+    org_id = _ensure_user(app, "program_docs_followups", "program_docs_followups@test.local", "staff", "program_docs_followups_pass_123")
+    _login(client, "program_docs_followups", "program_docs_followups_pass_123")
+
+    create_beneficiary_rv = client.post(
+        "/programs/intake/beneficiaries",
+        json={
+            "first_name": "Elena",
+            "last_name": "Ramos",
+            "program": "Health",
+            "status": "active",
+        },
+    )
+    assert create_beneficiary_rv.status_code == 201
+    beneficiary_id = create_beneficiary_rv.get_json()["id"]
+
+    create_case_rv = client.post(
+        "/programs/cases",
+        json={
+            "title": "Health follow-up plan",
+            "beneficiary_id": beneficiary_id,
+            "case_type": "service",
+            "intake_stage": "follow_up",
+        },
+    )
+    assert create_case_rv.status_code == 201
+    case_id = create_case_rv.get_json()["id"]
+
+    # Document attach + list
+    add_doc_rv = client.post(
+        f"/programs/cases/{case_id}/documents",
+        json={
+            "title": "Consent form",
+            "category": "consent",
+            "file_name": "consent.pdf",
+            "mime_type": "application/pdf",
+            "external_url": "https://files.example.org/consent.pdf",
+        },
+    )
+    assert add_doc_rv.status_code == 201
+    document_id = add_doc_rv.get_json()["id"]
+
+    list_docs_rv = client.get(f"/programs/cases/{case_id}/documents?category=consent")
+    assert list_docs_rv.status_code == 200
+    docs = list_docs_rv.get_json()
+    assert any(d["id"] == document_id for d in docs)
+
+    # Follow-up create/list/update/escalate/summary
+    due_at = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+    reminder_at = (datetime.now(UTC) - timedelta(hours=6)).isoformat()
+    create_followup_rv = client.post(
+        f"/programs/cases/{case_id}/followups",
+        json={
+            "title": "Call beneficiary for medication check",
+            "follow_up_type": "health_check",
+            "due_at": due_at,
+            "reminder_at": reminder_at,
+            "status": "scheduled",
+            "notes": "Initial reminder sent",
+        },
+    )
+    assert create_followup_rv.status_code == 201
+    followup_id = create_followup_rv.get_json()["id"]
+
+    list_followups_rv = client.get(f"/programs/cases/{case_id}/followups")
+    assert list_followups_rv.status_code == 200
+    assert any(f["id"] == followup_id for f in list_followups_rv.get_json())
+
+    patch_followup_rv = client.patch(
+        f"/programs/cases/{case_id}/followups/{followup_id}",
+        json={"status": "in_progress"},
+    )
+    assert patch_followup_rv.status_code == 200
+    assert patch_followup_rv.get_json()["status"] == "in_progress"
+
+    escalate_rv = client.post(
+        f"/programs/cases/{case_id}/followups/escalate-overdue",
+        json={"reason": "No contact after reminder"},
+    )
+    assert escalate_rv.status_code == 200
+    assert escalate_rv.get_json()["escalated_count"] >= 1
+
+    summary_rv = client.get(f"/programs/cases/{case_id}/followups/summary")
+    assert summary_rv.status_code == 200
+    summary = summary_rv.get_json()
+    assert summary["total"] >= 1
+    assert summary["escalated"] >= 1
+
+    # Beneficiary profile/timeline should include follow-up and document signals
+    profile_rv = client.get(f"/programs/intake/beneficiaries/{beneficiary_id}/profile")
+    assert profile_rv.status_code == 200
+    profile = profile_rv.get_json()
+    assert profile["summary"]["document_count"] >= 1
+    assert profile["summary"]["followup_count"] >= 1
+    assert profile["summary"]["escalated_followups"] >= 1
+
+    timeline_rv = client.get(f"/programs/intake/beneficiaries/{beneficiary_id}/timeline?limit=100")
+    assert timeline_rv.status_code == 200
+    event_types = {item["event_type"] for item in timeline_rv.get_json()}
+    assert "document" in event_types
+    assert "followup" in event_types
+
+
+def test_case_document_followup_validation(client, app):
+    _ensure_user(app, "program_docs_followups_admin", "program_docs_followups_admin@test.local", "admin", "program_docs_followups_admin_pass_123")
+    _login(client, "program_docs_followups_admin", "program_docs_followups_admin_pass_123")
+
+    with app.app_context():
+        org = Organization.query.filter_by(is_active=True).first()
+        case = ProgramCase(
+            organization_id=org.id,
+            title="Doc/followup validation case",
+            case_type="service",
+            status="open",
+        )
+        db.session.add(case)
+        db.session.commit()
+        case_id = case.id
+
+    missing_doc_title_rv = client.post(f"/programs/cases/{case_id}/documents", json={})
+    assert missing_doc_title_rv.status_code == 400
+
+    missing_followup_title_rv = client.post(f"/programs/cases/{case_id}/followups", json={"due_at": datetime.now(UTC).isoformat()})
+    assert missing_followup_title_rv.status_code == 400
+
+    missing_followup_due_rv = client.post(f"/programs/cases/{case_id}/followups", json={"title": "Need due date"})
+    assert missing_followup_due_rv.status_code == 400
+
+    empty_followup_patch_rv = client.patch(f"/programs/cases/{case_id}/followups/999999", json={})
+    assert empty_followup_patch_rv.status_code == 400
