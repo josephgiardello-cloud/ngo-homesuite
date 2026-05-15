@@ -1056,7 +1056,7 @@ def donor_delete(donor_id: int):
 
     org = _current_org()
     donor = Donor.query.filter_by(id=donor_id, organization_id=org.id).first_or_404()
-    donation_count = Donation.query.filter_by(donor_id=donor.id).count()
+    donation_count = Donation.query.filter_by(donor_id=donor.id, organization_id=org.id).count()
     if donation_count > 0:
         flash('Cannot delete donor with existing donations. Edit donor instead.', 'error')
         return redirect(url_for('main.donors_list'))
