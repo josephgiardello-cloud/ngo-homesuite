@@ -1899,6 +1899,8 @@ def reports_page():
 def reports_compliance_evidence():
     org = _current_org()
     scope = request.args.get('scope', 'org').strip().lower()
+    if scope == 'global' and org is not None:
+        return {'error': 'Global compliance scope is restricted to system administrators only.'}, 403
     organization_id = None if scope == 'global' else (org.id if org else None)
 
     payload = build_compliance_evidence(
