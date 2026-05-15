@@ -5,6 +5,7 @@ from flask_login import current_user, login_required
 from pydantic import BaseModel, Field, ValidationError
 
 from ngo_homesuite.app.container import AppContainer
+from ngo_homesuite.observability import InMemoryMetrics
 from ngo_homesuite.shared_kernel import redact_payload
 from ngo_homesuite.tenant import TenantContext
 
@@ -142,9 +143,22 @@ def get_workflow_trace(instance_id: str):
         "trace": {
             "workflow_instance_id": trace.workflow_instance_id,
             "org_id": trace.org_id,
+            "started_at": trace.started_at,
             "steps": trace.steps,
         },
     }
+
+
+@api_v1_bp.get("/metrics")
+@login_required
+def metrics_snapshot():
+    role = _map_role(getattr(current_user, "role", ""))
+    if role != "org_admin":
+        return {"error": "Insufficient permissions to view metrics."}, 403
+    metrics = current_app.extensions.get("metrics")
+    if not isinstance(metrics, InMemoryMetrics):
+        return {"error": "Metrics subsystem unavailable."}, 503
+    return current_app.response_class(metrics.render_prometheus(), mimetype="text/plain")
 
 
 @api_v1_bp.get("/audit/events")

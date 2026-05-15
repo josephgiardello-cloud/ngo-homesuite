@@ -50,6 +50,8 @@ class Config:
     # Logging
     LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO')
     LOG_FILE = os.environ.get('LOG_FILE', 'logs/ngo_homesuite.log')
+    STRUCTURED_LOGS_JSON = os.environ.get('STRUCTURED_LOGS_JSON', 'True') == 'True'
+    METRICS_ENABLED = os.environ.get('METRICS_ENABLED', 'True') == 'True'
     
     # Mail (for notifications)
     MAIL_SERVER = os.environ.get('MAIL_SERVER', 'localhost')
@@ -133,4 +135,6 @@ def get_config():
     selected = config.get(env, DevelopmentConfig)
     if selected is ProductionConfig and not os.environ.get('DATABASE_URL'):
         raise ValueError('DATABASE_URL environment variable must be set in production')
+    if selected is ProductionConfig and not (os.environ.get('SECRET_KEY') or os.environ.get('FLASK_SECRET_KEY')):
+        raise ValueError('SECRET_KEY or FLASK_SECRET_KEY must be set in production')
     return selected

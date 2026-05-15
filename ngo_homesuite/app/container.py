@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from ngo_homesuite.audit import DbEventStore
 from ngo_homesuite.integration_fabric import ConnectorRegistry
-from ngo_homesuite.observability import WorkflowTracer
+from ngo_homesuite.observability import InMemoryMetrics, WorkflowTracer
 from ngo_homesuite.persistence import SqlAlchemyUnitOfWork, WorkflowDefinitionRepositoryPort, WorkflowRepositoryPort
 from ngo_homesuite.persistence.repositories import WorkflowDefinitionRepository, WorkflowRepository
 from ngo_homesuite.shared_kernel import new_id, redact_payload
@@ -23,6 +23,7 @@ from ngo_homesuite.workflow_engine.event_bus import EventEmitter
 class AppContainer:
     event_store: DbEventStore
     tracer: WorkflowTracer
+    metrics: InMemoryMetrics
     connector_registry: ConnectorRegistry
     workflow_repository: WorkflowRepositoryPort
     workflow_definition_repository: WorkflowDefinitionRepositoryPort
@@ -39,11 +40,12 @@ class AppContainer:
     def build_default(cls) -> "AppContainer":
         event_store = DbEventStore()
         tracer = WorkflowTracer()
+        metrics = InMemoryMetrics()
         workflow_repository = WorkflowRepository()
         workflow_definition_repository = WorkflowDefinitionRepository()
         connector_registry = ConnectorRegistry()
         emitter = EventEmitter(event_store)
-        state_machine = DeterministicStateMachine(event_emitter=emitter, tracer=tracer)
+        state_machine = DeterministicStateMachine(event_emitter=emitter, tracer=tracer, metrics=metrics)
 
         intake_flow = WorkflowDefinition(
             workflow_type="case_intake",
@@ -85,6 +87,7 @@ class AppContainer:
         return cls(
             event_store=event_store,
             tracer=tracer,
+            metrics=metrics,
             connector_registry=connector_registry,
             workflow_repository=workflow_repository,
             workflow_definition_repository=workflow_definition_repository,

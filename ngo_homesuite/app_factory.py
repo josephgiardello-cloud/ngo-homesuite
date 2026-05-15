@@ -8,8 +8,10 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import os
+import time
+import uuid
 
-from flask import Flask
+from flask import Flask, g, request
 from flask_login import LoginManager
 from flask_migrate import Migrate
 from flask_babel import Babel, lazy_gettext as _l
@@ -21,6 +23,7 @@ from ngo_homesuite.models.core import db, User, Organization, Donor, Donation, P
 from ngo_homesuite.errors import init_error_handlers
 from ngo_homesuite.app.container import AppContainer
 from ngo_homesuite.db.migrate import auto_migrate
+from ngo_homesuite.observability import InMemoryMetrics, configure_json_logging, set_request_id
 from ngo_homesuite.persistence.models.workflow_tables import WorkflowDefinitionRecord, WorkflowEventRecord, WorkflowInstanceRecord  # noqa: F401
 
 
@@ -88,6 +91,7 @@ def create_app(config=None):
 
     with app.app_context():
         app.extensions['v2_container'] = AppContainer.build_default()
+        app.extensions['metrics'] = app.extensions['v2_container'].metrics if bool(app.config.get('METRICS_ENABLED', True)) else None
 
     app.register_blueprint(main_bp)
     app.register_blueprint(auth_bp)
@@ -96,9 +100,36 @@ def create_app(config=None):
     
     # Setup logging
     setup_logging(app)
+    if bool(app.config.get('STRUCTURED_LOGS_JSON', False)):
+        configure_json_logging(app.logger)
+
+    @app.before_request
+    def attach_request_trace_context():
+        request_id = request.headers.get('X-Request-ID', '').strip() or str(uuid.uuid4())
+        g.request_id = request_id
+        g.request_start_perf = time.perf_counter()
+        set_request_id(request_id)
+
+    @app.teardown_request
+    def clear_request_trace_context(_exc):
+        set_request_id(None)
 
     @app.after_request
     def apply_security_headers(response):
+        metrics = app.extensions.get('metrics')
+        duration_ms = 0.0
+        if hasattr(g, 'request_start_perf'):
+            duration_ms = (time.perf_counter() - g.request_start_perf) * 1000.0
+        labels = {
+            'method': request.method,
+            'endpoint': request.endpoint or 'unknown',
+            'status': str(response.status_code),
+        }
+        if isinstance(metrics, InMemoryMetrics):
+            metrics.inc('http_requests_total', labels=labels)
+            metrics.observe('http_request_latency_ms', duration_ms, labels=labels)
+
+        response.headers.setdefault('X-Request-ID', getattr(g, 'request_id', str(uuid.uuid4())))
         response.headers.setdefault('X-Content-Type-Options', 'nosniff')
         response.headers.setdefault('X-Frame-Options', 'SAMEORIGIN')
         response.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
@@ -106,6 +137,19 @@ def create_app(config=None):
         response.headers.setdefault(
             'Content-Security-Policy',
             "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'",
+        )
+        app.logger.info(
+            'request_completed',
+            extra={
+                'event_id': 'http.request.completed',
+                'extra_fields': {
+                    'request_id': getattr(g, 'request_id', None),
+                    'method': request.method,
+                    'path': request.path,
+                    'status_code': response.status_code,
+                    'duration_ms': round(duration_ms, 3),
+                },
+            },
         )
         return response
     
