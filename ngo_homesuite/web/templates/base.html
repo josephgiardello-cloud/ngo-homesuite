@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}NGO HomeSuite{% endblock %}</title>
+    <!-- marked.js: fast, safe Markdown renderer for AI assistant responses -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@13/marked.min.js"></script>
     <style>
         :root {
             --bg: #f4f7fb;
@@ -509,6 +511,49 @@
                 height: 54px;
             }
         }
+
+        /* Quick-action chips */
+        .ai-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.35rem;
+            padding: 0.45rem 0.65rem 0;
+        }
+
+        .ai-chip {
+            background: var(--surface-soft);
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            padding: 0.28rem 0.7rem;
+            font-size: 0.78rem;
+            color: var(--text);
+            cursor: pointer;
+            transition: background 0.15s;
+            white-space: nowrap;
+        }
+
+        .ai-chip:hover {
+            background: var(--primary);
+            color: #fff;
+            border-color: var(--primary);
+        }
+
+        /* Markdown inside assistant bubbles */
+        .ai-msg.assistant p { margin: 0 0 0.4em; }
+        .ai-msg.assistant p:last-child { margin-bottom: 0; }
+        .ai-msg.assistant ul, .ai-msg.assistant ol { margin: 0.2em 0 0.4em 1.1em; padding: 0; }
+        .ai-msg.assistant li { margin-bottom: 0.15em; }
+        .ai-msg.assistant strong { font-weight: 700; }
+        .ai-msg.assistant h1, .ai-msg.assistant h2, .ai-msg.assistant h3 {
+            font-size: 0.95em; font-weight: 700; margin: 0.5em 0 0.25em;
+        }
+        .ai-msg.assistant code {
+            background: var(--surface-soft);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 0.1em 0.35em;
+            font-size: 0.85em;
+        }
     </style>
     {% block extra_css %}{% endblock %}
 </head>
@@ -580,6 +625,7 @@
             <div class="ai-msg assistant">Hello. I can help with donor outreach drafts, impact summaries, budget notes, and report analysis.</div>
         </div>
         <form class="ai-input-wrap" id="aiForm">
+            <div class="ai-chips" id="aiChips"></div>
             <textarea id="aiPrompt" class="ai-textarea" placeholder="Ask about reports, donor communications, or operations..." required></textarea>
             <div class="ai-row">
                 <span class="ai-hint">All responses are routed through Apex Sovereign policy controls.</span>
@@ -588,6 +634,9 @@
         </form>
     </section>
     {% endif %}
+    <script>
+        window.ngoAiContext = {{ ai_context | default({}) | tojson | safe }};
+    </script>
     
     <footer>
         <p>&copy; 2026 NGO HomeSuite. All rights reserved.</p>
@@ -632,6 +681,49 @@
             const aiSendBtn = document.getElementById('aiSendBtn');
 
             if (aiFab && aiPanel && aiForm && aiPrompt && aiMessages && aiSendBtn) {
+                // -- Quick-action chips per page --
+                const PAGE_CHIPS = {
+                    'dashboard':  ['Summarize our NGO performance', 'Draft a donor appeal email', 'What are our key metrics this period?'],
+                    'donors':     ['Draft a thank-you letter to donors', 'How can we improve donor retention?', 'Suggest a re-engagement strategy'],
+                    'donations':  ['Analyze donation trends', 'Draft a donation acknowledgment', 'Summarize donation sources'],
+                    'expenses':   ['Summarize spending categories', 'Are there unusual expense patterns?', 'Suggest cost-saving measures'],
+                    'projects':   ['Summarize active project status', 'How can we improve project outcomes?', 'Draft a project progress update'],
+                    'funds':      ['How are our funds allocated?', 'Draft a fund performance summary', 'Suggest fund diversification'],
+                    'reports':    ['Write an impact summary for stakeholders', 'Interpret this financial data', 'Draft a quarterly report introduction'],
+                };
+
+                const aiChipsEl = document.getElementById('aiChips');
+                const ctx = window.ngoAiContext || {};
+                const activePage = ctx.active_page || '';
+                const chips = PAGE_CHIPS[activePage] || [];
+
+                chips.forEach(function(label) {
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'ai-chip';
+                    btn.textContent = label;
+                    btn.addEventListener('click', function() {
+                        aiPrompt.value = label;
+                        aiPrompt.focus();
+                    });
+                    aiChipsEl.appendChild(btn);
+                });
+
+                // -- Configure marked for safe rendering --
+                if (typeof marked !== 'undefined') {
+                    marked.setOptions({ breaks: true, gfm: true });
+                }
+
+                function renderMarkdown(text) {
+                    if (typeof marked !== 'undefined') {
+                        return marked.parse(text);
+                    }
+                    // fallback: plain text
+                    const d = document.createElement('div');
+                    d.textContent = text;
+                    return d.innerHTML;
+                }
+
                 function togglePanel(forceOpen) {
                     const shouldOpen = typeof forceOpen === 'boolean' ? forceOpen : !aiPanel.classList.contains('open');
                     aiPanel.classList.toggle('open', shouldOpen);
@@ -643,116 +735,21 @@
                 function addMessage(text, type) {
                     const el = document.createElement('div');
                     el.className = 'ai-msg ' + type;
-                    el.textContent = text;
+                    if (type === 'assistant') {
+                        el.innerHTML = renderMarkdown(text);
+                    } else {
+                        el.textContent = text;
+                    }
                     aiMessages.appendChild(el);
                     aiMessages.scrollTop = aiMessages.scrollHeight;
                     return el;
                 }
 
                 async function streamAssistantReply(promptText) {
+                    const mergedContext = Object.assign(
+                        { page: window.location.pathname },
+                        window.ngoAiContext || {}
+                    );
                     const response = await fetch('{{ url_for("ai.stream_chat") }}', {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({
-                            prompt: promptText,
-                            context: {
-                                page: window.location.pathname
-                            }
-                        })
-                    });
 
-                    if (!response.ok || !response.body) {
-                        throw new Error('Assistant is unavailable right now.');
-                    }
-
-                    const assistantEl = addMessage('', 'assistant');
-                    const reader = response.body.getReader();
-                    const decoder = new TextDecoder();
-                    let buffer = '';
-
-                    while (true) {
-                        const result = await reader.read();
-                        if (result.done) {
-                            break;
-                        }
-
-                        buffer += decoder.decode(result.value, { stream: true });
-                        const parts = buffer.split('\n\n');
-                        buffer = parts.pop() || '';
-
-                        for (const part of parts) {
-                            const lines = part.split('\n');
-                            for (const line of lines) {
-                                if (!line.startsWith('data:')) {
-                                    continue;
-                                }
-                                const payload = line.slice(5).trim();
-                                if (!payload || payload === '[DONE]') {
-                                    continue;
-                                }
-
-                                let data;
-                                try {
-                                    data = JSON.parse(payload);
-                                } catch (_err) {
-                                    continue;
-                                }
-
-                                if (data.error) {
-                                    assistantEl.className = 'ai-msg error';
-                                    assistantEl.textContent = data.error;
-                                    return;
-                                }
-
-                                if (data.token) {
-                                    assistantEl.textContent += data.token;
-                                    aiMessages.scrollTop = aiMessages.scrollHeight;
-                                }
-                            }
-                        }
-                    }
-
-                    if (!assistantEl.textContent.trim()) {
-                        assistantEl.textContent = 'No response content was returned by Apex.';
-                    }
-                }
-
-                aiFab.addEventListener('click', function() {
-                    togglePanel();
-                });
-
-                if (aiCloseBtn) {
-                    aiCloseBtn.addEventListener('click', function() {
-                        togglePanel(false);
-                    });
-                }
-
-                aiForm.addEventListener('submit', async function(event) {
-                    event.preventDefault();
-                    const text = aiPrompt.value.trim();
-                    if (!text) {
-                        return;
-                    }
-
-                    addMessage(text, 'user');
-                    aiPrompt.value = '';
-                    aiSendBtn.disabled = true;
-                    aiSendBtn.textContent = 'Streaming...';
-
-                    try {
-                        await streamAssistantReply(text);
-                    } catch (error) {
-                        addMessage(error.message || 'Unexpected assistant error.', 'error');
-                    } finally {
-                        aiSendBtn.disabled = false;
-                        aiSendBtn.textContent = 'Send';
-                    }
-                });
-            }
-        })();
-    </script>
-    {% block extra_js %}{% endblock %}
-</body>
-</html>

@@ -69,6 +69,46 @@ def _client() -> OllamaClient:
     )
 
 
+def _build_context_preamble(context: dict) -> str:
+    """Build a short data-context header to prepend to the user prompt.
+
+    This lets the model give grounded, specific answers (e.g. "you have 47 donors")
+    without the user having to repeat that information in every message.
+    """
+    if not context:
+        return ""
+    parts: list[str] = []
+    if context.get("organization"):
+        parts.append(f"Organization: {context['organization']}")
+    page = context.get("page") or context.get("active_page") or ""
+    if page:
+        parts.append(f"Page: {page}")
+    _money_keys = {
+        "total_donations": "Total donations",
+        "total_expenses": "Total expenses",
+        "net_balance": "Net balance",
+    }
+    _count_keys = {
+        "donor_count": "Donors",
+        "donation_count": "Donations listed",
+        "expense_count": "Expenses listed",
+        "project_count": "Active projects",
+        "total_funds": "Active funds",
+        "fund_count": "Funds listed",
+    }
+    for key, label in _money_keys.items():
+        val = context.get(key)
+        if val is not None:
+            parts.append(f"{label}: ${float(val):,.2f}")
+    for key, label in _count_keys.items():
+        val = context.get(key)
+        if val is not None:
+            parts.append(f"{label}: {val}")
+    if not parts:
+        return ""
+    return "[Data context: " + " | ".join(parts) + "]\n\n"
+
+
 def _audit_interaction(user_prompt: str, model: str, tenant_id: str) -> None:
     digest = hashlib.sha256(user_prompt.encode("utf-8")).hexdigest()
     current_app.logger.info(
@@ -147,7 +187,7 @@ def chat_once() -> Response:
 
     try:
         answer = _client().query(
-            prompt=redacted_prompt,
+            prompt=_build_context_preamble(context) + redacted_prompt,
             context=context,
             model=model,
             tenant_id=tenant_id,
@@ -187,13 +227,15 @@ def stream_chat() -> Response:
 
     _audit_interaction(redacted_prompt, model, tenant_id)
 
+    full_prompt = _build_context_preamble(context) + redacted_prompt
+
     app = current_app._get_current_object()  # needed inside generator
 
     def event_stream() -> Any:
         tokens: list[str] = []
         try:
             for token in _client().stream_query(
-                prompt=redacted_prompt,
+                prompt=full_prompt,
                 context=context,
                 model=model,
                 tenant_id=tenant_id,

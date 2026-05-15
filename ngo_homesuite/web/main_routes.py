@@ -187,7 +187,16 @@ def dashboard():
             'recent_donations': [],
         }
     
-    return render_template('dashboard.html', stats=stats, active_page='dashboard')
+    ai_context = {
+        'active_page': 'dashboard',
+        'organization': org.name if org else None,
+        'donor_count': stats['donor_count'],
+        'total_donations': stats['total_donations'],
+        'total_expenses': stats['total_expenses'],
+        'project_count': stats['project_count'],
+        'total_funds': stats['total_funds'],
+    }
+    return render_template('dashboard.html', stats=stats, active_page='dashboard', ai_context=ai_context)
 
 
 @main_bp.route('/donors')
@@ -210,6 +219,11 @@ def donors_list():
 
     donors = donors_query.order_by(Donor.name.asc()).all()
     delete_form = ConfirmDeleteForm()
+    ai_context = {
+        'active_page': 'donors',
+        'organization': org.name if org else None,
+        'donor_count': len(donors),
+    }
     return render_template(
         'donors.html',
         donors=donors,
@@ -217,6 +231,7 @@ def donors_list():
         active_page='donors',
         filter_q=query,
         filter_donor_type=donor_type,
+        ai_context=ai_context,
     )
 
 
@@ -410,6 +425,12 @@ def donations_list():
         donations_query = donations_query.filter(Donation.amount <= max_amount)
 
     donations = donations_query.order_by(Donation.donation_date.desc()).all()
+    ai_context = {
+        'active_page': 'donations',
+        'organization': org.name if org else None,
+        'donation_count': len(donations),
+        'total_donations': sum(float(d.amount or 0) for d in donations),
+    }
     return render_template(
         'donations.html',
         donations=donations,
@@ -419,6 +440,7 @@ def donations_list():
         filter_status=status,
         filter_min_amount=request.args.get('min_amount', ''),
         filter_max_amount=request.args.get('max_amount', ''),
+        ai_context=ai_context,
     )
 
 
@@ -535,6 +557,12 @@ def expenses_list():
         expenses_query = expenses_query.filter(Expense.amount <= max_amount)
 
     expenses = expenses_query.order_by(Expense.paid_at.desc()).all()
+    ai_context = {
+        'active_page': 'expenses',
+        'organization': org.name if org else None,
+        'expense_count': len(expenses),
+        'total_expenses': sum(float(e.amount or 0) for e in expenses),
+    }
     return render_template(
         'expenses.html',
         expenses=expenses,
@@ -542,6 +570,7 @@ def expenses_list():
         filter_q=query,
         filter_min_amount=request.args.get('min_amount', ''),
         filter_max_amount=request.args.get('max_amount', ''),
+        ai_context=ai_context,
     )
 
 
@@ -650,12 +679,18 @@ def projects_dashboard():
         projects_query = projects_query.filter_by(status=status)
 
     projects = projects_query.order_by(Project.name.asc()).all()
+    ai_context = {
+        'active_page': 'projects',
+        'organization': org.name if org else None,
+        'project_count': len(projects),
+    }
     return render_template(
         'projects.html',
         projects=projects,
         active_page='projects',
         filter_q=query,
         filter_status=status,
+        ai_context=ai_context,
     )
 
 
@@ -768,12 +803,18 @@ def funds_list():
         funds_query = funds_query.filter_by(is_active=False)
 
     funds = funds_query.order_by(Fund.name.asc()).all()
+    ai_context = {
+        'active_page': 'funds',
+        'organization': org.name if org else None,
+        'fund_count': len(funds),
+    }
     return render_template(
         'funds.html',
         funds=funds,
         active_page='funds',
         filter_q=query,
         filter_status=status,
+        ai_context=ai_context,
     )
 
 
@@ -912,6 +953,13 @@ def reports_page():
         net_total=net_total,
         chart_data=chart_data,
         active_page='reports',
+        ai_context={
+            'active_page': 'reports',
+            'organization': org.name if org else None,
+            'total_donations': total_donations,
+            'total_expenses': total_expenses,
+            'net_balance': net_total,
+        },
     )
 
 
