@@ -59,6 +59,11 @@ A comprehensive nonprofit management system for managing donors, donations, fund
 - Role-aware tool execution for internal actions (report generation, donor search, donation lookup)
 - Optional web tooling is disabled by default and can be enabled explicitly
 
+### 🧭 API Docs
+- OpenAPI starter spec available at `/api/openapi.yaml`
+- In-app docs landing page at `/api/docs`
+- Source spec file is maintained in `docs/openapi.yaml`
+
 ### 🔒 Security & Compliance
 - SQLCipher encryption support (optional)
 - Append-only audit logging (all changes tracked immutably)

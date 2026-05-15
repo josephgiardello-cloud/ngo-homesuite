@@ -1,0 +1,116 @@
+openapi: 3.0.3
+info:
+  title: NGO HomeSuite API
+  version: 0.1.0-beta
+  description: |
+    Starter OpenAPI contract for internal/beta integrations.
+    This spec is intentionally narrow and will evolve with endpoint hardening.
+servers:
+  - url: /
+paths:
+  /api/docs:
+    get:
+      summary: API docs landing page
+      tags: [Docs]
+      responses:
+        '200':
+          description: HTML docs landing page
+  /api/openapi.yaml:
+    get:
+      summary: OpenAPI specification
+      tags: [Docs]
+      responses:
+        '200':
+          description: YAML OpenAPI document
+          content:
+            application/yaml:
+              schema:
+                type: string
+  /reports/compliance/evidence:
+    get:
+      summary: Export compliance evidence packet
+      tags: [Compliance]
+      parameters:
+        - in: query
+          name: scope
+          schema:
+            type: string
+            enum: [org]
+          required: false
+          description: Evidence scope (defaults to org)
+        - in: query
+          name: download
+          schema:
+            type: integer
+            enum: [0, 1]
+          required: false
+          description: Set to 1 to force file download
+      responses:
+        '200':
+          description: Compliance evidence payload
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  schema:
+                    type: string
+                  sha256:
+                    type: string
+  /ai/copilot/chat:
+    post:
+      summary: Query HomeSuite Copilot
+      tags: [AI]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [prompt]
+              properties:
+                prompt:
+                  type: string
+                context:
+                  type: object
+                allow_actions:
+                  type: boolean
+                approved_actions:
+                  type: array
+                  items:
+                    oneOf:
+                      - type: string
+                      - type: object
+                        properties:
+                          tool:
+                            type: string
+                          token:
+                            type: string
+      responses:
+        '200':
+          description: Copilot response envelope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  response:
+                    type: string
+                  sources:
+                    type: array
+                    items:
+                      type: object
+                  actions:
+                    type: array
+                    items:
+                      type: object
+                  mode:
+                    type: string
+components:
+  securitySchemes:
+    sessionCookieAuth:
+      type: apiKey
+      in: cookie
+      name: session
+security:
+  - sessionCookieAuth: []

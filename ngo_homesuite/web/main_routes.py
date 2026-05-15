@@ -4,9 +4,10 @@ import csv
 import json
 from collections import defaultdict
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Optional as TypingOptional
 
-from flask import Blueprint, render_template, redirect, url_for, request, flash, send_file, current_app
+from flask import Blueprint, render_template, redirect, url_for, request, flash, send_file, current_app, Response
 from flask_login import login_required, current_user
 from flask_wtf import FlaskForm
 from wtforms import BooleanField, FloatField, SelectField, StringField, SubmitField, TextAreaField
@@ -194,6 +195,10 @@ def _next_charge_date(current: date, frequency: str) -> date:
     return current + timedelta(days=30)
 
 
+def _openapi_spec_path() -> Path:
+    return Path(current_app.root_path).parent / 'docs' / 'openapi.yaml'
+
+
 def _issue_receipt_for_donation(donation: Donation, recipient_email: str | None = None):
     existing = DonationReceipt.query.filter_by(donation_id=donation.id).first()
     if existing:
@@ -239,6 +244,36 @@ def _issue_receipt_for_donation(donation: Donation, recipient_email: str | None 
             receipt.error_message = str(exc)
 
     return receipt
+
+
+@main_bp.route('/api/openapi.yaml', methods=['GET'])
+@login_required
+@roles_required('admin', 'staff', 'viewer')
+def api_openapi_spec():
+    spec_path = _openapi_spec_path()
+    if not spec_path.exists():
+        return {'error': 'OpenAPI spec not found.'}, 404
+
+    return Response(spec_path.read_text(encoding='utf-8'), mimetype='application/yaml')
+
+
+@main_bp.route('/api/docs', methods=['GET'])
+@login_required
+@roles_required('admin', 'staff', 'viewer')
+def api_docs_index():
+    spec_url = url_for('main.api_openapi_spec')
+    html = (
+        '<!doctype html>'
+        '<html><head><meta charset="utf-8"><title>NGO HomeSuite API Docs</title>'
+        '<style>body{font-family:Segoe UI,Arial,sans-serif;margin:2rem;line-height:1.45;}code{background:#f3f3f3;padding:0.15rem 0.35rem;border-radius:4px;}a{color:#0b5cab;}</style>'
+        '</head><body>'
+        '<h1>NGO HomeSuite API Docs</h1>'
+        '<p>Starter API contract for beta integrations.</p>'
+        f'<p>OpenAPI spec: <a href="{spec_url}">{spec_url}</a></p>'
+        '<p>Use this spec with Swagger Editor or Redoc for interactive review.</p>'
+        '</body></html>'
+    )
+    return Response(html, mimetype='text/html')
 
 
 @main_bp.route('/')
