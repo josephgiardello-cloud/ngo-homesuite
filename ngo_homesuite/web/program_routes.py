@@ -315,3 +315,222 @@ def case_progress_route(case_id: int):
     from ngo_homesuite.services.program_impact_service import case_progress
 
     return jsonify(case_progress(case_id, _org_id()))
+
+
+# ---------------------------------------------------------------------------
+# Assessments
+# ---------------------------------------------------------------------------
+
+@program_bp.post("/cases/<int:case_id>/assessments")
+@login_required
+@roles_required("admin", "staff")
+def create_assessment_route(case_id: int):
+    from ngo_homesuite.services.program_impact_service import create_assessment
+
+    data = request.get_json(silent=True) or {}
+    if not data.get("assessment_date"):
+        return jsonify({"error": "assessment_date is required"}), 400
+
+    assessment = create_assessment(
+        case_id, _org_id(), data.pop("assessment_date"), **data
+    )
+    return jsonify({
+        "id": assessment.id,
+        "assessment_type": assessment.assessment_type,
+        "risk_level": assessment.risk_level,
+        "total_score": assessment.total_score,
+        "assessment_date": assessment.assessment_date.isoformat(),
+    }), 201
+
+
+@program_bp.get("/cases/<int:case_id>/assessments")
+@login_required
+def list_assessments_route(case_id: int):
+    from ngo_homesuite.services.program_impact_service import list_assessments
+
+    items = list_assessments(case_id, _org_id())
+    return jsonify([
+        {
+            "id": a.id,
+            "assessment_type": a.assessment_type,
+            "assessment_date": a.assessment_date.isoformat(),
+            "risk_level": a.risk_level,
+            "total_score": a.total_score,
+            "housing_score": a.housing_score,
+            "food_security_score": a.food_security_score,
+            "health_score": a.health_score,
+            "employment_score": a.employment_score,
+            "safety_score": a.safety_score,
+            "education_score": a.education_score,
+            "notes": a.notes,
+        }
+        for a in items
+    ])
+
+
+# ---------------------------------------------------------------------------
+# Referrals
+# ---------------------------------------------------------------------------
+
+@program_bp.post("/cases/<int:case_id>/referrals")
+@login_required
+@roles_required("admin", "staff")
+def create_referral_route(case_id: int):
+    from ngo_homesuite.services.program_impact_service import create_referral
+
+    data = request.get_json(silent=True) or {}
+    if not data.get("provider_name"):
+        return jsonify({"error": "provider_name is required"}), 400
+    if not data.get("referral_date"):
+        return jsonify({"error": "referral_date is required"}), 400
+
+    referral = create_referral(case_id, _org_id(), data.pop("provider_name"), data.pop("referral_date"), **data)
+    return jsonify({
+        "id": referral.id,
+        "provider_name": referral.provider_name,
+        "service_type": referral.service_type,
+        "status": referral.status,
+        "referral_date": referral.referral_date.isoformat(),
+    }), 201
+
+
+@program_bp.get("/cases/<int:case_id>/referrals")
+@login_required
+def list_referrals_route(case_id: int):
+    from ngo_homesuite.services.program_impact_service import list_referrals
+
+    items = list_referrals(case_id, _org_id())
+    return jsonify([
+        {
+            "id": r.id,
+            "referral_type": r.referral_type,
+            "provider_name": r.provider_name,
+            "service_type": r.service_type,
+            "referral_date": r.referral_date.isoformat(),
+            "status": r.status,
+            "outcome_date": r.outcome_date.isoformat() if r.outcome_date else None,
+            "outcome_notes": r.outcome_notes,
+        }
+        for r in items
+    ])
+
+
+@program_bp.patch("/cases/<int:case_id>/referrals/<int:referral_id>")
+@login_required
+@roles_required("admin", "staff")
+def update_referral_route(case_id: int, referral_id: int):
+    from ngo_homesuite.services.program_impact_service import update_referral_status
+
+    data = request.get_json(silent=True) or {}
+    if not data.get("status"):
+        return jsonify({"error": "status is required"}), 400
+
+    referral = update_referral_status(
+        referral_id, case_id, _org_id(),
+        data["status"],
+        outcome_date=data.get("outcome_date"),
+        outcome_notes=data.get("outcome_notes"),
+    )
+    return jsonify({"id": referral.id, "status": referral.status})
+
+
+# ---------------------------------------------------------------------------
+# Appointments
+# ---------------------------------------------------------------------------
+
+@program_bp.post("/appointments")
+@login_required
+@roles_required("admin", "staff")
+def create_appointment_route():
+    from ngo_homesuite.services.program_impact_service import create_appointment
+
+    data = request.get_json(silent=True) or {}
+    if not data.get("title"):
+        return jsonify({"error": "title is required"}), 400
+    if not data.get("scheduled_at"):
+        return jsonify({"error": "scheduled_at is required"}), 400
+
+    appt = create_appointment(_org_id(), data.pop("title"), data.pop("scheduled_at"), **data)
+    return jsonify({
+        "id": appt.id,
+        "title": appt.title,
+        "appointment_type": appt.appointment_type,
+        "scheduled_at": appt.scheduled_at.isoformat(),
+        "status": appt.status,
+    }), 201
+
+
+@program_bp.get("/appointments")
+@login_required
+def list_appointments_route():
+    from ngo_homesuite.services.program_impact_service import list_appointments
+
+    appts = list_appointments(
+        _org_id(),
+        case_id=request.args.get("case_id", type=int),
+        beneficiary_id=request.args.get("beneficiary_id", type=int),
+        staff_id=request.args.get("staff_id", type=int),
+        status=request.args.get("status"),
+    )
+    return jsonify([
+        {
+            "id": a.id,
+            "title": a.title,
+            "appointment_type": a.appointment_type,
+            "scheduled_at": a.scheduled_at.isoformat(),
+            "duration_minutes": a.duration_minutes,
+            "location": a.location,
+            "is_virtual": a.is_virtual,
+            "status": a.status,
+            "case_id": a.case_id,
+            "beneficiary_id": a.beneficiary_id,
+        }
+        for a in appts
+    ])
+
+
+@program_bp.get("/appointments/<int:appointment_id>")
+@login_required
+def get_appointment_route(appointment_id: int):
+    from ngo_homesuite.services.program_impact_service import get_appointment
+
+    appt = get_appointment(appointment_id, _org_id())
+    if appt is None:
+        return jsonify({"error": "not found"}), 404
+    return jsonify({
+        "id": appt.id,
+        "title": appt.title,
+        "appointment_type": appt.appointment_type,
+        "scheduled_at": appt.scheduled_at.isoformat(),
+        "duration_minutes": appt.duration_minutes,
+        "location": appt.location,
+        "is_virtual": appt.is_virtual,
+        "meeting_link": appt.meeting_link,
+        "status": appt.status,
+        "notes": appt.notes,
+        "case_id": appt.case_id,
+        "beneficiary_id": appt.beneficiary_id,
+        "staff_id": appt.staff_id,
+    })
+
+
+@program_bp.patch("/appointments/<int:appointment_id>")
+@login_required
+@roles_required("admin", "staff")
+def update_appointment_route(appointment_id: int):
+    from ngo_homesuite.services.program_impact_service import update_appointment
+
+    data = request.get_json(silent=True) or {}
+    appt = update_appointment(appointment_id, _org_id(), **data)
+    return jsonify({"id": appt.id, "status": appt.status, "scheduled_at": appt.scheduled_at.isoformat()})
+
+
+@program_bp.delete("/appointments/<int:appointment_id>")
+@login_required
+@roles_required("admin", "staff")
+def cancel_appointment_route(appointment_id: int):
+    from ngo_homesuite.services.program_impact_service import cancel_appointment
+
+    cancel_appointment(appointment_id, _org_id())
+    return ("", 204)
+

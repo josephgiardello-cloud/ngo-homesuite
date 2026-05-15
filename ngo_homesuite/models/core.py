@@ -844,6 +844,147 @@ class P2PPageDonation(db.Model):
     donation_id = db.Column(db.Integer, db.ForeignKey('donations.id'), primary_key=True)
 
 
+# ---------------------------------------------------------------------------
+# Assessment, Referral & Appointment models
+# ---------------------------------------------------------------------------
+
+class BeneficiaryAssessment(db.Model):
+    """Structured needs/risk assessment linked to a program case."""
+
+    __tablename__ = 'beneficiary_assessments'
+
+    id = db.Column(db.Integer, primary_key=True)
+    case_id = db.Column(db.Integer, db.ForeignKey('program_cases.id'), nullable=False, index=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    assessor_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+
+    assessment_type = db.Column(db.String(50), default='initial', nullable=False)  # initial, follow_up, exit
+    assessment_date = db.Column(db.Date, nullable=False)
+
+    # Core domain scores (0-10 each; nullable means not assessed)
+    housing_score = db.Column(db.Float, nullable=True)
+    food_security_score = db.Column(db.Float, nullable=True)
+    health_score = db.Column(db.Float, nullable=True)
+    employment_score = db.Column(db.Float, nullable=True)
+    safety_score = db.Column(db.Float, nullable=True)
+    education_score = db.Column(db.Float, nullable=True)
+
+    # Aggregate
+    total_score = db.Column(db.Float, nullable=True)
+    risk_level = db.Column(db.String(20), default='medium', nullable=False)  # low, medium, high, critical
+
+    # Freeform additional domains as JSON
+    extra_domains = db.Column(JSON, nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+
+    case = db.relationship('ProgramCase', backref='assessments')
+    assessor = db.relationship('User', backref='assessments_conducted')
+
+    def __repr__(self):
+        return f'<BeneficiaryAssessment case={self.case_id} type={self.assessment_type} risk={self.risk_level}>'
+
+
+class BeneficiaryReferral(db.Model):
+    """Referral from a case to an external or internal provider."""
+
+    __tablename__ = 'beneficiary_referrals'
+
+    id = db.Column(db.Integer, primary_key=True)
+    case_id = db.Column(db.Integer, db.ForeignKey('program_cases.id'), nullable=False, index=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    referred_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+
+    referral_type = db.Column(db.String(30), default='external', nullable=False)  # external, internal
+    provider_name = db.Column(db.String(200), nullable=False)
+    provider_contact = db.Column(db.String(200), nullable=True)
+    provider_email = db.Column(db.String(120), nullable=True)
+    provider_phone = db.Column(db.String(20), nullable=True)
+    service_type = db.Column(db.String(100), nullable=True)  # housing, mental_health, employment, food, legal, other
+
+    referral_date = db.Column(db.Date, nullable=False)
+    status = db.Column(db.String(30), default='pending', nullable=False)  # pending, accepted, declined, completed, no_show
+    outcome_date = db.Column(db.Date, nullable=True)
+    outcome_notes = db.Column(db.Text, nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
+
+    case = db.relationship('ProgramCase', backref='referrals')
+    referred_by = db.relationship('User', backref='referrals_made')
+
+    def __repr__(self):
+        return f'<BeneficiaryReferral case={self.case_id} provider={self.provider_name} [{self.status}]>'
+
+
+class BeneficiaryAppointment(db.Model):
+    """Scheduled appointment for a beneficiary / case worker session."""
+
+    __tablename__ = 'beneficiary_appointments'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    case_id = db.Column(db.Integer, db.ForeignKey('program_cases.id'), nullable=True, index=True)
+    beneficiary_id = db.Column(db.Integer, db.ForeignKey('beneficiaries.id'), nullable=True, index=True)
+    staff_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+
+    title = db.Column(db.String(200), nullable=False)
+    appointment_type = db.Column(
+        db.String(50), default='case_review', nullable=False
+    )  # intake, case_review, follow_up, exit_interview, service_delivery
+    scheduled_at = db.Column(db.DateTime, nullable=False, index=True)
+    duration_minutes = db.Column(db.Integer, default=60, nullable=False)
+    location = db.Column(db.String(200), nullable=True)
+    is_virtual = db.Column(db.Boolean, default=False, nullable=False)
+    meeting_link = db.Column(db.String(500), nullable=True)
+
+    status = db.Column(db.String(20), default='scheduled', nullable=False)  # scheduled, confirmed, completed, cancelled, no_show
+    notes = db.Column(db.Text, nullable=True)
+
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
+
+    case = db.relationship('ProgramCase', backref='appointments')
+    beneficiary = db.relationship('Beneficiary', backref='appointments')
+    staff = db.relationship('User', backref='appointments_assigned')
+
+    def __repr__(self):
+        return f'<BeneficiaryAppointment {self.title} [{self.status}]>'
+
+
+# ---------------------------------------------------------------------------
+# Scheduled Reports
+# ---------------------------------------------------------------------------
+
+class ScheduledReport(db.Model):
+    """Configured scheduled report that runs on a cron-like interval."""
+
+    __tablename__ = 'scheduled_reports'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    created_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+
+    name = db.Column(db.String(200), nullable=False)
+    report_type = db.Column(db.String(50), nullable=False)  # funder, impact, donations, donors, expenses
+    frequency = db.Column(db.String(20), default='monthly', nullable=False)  # daily, weekly, monthly, quarterly
+    delivery_email = db.Column(db.String(120), nullable=True)
+    parameters = db.Column(JSON, nullable=True)  # e.g., {"funder_name": "Ford Foundation", "currency": "USD"}
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    last_run_at = db.Column(db.DateTime, nullable=True)
+    next_run_at = db.Column(db.DateTime, nullable=True, index=True)
+
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
+
+    created_by = db.relationship('User', backref='scheduled_reports')
+
+    def __repr__(self):
+        return f'<ScheduledReport {self.name} [{self.frequency}]>'
+
+
 # Export all models
 __all__ = [
     'db',
@@ -876,4 +1017,8 @@ __all__ = [
     'SmartGroup',
     'P2PPage',
     'P2PPageDonation',
+    'BeneficiaryAssessment',
+    'BeneficiaryReferral',
+    'BeneficiaryAppointment',
+    'ScheduledReport',
 ]

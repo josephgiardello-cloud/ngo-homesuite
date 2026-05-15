@@ -81,3 +81,34 @@ def send_bulk_sms(recipients: list[dict], body_template: str) -> dict:
         else:
             failed += 1
     return {"sent": sent, "failed": failed}
+
+
+def notify_appointment_reminder(
+    phone: str,
+    beneficiary_name: str,
+    appointment_title: str,
+    scheduled_at_str: str,
+) -> bool:
+    """Send a formatted appointment reminder SMS."""
+    body = (
+        f"Reminder: {beneficiary_name}, your appointment '{appointment_title}' "
+        f"is scheduled for {scheduled_at_str}. "
+        "If you need to reschedule please contact your case worker."
+    )
+    return send_sms(phone, body)
+
+
+def notify_referral_update(
+    phone: str,
+    beneficiary_name: str,
+    provider_name: str,
+    status: str,
+) -> bool:
+    """Send a referral status update SMS."""
+    body = (
+        f"Hi {beneficiary_name}, your referral to {provider_name} "
+        f"has been updated to: {status}. "
+        "Contact your case worker for details."
+    )
+    return send_sms(phone, body)
+

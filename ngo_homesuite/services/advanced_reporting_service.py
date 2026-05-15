@@ -20,6 +20,7 @@ from ngo_homesuite.models.core import (
     Grant,
     GrantDisbursement,
     MembershipRecord,
+    ScheduledReport,
     db,
 )
 
@@ -336,3 +337,159 @@ def giving_summary_by_year(organization_id: int) -> List[Dict[str, Any]]:
         }
         for r in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# Funder Report
+# ---------------------------------------------------------------------------
+
+def funder_report(
+    organization_id: int,
+    funder_name: str,
+    *,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+) -> Dict[str, Any]:
+    """Generate a funder-specific report covering donations, grants, and impact.
+
+    Returns a dict suitable for JSON serialisation or PDF templating.
+    """
+    today = _today()
+    start = start_date or date(today.year, 1, 1)
+    end = end_date or today
+
+    # Donations attributed to funder (by donor name match)
+    donation_rows = (
+        Donation.query.filter(
+            Donation.organization_id == organization_id,
+            Donation.donation_date >= datetime(start.year, start.month, start.day),
+            Donation.donation_date <= datetime(end.year, end.month, end.day, 23, 59, 59),
+            Donation.donor_name.ilike(f"%{funder_name}%"),
+        )
+        .all()
+    )
+    total_donated = sum(d.amount for d in donation_rows)
+
+    # Grants from this funder
+    grant_rows = (
+        Grant.query.filter(
+            Grant.organization_id == organization_id,
+            Grant.funder_name.ilike(f"%{funder_name}%"),
+        )
+        .all()
+    )
+    total_granted = sum(g.amount_awarded or 0.0 for g in grant_rows)
+    total_requested = sum(g.amount_requested or 0.0 for g in grant_rows)
+
+    # Disbursements within date range
+    disbursement_rows = (
+        GrantDisbursement.query.join(Grant)
+        .filter(
+            Grant.organization_id == organization_id,
+            Grant.funder_name.ilike(f"%{funder_name}%"),
+            GrantDisbursement.received_date >= start,
+            GrantDisbursement.received_date <= end,
+        )
+        .all()
+    )
+    total_disbursed = sum(d.amount for d in disbursement_rows)
+
+    return {
+        "funder_name": funder_name,
+        "organization_id": organization_id,
+        "report_period": {"start": start.isoformat(), "end": end.isoformat()},
+        "donations": {
+            "count": len(donation_rows),
+            "total": round(total_donated, 2),
+            "items": [
+                {
+                    "id": d.id,
+                    "amount": d.amount,
+                    "currency": d.currency,
+                    "donation_date": d.donation_date.isoformat() if d.donation_date else None,
+                    "purpose": d.purpose,
+                }
+                for d in donation_rows
+            ],
+        },
+        "grants": {
+            "count": len(grant_rows),
+            "total_requested": round(total_requested, 2),
+            "total_awarded": round(total_granted, 2),
+            "total_disbursed_in_period": round(total_disbursed, 2),
+            "items": [
+                {
+                    "id": g.id,
+                    "title": g.title,
+                    "status": g.status,
+                    "amount_requested": g.amount_requested,
+                    "amount_awarded": g.amount_awarded,
+                    "application_deadline": g.application_deadline.isoformat() if g.application_deadline else None,
+                    "award_date": g.award_date.isoformat() if g.award_date else None,
+                }
+                for g in grant_rows
+            ],
+        },
+        "summary": {
+            "total_funding": round(total_donated + total_granted, 2),
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Scheduled Reports CRUD
+# ---------------------------------------------------------------------------
+
+def create_scheduled_report(
+    organization_id: int,
+    name: str,
+    report_type: str,
+    frequency: str,
+    *,
+    delivery_email: Optional[str] = None,
+    parameters: Optional[Dict[str, Any]] = None,
+    created_by_id: Optional[int] = None,
+) -> ScheduledReport:
+    from datetime import datetime as dt, timezone as tz, timedelta as td
+
+    _freq_delta = {"daily": td(days=1), "weekly": td(weeks=1), "monthly": td(days=30), "quarterly": td(days=90)}
+    now = dt.now(tz.utc).replace(tzinfo=None)
+    delta = _freq_delta.get(frequency, td(days=30))
+    report = ScheduledReport(
+        organization_id=organization_id,
+        created_by_id=created_by_id,
+        name=name,
+        report_type=report_type,
+        frequency=frequency,
+        delivery_email=delivery_email,
+        parameters=parameters,
+        next_run_at=now + delta,
+    )
+    db.session.add(report)
+    db.session.commit()
+    return report
+
+
+def list_scheduled_reports(organization_id: int) -> List[ScheduledReport]:
+    return (
+        ScheduledReport.query.filter_by(organization_id=organization_id)
+        .order_by(ScheduledReport.created_at.desc())
+        .all()
+    )
+
+
+def update_scheduled_report(report_id: int, organization_id: int, **fields) -> ScheduledReport:
+    report = ScheduledReport.query.filter_by(id=report_id, organization_id=organization_id).first_or_404()
+    allowed = {"name", "report_type", "frequency", "delivery_email", "parameters", "is_active"}
+    for key, value in fields.items():
+        if key in allowed:
+            setattr(report, key, value)
+    db.session.commit()
+    return report
+
+
+def delete_scheduled_report(report_id: int, organization_id: int) -> None:
+    report = ScheduledReport.query.filter_by(id=report_id, organization_id=organization_id).first_or_404()
+    db.session.delete(report)
+    db.session.commit()
+

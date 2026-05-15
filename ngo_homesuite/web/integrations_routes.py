@@ -163,3 +163,105 @@ def integrations_job_detail_route(job_id: str):
     if job is None:
         return jsonify({"error": "Job not found."}), 404
     return jsonify(job)
+
+
+# ---------------------------------------------------------------------------
+# SMS notifications (Twilio)
+# ---------------------------------------------------------------------------
+
+@integrations_bp.post("/sms/notify")
+@login_required
+@roles_required("admin", "staff")
+def sms_notify_route():
+    """Send a one-off SMS notification to a beneficiary or staff member.
+
+    Body: {"to": "+15551234567", "body": "Message text"}
+    """
+    from ngo_homesuite.utils.sms_service import send_sms
+
+    data = request.get_json(silent=True) or {}
+    to = (data.get("to") or "").strip()
+    body = (data.get("body") or "").strip()
+    if not to:
+        return jsonify({"error": "to is required"}), 400
+    if not body:
+        return jsonify({"error": "body is required"}), 400
+    if not to.startswith("+"):
+        return jsonify({"error": "to must be E.164 format (e.g. +15551234567)"}), 400
+
+    ok = send_sms(to, body)
+    record_integration_event(current_app, kind="sms_notify", status="ok" if ok else "failed", details={"to": to})
+    return jsonify({"success": ok})
+
+
+@integrations_bp.post("/sms/bulk")
+@login_required
+@roles_required("admin")
+def sms_bulk_route():
+    """Send bulk SMS to a list of recipients.
+
+    Body: {"recipients": [{"phone": "+1...", "name": "Alice"}], "template": "Hi {name}, ..."}
+    """
+    from ngo_homesuite.utils.sms_service import send_bulk_sms
+
+    data = request.get_json(silent=True) or {}
+    recipients = data.get("recipients") or []
+    template = (data.get("template") or "").strip()
+    if not recipients:
+        return jsonify({"error": "recipients is required"}), 400
+    if not template:
+        return jsonify({"error": "template is required"}), 400
+
+    result = send_bulk_sms(recipients, template)
+    record_integration_event(current_app, kind="sms_bulk", status="ok", details=result)
+    return jsonify(result)
+
+
+# ---------------------------------------------------------------------------
+# Mailchimp list sync
+# ---------------------------------------------------------------------------
+
+@integrations_bp.post("/mailchimp/sync")
+@login_required
+@roles_required("admin")
+def mailchimp_sync_route():
+    """Sync current org beneficiaries (with email) to Mailchimp list.
+
+    Optionally pass {"program": "Education"} to filter by program.
+    """
+    from ngo_homesuite.services.beneficiary_service import list_beneficiaries
+    from ngo_homesuite.utils.mailchimp_service import sync_beneficiary_list
+
+    data = request.get_json(silent=True) or {}
+    program = data.get("program")
+
+    org_id = int(current_user.organization_id)
+    beneficiaries = list_beneficiaries(org_id, program=program, status="active")
+    payload = [
+        {"email": b.email, "first_name": b.first_name, "last_name": b.last_name}
+        for b in beneficiaries
+        if b.email
+    ]
+    result = sync_beneficiary_list(payload)
+    record_integration_event(current_app, kind="mailchimp_sync", status="ok", details=result)
+    return jsonify(result)
+
+
+@integrations_bp.post("/mailchimp/subscribe")
+@login_required
+@roles_required("admin", "staff")
+def mailchimp_subscribe_route():
+    """Subscribe a single contact to the Mailchimp list.
+
+    Body: {"email": "...", "first_name": "...", "last_name": "..."}
+    """
+    from ngo_homesuite.utils.mailchimp_service import add_subscriber
+
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip()
+    if not email:
+        return jsonify({"error": "email is required"}), 400
+
+    ok = add_subscriber(email, data.get("first_name", ""), data.get("last_name", ""))
+    return jsonify({"success": ok})
+

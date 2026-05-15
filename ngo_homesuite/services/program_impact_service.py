@@ -11,6 +11,9 @@ from typing import Any, Dict, List, Optional
 
 from ngo_homesuite.models.core import (
     Beneficiary,
+    BeneficiaryAppointment,
+    BeneficiaryAssessment,
+    BeneficiaryReferral,
     BeneficiaryServiceLog,
     CaseActivity,
     CaseOutcomeMetric,
@@ -492,3 +495,240 @@ def list_case_types(organization_id: int) -> List[str]:
         .all()
     )
     return sorted(r[0] for r in rows if r[0])
+
+
+# ---------------------------------------------------------------------------
+# Assessments
+# ---------------------------------------------------------------------------
+
+def create_assessment(
+    case_id: int,
+    organization_id: int,
+    assessment_date: Any,
+    *,
+    assessment_type: str = "initial",
+    housing_score: Optional[float] = None,
+    food_security_score: Optional[float] = None,
+    health_score: Optional[float] = None,
+    employment_score: Optional[float] = None,
+    safety_score: Optional[float] = None,
+    education_score: Optional[float] = None,
+    extra_domains: Optional[Dict[str, Any]] = None,
+    risk_level: str = "medium",
+    notes: Optional[str] = None,
+    assessor_id: Optional[int] = None,
+) -> BeneficiaryAssessment:
+    case = ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+
+    domain_scores = [s for s in [
+        housing_score, food_security_score, health_score,
+        employment_score, safety_score, education_score,
+    ] if s is not None]
+    total = round(sum(domain_scores) / len(domain_scores), 2) if domain_scores else None
+
+    assessment = BeneficiaryAssessment(
+        case_id=case.id,
+        organization_id=organization_id,
+        assessor_id=assessor_id,
+        assessment_type=assessment_type,
+        assessment_date=_coerce_date(assessment_date),
+        housing_score=housing_score,
+        food_security_score=food_security_score,
+        health_score=health_score,
+        employment_score=employment_score,
+        safety_score=safety_score,
+        education_score=education_score,
+        total_score=total,
+        risk_level=risk_level,
+        extra_domains=extra_domains,
+        notes=notes,
+    )
+    db.session.add(assessment)
+    # Update case risk level to match latest assessment
+    case.risk_level = risk_level
+    db.session.commit()
+    _log_activity(case.id, organization_id, "assessment_added", f"Assessment type={assessment_type} risk={risk_level}")
+    db.session.commit()
+    return assessment
+
+
+def list_assessments(case_id: int, organization_id: int) -> List[BeneficiaryAssessment]:
+    ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    return (
+        BeneficiaryAssessment.query.filter_by(case_id=case_id)
+        .order_by(BeneficiaryAssessment.assessment_date.desc())
+        .all()
+    )
+
+
+# ---------------------------------------------------------------------------
+# Referrals
+# ---------------------------------------------------------------------------
+
+def create_referral(
+    case_id: int,
+    organization_id: int,
+    provider_name: str,
+    referral_date: Any,
+    *,
+    referral_type: str = "external",
+    provider_contact: Optional[str] = None,
+    provider_email: Optional[str] = None,
+    provider_phone: Optional[str] = None,
+    service_type: Optional[str] = None,
+    notes: Optional[str] = None,
+    referred_by_id: Optional[int] = None,
+) -> BeneficiaryReferral:
+    case = ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    referral = BeneficiaryReferral(
+        case_id=case.id,
+        organization_id=organization_id,
+        referred_by_id=referred_by_id,
+        referral_type=referral_type,
+        provider_name=provider_name,
+        provider_contact=provider_contact,
+        provider_email=provider_email,
+        provider_phone=provider_phone,
+        service_type=service_type,
+        referral_date=_coerce_date(referral_date),
+        notes=notes,
+    )
+    db.session.add(referral)
+    db.session.commit()
+    _log_activity(case.id, organization_id, "referral_created", f"Referral to {provider_name} ({service_type})")
+    db.session.commit()
+    return referral
+
+
+def list_referrals(case_id: int, organization_id: int) -> List[BeneficiaryReferral]:
+    ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    return (
+        BeneficiaryReferral.query.filter_by(case_id=case_id)
+        .order_by(BeneficiaryReferral.referral_date.desc())
+        .all()
+    )
+
+
+def update_referral_status(
+    referral_id: int,
+    case_id: int,
+    organization_id: int,
+    status: str,
+    *,
+    outcome_date: Optional[Any] = None,
+    outcome_notes: Optional[str] = None,
+) -> BeneficiaryReferral:
+    referral = BeneficiaryReferral.query.filter_by(
+        id=referral_id, case_id=case_id
+    ).first_or_404()
+    # Cross-tenant guard
+    case = ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    referral.status = status
+    if outcome_date is not None:
+        referral.outcome_date = _coerce_date(outcome_date)
+    if outcome_notes is not None:
+        referral.outcome_notes = outcome_notes
+    db.session.commit()
+    _log_activity(case.id, organization_id, "referral_updated", f"Referral {referral_id} status->{status}")
+    db.session.commit()
+    return referral
+
+
+# ---------------------------------------------------------------------------
+# Appointments
+# ---------------------------------------------------------------------------
+
+def create_appointment(
+    organization_id: int,
+    title: str,
+    scheduled_at: Any,
+    *,
+    case_id: Optional[int] = None,
+    beneficiary_id: Optional[int] = None,
+    staff_id: Optional[int] = None,
+    appointment_type: str = "case_review",
+    duration_minutes: int = 60,
+    location: Optional[str] = None,
+    is_virtual: bool = False,
+    meeting_link: Optional[str] = None,
+    notes: Optional[str] = None,
+) -> BeneficiaryAppointment:
+    appt = BeneficiaryAppointment(
+        organization_id=organization_id,
+        case_id=case_id,
+        beneficiary_id=beneficiary_id,
+        staff_id=staff_id,
+        title=title,
+        appointment_type=appointment_type,
+        scheduled_at=_coerce_datetime(scheduled_at),
+        duration_minutes=duration_minutes,
+        location=location,
+        is_virtual=is_virtual,
+        meeting_link=meeting_link,
+        notes=notes,
+    )
+    db.session.add(appt)
+    db.session.commit()
+    if case_id:
+        case = ProgramCase.query.get(case_id)
+        if case and case.organization_id == organization_id:
+            _log_activity(case.id, organization_id, "appointment_scheduled", f"{title} at {appt.scheduled_at.isoformat()}")
+            db.session.commit()
+    return appt
+
+
+def get_appointment(appointment_id: int, organization_id: int) -> Optional[BeneficiaryAppointment]:
+    return BeneficiaryAppointment.query.filter_by(
+        id=appointment_id, organization_id=organization_id
+    ).first()
+
+
+def list_appointments(
+    organization_id: int,
+    *,
+    case_id: Optional[int] = None,
+    beneficiary_id: Optional[int] = None,
+    staff_id: Optional[int] = None,
+    status: Optional[str] = None,
+) -> List[BeneficiaryAppointment]:
+    q = BeneficiaryAppointment.query.filter_by(organization_id=organization_id)
+    if case_id is not None:
+        q = q.filter_by(case_id=case_id)
+    if beneficiary_id is not None:
+        q = q.filter_by(beneficiary_id=beneficiary_id)
+    if staff_id is not None:
+        q = q.filter_by(staff_id=staff_id)
+    if status:
+        q = q.filter_by(status=status)
+    return q.order_by(BeneficiaryAppointment.scheduled_at.asc()).all()
+
+
+def update_appointment(
+    appointment_id: int,
+    organization_id: int,
+    **fields: Any,
+) -> BeneficiaryAppointment:
+    appt = BeneficiaryAppointment.query.filter_by(
+        id=appointment_id, organization_id=organization_id
+    ).first_or_404()
+    allowed = {
+        "title", "appointment_type", "scheduled_at", "duration_minutes",
+        "location", "is_virtual", "meeting_link", "status", "notes",
+    }
+    for key, value in fields.items():
+        if key not in allowed:
+            continue
+        if key == "scheduled_at":
+            value = _coerce_datetime(value)
+        setattr(appt, key, value)
+    db.session.commit()
+    return appt
+
+
+def cancel_appointment(appointment_id: int, organization_id: int) -> None:
+    appt = BeneficiaryAppointment.query.filter_by(
+        id=appointment_id, organization_id=organization_id
+    ).first_or_404()
+    appt.status = "cancelled"
+    db.session.commit()
+
