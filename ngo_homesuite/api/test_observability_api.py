@@ -67,8 +67,6 @@ def test_request_id_header_and_metrics_endpoint(client, app):
         json={
             "org_id": org_id,
             "event_type": "intake_submit",
-            "actor_id": "u_obs_admin",
-            "role": "org_admin",
             "payload": {"case_id": "OBS-001"},
         },
     )

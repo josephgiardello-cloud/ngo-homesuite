@@ -6,7 +6,7 @@ import pytest
 
 from ngo_homesuite.app_factory import create_app
 from ngo_homesuite.flask_config import TestingConfig
-from ngo_homesuite.models.core import User, db
+from ngo_homesuite.models.core import Organization, User, db
 
 
 @dataclass
@@ -76,10 +76,20 @@ def _login(client, username: str, password: str) -> None:
 def _ensure_user(app, username: str, email: str, role: str, password: str):
     with app.app_context():
         user = User.query.filter_by(username=username).first()
+        org = Organization.query.filter_by(is_active=True).first()
         if user is None:
-            user = User(username=username, email=email, role=role, is_active=True)
+            user = User(
+                username=username,
+                email=email,
+                role=role,
+                is_active=True,
+                organization_id=org.id if org else None,
+            )
             user.set_password(password)
             db.session.add(user)
+            db.session.commit()
+        elif user.organization_id is None and org is not None:
+            user.organization_id = org.id
             db.session.commit()
 
 
@@ -276,3 +286,21 @@ def test_copilot_chat_logs_approval_token_issue_verify_and_replay_reject(client,
 
     rejected_metadata = [metadata for action, metadata in captured if action == "copilot_approval_token_rejected"]
     assert any((md or {}).get("reason") == "replay" for md in rejected_metadata)
+
+
+def test_copilot_chat_rejects_cross_tenant_payload(client, app, monkeypatch):
+    _ensure_user(app, "copilot_tenant_staff", "copilot_tenant_staff@test.local", "staff", "tenant_staff_pass_123")
+    _login(client, "copilot_tenant_staff", "tenant_staff_pass_123")
+
+    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteCopilot.from_app", lambda: _FakeCopilot())
+
+    rv = client.post(
+        "/ai/copilot/chat",
+        json={
+            "prompt": "summarize donor trend",
+            "tenant_id": "other-tenant",
+            "context": {"active_page": "donors"},
+        },
+    )
+    assert rv.status_code == 403
+    assert "tenant_id" in rv.get_json()["error"]

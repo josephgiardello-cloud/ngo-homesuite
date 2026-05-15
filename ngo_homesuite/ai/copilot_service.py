@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import concurrent.futures
 import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -142,6 +142,18 @@ class HomeSuiteCopilot:
             arguments = {}
         return str(name), arguments
 
+    def _fallback_answer(self, prompt: str, context: dict[str, Any], sources: list[dict[str, Any]], reason: str) -> str:
+        runtime_ctx = self._build_runtime_context_text(context)
+        top_sources = [str(src.get("source", "")) for src in sources[:3] if src.get("source")]
+        source_hint = ", ".join(top_sources) if top_sources else "no indexed sources"
+        return (
+            "Copilot is currently running in offline fallback mode because the local Ollama service is unavailable. "
+            f"Reason: {reason}.\n\n"
+            f"Request received: {prompt[:300]}{'...' if len(prompt) > 300 else ''}\n"
+            f"Available knowledge sources: {source_hint}.\n"
+            f"Runtime context: {runtime_ctx or 'none'}"
+        ).strip()
+
     def answer(
         self,
         *,
@@ -168,7 +180,15 @@ class HomeSuiteCopilot:
             )
 
             tool_specs = self.tools.get_ollama_tool_specs(allowlist=tool_allowlist)
-            first = self.client.chat(model=self.model, messages=messages, tools=tool_specs)
+            try:
+                first = self.client.chat(model=self.model, messages=messages, tools=tool_specs)
+            except Exception as exc:
+                return CopilotResponse(
+                    answer=self._fallback_answer(redacted_prompt, context, sources, str(exc)),
+                    sources=sources,
+                    actions=actions,
+                    redactions=redactions,
+                )
             tool_calls = self._extract_tool_calls(first)
 
             if tool_calls:
@@ -205,7 +225,27 @@ class HomeSuiteCopilot:
                         })
                         continue
 
-                    result = self.tools.execute(name, args, runtime_ctx)
+                    timeout_s = float(runtime_ctx.get("tool_timeout_sec", 8.0) or 8.0)
+                    try:
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                            fut = pool.submit(self.tools.execute, name, args, runtime_ctx)
+                            result = fut.result(timeout=timeout_s)
+                    except concurrent.futures.TimeoutError:
+                        actions.append({
+                            "tool": name,
+                            "args": args,
+                            "status": "blocked",
+                            "reason": "tool_timeout",
+                        })
+                        continue
+                    except Exception as exc:
+                        actions.append({
+                            "tool": name,
+                            "args": args,
+                            "status": "blocked",
+                            "reason": f"tool_error:{exc}",
+                        })
+                        continue
                     executed_any = True
                     actions.append({
                         "tool": name,
@@ -222,8 +262,11 @@ class HomeSuiteCopilot:
                     )
 
                 if executed_any:
-                    final_resp = self.client.chat(model=self.model, messages=messages)
-                    answer = self._extract_content(final_resp)
+                    try:
+                        final_resp = self.client.chat(model=self.model, messages=messages)
+                        answer = self._extract_content(final_resp)
+                    except Exception as exc:
+                        answer = self._fallback_answer(redacted_prompt, context, sources, str(exc))
                 else:
                     answer = self._extract_content(first).strip()
                     pending_names = [a["tool"] for a in actions if a.get("status") == "pending_approval"]
@@ -237,10 +280,13 @@ class HomeSuiteCopilot:
             else:
                 answer = self._extract_content(first)
         else:
-            resp = self.client.chat(model=self.model, messages=messages)
-            answer = self._extract_content(resp)
+            try:
+                resp = self.client.chat(model=self.model, messages=messages)
+                answer = self._extract_content(resp)
+            except Exception as exc:
+                answer = self._fallback_answer(redacted_prompt, context, sources, str(exc))
 
-        if use_web and os.getenv("COPILOT_ALLOW_WEB_TOOLS", "False") == "True":
+        if use_web and bool(runtime_ctx.get("allow_web_tools", False)):
             try:
                 import requests
 

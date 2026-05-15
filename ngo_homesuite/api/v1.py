@@ -21,8 +21,8 @@ class WorkflowCreateRequest(BaseModel):
 class WorkflowEventRequest(BaseModel):
     org_id: str
     event_type: str
-    actor_id: str
-    role: str
+    actor_id: str | None = None
+    role: str | None = None
     payload: dict = Field(default_factory=dict)
     idempotency_key: str | None = None
 
@@ -102,7 +102,21 @@ def apply_workflow_event(instance_id: str):
     except ValidationError as exc:
         return {"error": str(exc)}, 400
 
-    tenant = TenantContext(org_id=body.org_id, user_id=body.actor_id, role=_map_role(body.role))
+    auth_user_id = str(getattr(current_user, "id", ""))
+    auth_role = _map_role(str(getattr(current_user, "role", "viewer")))
+    requested_actor = str(body.actor_id or "").strip()
+    requested_role = _map_role(str(body.role or "").strip()) if body.role else ""
+
+    if requested_actor and auth_user_id and requested_actor != auth_user_id:
+        return {"error": "actor_id must match authenticated user."}, 403
+    if requested_role and requested_role != auth_role:
+        return {"error": "role must match authenticated user role."}, 403
+
+    tenant = TenantContext(
+        org_id=body.org_id,
+        user_id=auth_user_id or requested_actor or "unknown",
+        role=auth_role,
+    )
     try:
         _enforce_user_org_access(body.org_id)
         instance, was_replay = _container().dispatch_workflow_event(

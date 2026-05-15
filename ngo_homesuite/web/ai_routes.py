@@ -160,6 +160,20 @@ def _resolve_session_id() -> str:
     return f"web-{user_part}-{uuid.uuid4().hex[:8]}"
 
 
+def _resolve_tenant_id(payload: dict[str, Any]) -> str:
+    configured_default = str(current_app.config.get("APEX_TENANT_ID", "ngo-default"))
+    requested_tenant = str(payload.get("tenant_id") or "").strip()
+    user_org_id = getattr(current_user, "organization_id", None)
+
+    if user_org_id is None:
+        return requested_tenant or configured_default
+
+    canonical_tenant = str(user_org_id)
+    if requested_tenant and requested_tenant != canonical_tenant:
+        raise PermissionError("tenant_id must match authenticated user's organization_id")
+    return canonical_tenant
+
+
 def _get_or_create_conversation(session_id: str, model: str, tenant_id: str) -> AIConversation:
     conv = AIConversation.query.filter_by(session_id=session_id).first()
     if conv is None:
@@ -191,6 +205,21 @@ def _persist_exchange(session_id: str, model: str, tenant_id: str,
             role="assistant",
             content=assistant_reply,
         ))
+        max_messages = int(current_app.config.get("COPILOT_CONVERSATION_MAX_MESSAGES", 200))
+        if max_messages > 0:
+            message_ids = [
+                row[0]
+                for row in (
+                    AIMessage.query
+                    .with_entities(AIMessage.id)
+                    .filter_by(conversation_id=conv.id)
+                    .order_by(AIMessage.id.desc())
+                    .offset(max_messages)
+                    .all()
+                )
+            ]
+            if message_ids:
+                AIMessage.query.filter(AIMessage.id.in_(message_ids)).delete(synchronize_session=False)
         db.session.commit()
     except Exception as exc:  # pragma: no cover
         db.session.rollback()
@@ -327,7 +356,10 @@ def chat_once() -> Response:
 
     context = payload.get("context") if isinstance(payload.get("context"), dict) else {}
     model = str(payload.get("model") or current_app.config.get("APEX_MODEL", "llama3.2"))
-    tenant_id = str(payload.get("tenant_id") or current_app.config.get("APEX_TENANT_ID", "ngo-default"))
+    try:
+        tenant_id = _resolve_tenant_id(payload)
+    except PermissionError as exc:
+        return jsonify({"error": str(exc)}), 403
     session_id = _resolve_session_id()
 
     redacted_prompt, n_redacted = redact_pii(prompt)
@@ -368,7 +400,14 @@ def stream_chat() -> Response:
 
     context = payload.get("context") if isinstance(payload.get("context"), dict) else {}
     model = str(payload.get("model") or current_app.config.get("APEX_MODEL", "llama3.2"))
-    tenant_id = str(payload.get("tenant_id") or current_app.config.get("APEX_TENANT_ID", "ngo-default"))
+    try:
+        tenant_id = _resolve_tenant_id(payload)
+    except PermissionError as exc:
+        return Response(
+            f"data: {json.dumps({'error': str(exc)})}\n\n",
+            mimetype="text/event-stream",
+            status=403,
+        )
     session_id = _resolve_session_id()
 
     redacted_prompt, n_redacted = redact_pii(prompt)
@@ -425,7 +464,10 @@ def copilot_chat() -> Response:
 
     context = payload.get("context") if isinstance(payload.get("context"), dict) else {}
     model = str(payload.get("model") or current_app.config.get("OLLAMA_MODEL", "llama3.2"))
-    tenant_id = str(payload.get("tenant_id") or current_app.config.get("APEX_TENANT_ID", "ngo-default"))
+    try:
+        tenant_id = _resolve_tenant_id(payload)
+    except PermissionError as exc:
+        return jsonify({"error": str(exc)}), 403
     session_id = _resolve_session_id()
 
     # Only admin/staff can execute action tools; viewer is read-only.
@@ -479,6 +521,8 @@ def copilot_chat() -> Response:
             "user_id": getattr(current_user, "id", None),
             "approved_actions": approved_actions,
             "tool_allowlist": tool_allowlist,
+            "allow_web_tools": bool(current_app.config.get("COPILOT_ALLOW_WEB_TOOLS", False)),
+            "tool_timeout_sec": float(current_app.config.get("COPILOT_TOOL_TIMEOUT_SEC", 8.0)),
         },
         allow_actions=allow_actions,
         use_web=use_web,

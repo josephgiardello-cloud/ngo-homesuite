@@ -264,6 +264,13 @@ Configuration precedence is:
 2. YAML file (`ngo-homesuite.yaml` or `ngo_homesuite.yaml`, optional)
 3. Safe in-code defaults
 
+Runtime validation:
+- Startup now validates configuration with a centralized Pydantic settings model.
+- Invalid values (for example invalid log levels, bad ports, invalid cookie mode, non-positive timeouts) fail fast with clear startup errors.
+- Production hard checks are enforced at startup:
+   - `SECRET_KEY` or `FLASK_SECRET_KEY` must be explicitly set.
+   - `DATABASE_URL` must be explicitly set.
+
 `SECRET_KEY` / `FLASK_SECRET_KEY` behavior:
 - If either env var is set, that value is used.
 - If neither is set, HomeSuite generates a secure key on first run and persists it to `data/.secret_key`.
@@ -277,6 +284,18 @@ Configuration precedence is:
 | `FLASK_ENV` | Flask environment | `development`, `production` |
 | `SECRET_KEY` | Flask session key | (auto-generated if not set) |
 
+Additional operational controls:
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `NGO_HOMESUITE_MIGRATION_TIMEOUT_SEC` | SQLite migration timeout | `30` |
+| `NGO_HOMESUITE_BACKUP_BEFORE_MIGRATE` | Create DB backup before migrations | `1` |
+| `NGO_HOMESUITE_REQUIRE_BACKUP_BEFORE_MIGRATE` | Fail migration if backup policy cannot be satisfied | `1` |
+| `NGO_HOMESUITE_MIGRATION_BACKUP_WARN_ONLY` | Warn instead of fail when backup policy cannot be met | `0` |
+| `NGO_HOMESUITE_RESTORE_BACKUP_ON_MIGRATION_FAIL` | Restore backup automatically on migration failure | `1` |
+| `COPILOT_TOOL_TIMEOUT_SEC` | Timeout for each Copilot tool execution | `8` |
+| `COPILOT_CONVERSATION_MAX_MESSAGES` | Max retained messages per conversation | `200` |
+
 ### Database Encryption (SQLCipher)
 
 When `NGO_HOMESUITE_DB_KEY` is set:
@@ -286,6 +305,68 @@ When `NGO_HOMESUITE_DB_KEY` is set:
 - Unencrypted access is blocked (security by default)
 
 **Warning**: If the key is lost, the database cannot be recovered.
+
+Lost encryption key recovery playbook:
+1. Immediately stop application writes.
+2. Restore the latest encrypted DB backup and verify the matching key material source.
+3. If no valid key exists, treat data as unrecoverable and perform controlled rebuild from exports/audit artifacts.
+4. Rotate credentials/secrets and document incident timeline.
+
+Migration safety defaults:
+- Backup-before-migrate is enabled by default.
+- Migrations can be configured to hard-fail if backup policy is not satisfied.
+- Automatic restore on migration failure is enabled by default.
+
+### Dependency Locking
+
+Runtime dependencies are pinned in `requirements.txt` and mirrored in `pyproject.toml`.
+
+Recommended lockfile workflow:
+
+```bash
+# pip-tools
+pip install pip-tools
+pip-compile --generate-hashes -o requirements.lock requirements.txt
+pip-sync requirements.lock
+```
+
+```bash
+# uv
+uv pip compile requirements.txt -o requirements.lock
+uv pip sync requirements.lock
+```
+
+Editable install for development (consistent with packaging metadata):
+
+```bash
+pip install -e .[dev]
+```
+
+### API Usage Examples
+
+Create workflow instance:
+
+```bash
+curl -X POST http://localhost:5000/api/v1/workflows/instances \
+   -H "Content-Type: application/json" \
+   -d '{"org_id":"1","workflow_type":"case_intake"}'
+```
+
+Apply workflow event (identity comes from authenticated session):
+
+```bash
+curl -X POST http://localhost:5000/api/v1/workflows/instances/<instance_id>/events \
+   -H "Content-Type: application/json" \
+   -d '{"org_id":"1","event_type":"intake_submit","payload":{"case_id":"CASE-001"}}'
+```
+
+Copilot chat:
+
+```bash
+curl -X POST http://localhost:5000/ai/copilot/chat \
+   -H "Content-Type: application/json" \
+   -d '{"prompt":"Summarize donor pipeline","context":{"active_page":"donors"}}'
+```
 
 ## Key Modules
 
@@ -353,6 +434,17 @@ python -m ngo_homesuite.db.migrate
 5. Open a Pull Request
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
+
+Quick contributor bootstrap:
+
+```bash
+pip install -e .[dev]
+pre-commit install
+python -m pytest --maxfail=10 -v
+```
+
+Phase 2 roadmap tracking:
+- See `docs/phase2_roadmap.md`
 
 ## Backup & Recovery
 

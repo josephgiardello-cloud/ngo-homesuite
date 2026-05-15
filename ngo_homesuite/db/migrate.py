@@ -11,6 +11,22 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from ngo_homesuite.config import get_runtime_settings
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return float(raw)
+
 
 class MigrationError(RuntimeError):
     """Raised when schema migration validation or execution fails."""
@@ -150,7 +166,7 @@ def plan_migrations(db_path: str | None = None, migrations_dir: Path | None = No
     resolved_db_path = db_path or "ngo_data.db"
     directory = Path(migrations_dir) if migrations_dir is not None else _resolve_migrations_dir()
     migration_files = sorted(directory.glob("*.sql"))
-    timeout_s = float(os.environ.get("NGO_HOMESUITE_MIGRATION_TIMEOUT_SEC", "30"))
+    timeout_s = _env_float("NGO_HOMESUITE_MIGRATION_TIMEOUT_SEC", get_runtime_settings().migration_timeout_sec)
     conn = sqlite3.connect(resolved_db_path, detect_types=sqlite3.PARSE_DECLTYPES, timeout=timeout_s)
     conn.row_factory = sqlite3.Row
     try:
@@ -197,13 +213,29 @@ def plan_migrations(db_path: str | None = None, migrations_dir: Path | None = No
 
 
 def _create_backup_if_needed(db_path: str) -> str | None:
-    enabled = os.environ.get("NGO_HOMESUITE_BACKUP_BEFORE_MIGRATE", "1").lower() in {"1", "true", "yes", "on"}
+    settings = get_runtime_settings()
+    enabled = _env_bool("NGO_HOMESUITE_BACKUP_BEFORE_MIGRATE", settings.backup_before_migrate)
+    require_backup = _env_bool("NGO_HOMESUITE_REQUIRE_BACKUP_BEFORE_MIGRATE", settings.require_backup_before_migrate)
+    warn_only = _env_bool("NGO_HOMESUITE_MIGRATION_BACKUP_WARN_ONLY", settings.migration_backup_warn_only)
+
     if not enabled:
+        msg = "Backup before migrate is disabled by configuration"
+        if require_backup and not warn_only:
+            raise MigrationBackupError(msg)
+        _emit_migration_event(step="backup", status="error" if require_backup else "ok", message=msg)
         return None
     if not db_path or db_path == ":memory:" or db_path.startswith("file:"):
+        msg = "Backup skipped for in-memory or URI-based SQLite database"
+        if require_backup and not warn_only:
+            raise MigrationBackupError(msg)
+        _emit_migration_event(step="backup", status="error" if require_backup else "ok", message=msg)
         return None
     source = Path(db_path)
     if not source.exists():
+        msg = f"Database file does not exist for backup: {db_path}"
+        if require_backup and not warn_only:
+            raise MigrationBackupError(msg)
+        _emit_migration_event(step="backup", status="error" if require_backup else "ok", message=msg)
         return None
     backup_path = str(source.with_suffix(source.suffix + ".bak"))
     try:
@@ -215,7 +247,10 @@ def _create_backup_if_needed(db_path: str) -> str | None:
 
 
 def _restore_backup_if_needed(db_path: str, backup_path: str | None) -> None:
-    restore = os.environ.get("NGO_HOMESUITE_RESTORE_BACKUP_ON_MIGRATION_FAIL", "1").lower() in {"1", "true", "yes", "on"}
+    restore = _env_bool(
+        "NGO_HOMESUITE_RESTORE_BACKUP_ON_MIGRATION_FAIL",
+        get_runtime_settings().restore_backup_on_migration_fail,
+    )
     if not restore or not backup_path:
         return
     backup = Path(backup_path)
@@ -240,7 +275,7 @@ def auto_migrate(db_path: str | None = None) -> None:
     ]
 
     backup_path = _create_backup_if_needed(resolved_db_path)
-    timeout_s = float(os.environ.get("NGO_HOMESUITE_MIGRATION_TIMEOUT_SEC", "30"))
+    timeout_s = _env_float("NGO_HOMESUITE_MIGRATION_TIMEOUT_SEC", get_runtime_settings().migration_timeout_sec)
     conn = sqlite3.connect(resolved_db_path, detect_types=sqlite3.PARSE_DECLTYPES, timeout=timeout_s)
     conn.row_factory = sqlite3.Row
     try:

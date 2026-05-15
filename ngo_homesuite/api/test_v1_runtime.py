@@ -63,8 +63,6 @@ def test_v1_workflow_runtime_happy_path(client, app):
         json={
             "org_id": org_id,
             "event_type": "intake_submit",
-            "actor_id": "u_admin",
-            "role": "org_admin",
             "payload": {
                 "case_id": "CASE-001",
                 "email": "beneficiary@example.org",
@@ -137,8 +135,6 @@ def test_v1_workflow_cross_tenant_access_is_blocked(client, app):
         json={
             "org_id": other_org_id,
             "event_type": "intake_submit",
-            "actor_id": "u_staff",
-            "role": "case_worker",
             "payload": {"email": "should-not-pass@example.org"},
         },
     )
@@ -163,8 +159,6 @@ def test_v1_workflow_event_idempotency_key_prevents_duplicate_transition(client,
     payload = {
         "org_id": org_id,
         "event_type": "intake_submit",
-        "actor_id": "u_admin",
-        "role": "org_admin",
         "idempotency_key": "idem-intake-submit-001",
         "payload": {"case_id": "CASE-IDEM-001", "email": "idem@example.org"},
     }
@@ -180,3 +174,63 @@ def test_v1_workflow_event_idempotency_key_prevents_duplicate_transition(client,
     replay_instance = replay.get_json()["instance"]
     assert replay_instance["idempotent_replay"] is True
     assert len(replay_instance["history"]) == 1
+
+
+def test_v1_workflow_event_rejects_actor_spoofing(client, app):
+    _ensure_user(app, "v2_staff_actor", "v2_staff_actor@test.local", "staff", "v2_staff_actor_pass_123")
+    _login(client, "v2_staff_actor", "v2_staff_actor_pass_123")
+
+    with app.app_context():
+        org = Organization.query.filter_by(is_active=True).first()
+        org_id = str(org.id)
+
+    create_instance = client.post(
+        "/api/v1/workflows/instances",
+        json={"org_id": org_id, "workflow_type": "case_intake"},
+    )
+    assert create_instance.status_code == 200
+    instance_id = create_instance.get_json()["instance"]["instance_id"]
+
+    spoof = client.post(
+        f"/api/v1/workflows/instances/{instance_id}/events",
+        json={
+            "org_id": org_id,
+            "event_type": "intake_submit",
+            "actor_id": "999999",
+            "role": "case_worker",
+            "payload": {"case_id": "CASE-SPOOF-ACTOR"},
+        },
+    )
+    assert spoof.status_code == 403
+    assert "actor_id" in spoof.get_json()["error"]
+
+
+def test_v1_workflow_event_rejects_role_spoofing(client, app):
+    _ensure_user(app, "v2_staff_role", "v2_staff_role@test.local", "staff", "v2_staff_role_pass_123")
+    _login(client, "v2_staff_role", "v2_staff_role_pass_123")
+
+    with app.app_context():
+        org = Organization.query.filter_by(is_active=True).first()
+        org_id = str(org.id)
+        user = User.query.filter_by(username="v2_staff_role").first()
+        user_id = str(user.id)
+
+    create_instance = client.post(
+        "/api/v1/workflows/instances",
+        json={"org_id": org_id, "workflow_type": "case_intake"},
+    )
+    assert create_instance.status_code == 200
+    instance_id = create_instance.get_json()["instance"]["instance_id"]
+
+    spoof = client.post(
+        f"/api/v1/workflows/instances/{instance_id}/events",
+        json={
+            "org_id": org_id,
+            "event_type": "intake_submit",
+            "actor_id": user_id,
+            "role": "org_admin",
+            "payload": {"case_id": "CASE-SPOOF-ROLE"},
+        },
+    )
+    assert spoof.status_code == 403
+    assert "role" in spoof.get_json()["error"]

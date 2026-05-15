@@ -32,6 +32,24 @@ NGO HomeSuite V2 is a multi-tenant NGO operating system with:
 
 Event -> Workflow transition -> State update -> Trace append -> Audit event append -> API response
 
+## Reference Flow Diagram
+
+```mermaid
+flowchart LR
+	Client[Web/API Client] --> Auth[Auth + RBAC]
+	Auth --> V1[API v1 / Web Routes]
+	V1 --> WF[Workflow Engine]
+	V1 --> CP[Copilot Service]
+	WF --> ES[Event Store]
+	WF --> TR[Trace Store]
+	CP --> OLL[Ollama Local Runtime]
+	CP --> TOOLS[Copilot Tools]
+	TOOLS --> DB[(Primary DB)]
+	WF --> DB
+	ES --> DB
+	V1 --> OBS[Observability Metrics/Logs]
+```
+
 ## Roadmap Fit
 
 This implementation establishes Phase 1 and Phase 2 foundations:
@@ -47,3 +65,5 @@ Next implementation phases should focus on:
 - field-level PII policy enforcement
 - connector adapters for Stripe/Twilio/SES/Excel
 - workflow DSL and visual builder
+
+Roadmap tracker: `docs/phase2_roadmap.md`

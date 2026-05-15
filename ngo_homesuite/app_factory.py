@@ -7,7 +7,6 @@ This module creates and configures the Flask application with all extensions.
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-import os
 import time
 import uuid
 
@@ -19,6 +18,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
 from ngo_homesuite.flask_config import get_config
+from ngo_homesuite.config import get_runtime_settings
 from ngo_homesuite.models.core import db, User, Organization, Donor, Donation, Project, Fund, Volunteer, Expense
 from ngo_homesuite.errors import init_error_handlers
 from ngo_homesuite.app.container import AppContainer
@@ -41,7 +41,6 @@ def create_app(config=None):
     """
     
     app = Flask(__name__, template_folder='web/templates')
-    
     # Load configuration
     if config is None:
         config = get_config()
@@ -138,6 +137,13 @@ def create_app(config=None):
             'Content-Security-Policy',
             "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'",
         )
+
+        allowed_origins = app.config.get("CORS_ALLOWED_ORIGINS", []) or []
+        req_origin = request.headers.get("Origin", "")
+        if req_origin and req_origin in allowed_origins:
+            response.headers.setdefault("Access-Control-Allow-Origin", req_origin)
+            response.headers.setdefault("Access-Control-Allow-Credentials", "true")
+            response.headers.setdefault("Vary", "Origin")
         app.logger.info(
             'request_completed',
             extra={
@@ -184,7 +190,7 @@ def seed_demo_data(app):
         role='admin',
         organization_id=org.id,
     )
-    admin_user.set_password(os.environ.get('NGO_DEMO_ADMIN_PASSWORD', 'admin123!'))
+    admin_user.set_password(get_runtime_settings().demo_admin_password)
 
     staff_user = User(
         username='staff',
@@ -326,10 +332,9 @@ def setup_logging(app):
 # Application entry point
 if __name__ == '__main__':
     app = create_app()
-    
-    # Get host and port from environment
-    host = os.environ.get('HOST', '127.0.0.1')
-    port = int(os.environ.get('PORT', 5000))
-    debug = os.environ.get('FLASK_DEBUG', 'True').lower() == 'true'
-    
+    settings = get_runtime_settings()
+    host = settings.host
+    port = settings.port
+    debug = settings.flask_debug
+
     app.run(host=host, port=port, debug=debug)

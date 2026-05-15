@@ -250,3 +250,33 @@ def test_legacy_schema_migrate_uses_legacy_runner_when_opted_in(monkeypatch):
 
     legacy_schema.migrate_schema(_FakeConn(), _FakeCursor())
     assert called["used"] is True
+
+
+def test_auto_migrate_enforces_backup_policy_when_required(tmp_path, monkeypatch):
+    migrations_dir = tmp_path / "migrations"
+    migrations_dir.mkdir(parents=True, exist_ok=True)
+    _write_migration(
+        migrations_dir,
+        "0001_initial.sql",
+        """
+        CREATE TABLE IF NOT EXISTS schema_version (
+            version INTEGER PRIMARY KEY,
+            applied_at_utc TEXT NOT NULL,
+            hash TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS demo_table (id INTEGER PRIMARY KEY);
+        """,
+    )
+
+    import ngo_homesuite.migrations as migrations_module
+
+    monkeypatch.setattr(migrations_module, "MIGRATIONS_DIR", migrations_dir)
+    monkeypatch.setenv("NGO_HOMESUITE_BACKUP_BEFORE_MIGRATE", "0")
+    monkeypatch.setenv("NGO_HOMESUITE_REQUIRE_BACKUP_BEFORE_MIGRATE", "1")
+    monkeypatch.setenv("NGO_HOMESUITE_MIGRATION_BACKUP_WARN_ONLY", "0")
+
+    db_path = tmp_path / "require_backup.db"
+    db_path.write_text("", encoding="utf-8")
+
+    with pytest.raises(MigrationError, match="Backup before migrate is disabled"):
+        auto_migrate(str(db_path))

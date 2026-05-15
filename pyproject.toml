@@ -34,11 +34,36 @@ dependencies = [
   "PyYAML==6.0.2",
   "SQLAlchemy==2.0.36",
   "alembic==1.14.0",
+  "greenlet==3.3.0",
   "cryptography==46.0.3",
   "argon2-cffi==25.1.0",
   "python-dotenv==1.0.1",
   "requests==2.32.3",
+  "ollama==0.3.3",
+  "langchain==0.3.27",
+  "langchain-ollama==0.3.3",
+  "langchain-community==0.3.27",
+  "chromadb==0.5.5",
+  "pypdf==5.9.0",
+  "python-dateutil==2.9.0.post0",
+  "reportlab==4.2.2",
+  "boto3==1.42.18",
+  "botocore==1.42.18",
+  "azure-identity==1.25.1",
+  "azure-keyvault-keys==4.11.0",
+  "gunicorn==22.0.0",
   "openpyxl==3.1.5",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==9.0.2",
+  "pytest-cov==6.0.0",
+  "pytest-asyncio==0.25.2",
+  "black==25.1.0",
+  "flake8==7.1.1",
+  "isort==5.13.2",
+  "mypy==1.14.0",
 ]
 
 [tool.setuptools.packages.find]

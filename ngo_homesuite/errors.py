@@ -65,11 +65,19 @@ def init_error_handlers(app):
         # Log the error
         app.logger.error(f'Unhandled exception: {error}', exc_info=True)
         
+        show_debug = bool(app.debug) or bool(app.config.get("TESTING", False))
+
         # Return a generic error response
         if request.accept_mimetypes.best_match(['application/json', 'text/html']) == 'application/json':
-            return jsonify({
+            payload = {
                 'error': 'Internal Server Error',
                 'status': 500,
                 'message': 'An unexpected error occurred.'
-            }), 500
+            }
+            if show_debug:
+                payload['debug'] = {
+                    'type': type(error).__name__,
+                    'detail': str(error),
+                }
+            return jsonify(payload), 500
         return render_template('errors/500.html'), 500
