@@ -289,3 +289,19 @@ class TestPiiRedactionInRoutes:
             sent_prompt = call_args[1]["prompt"] if call_args[1] else call_args[0][0]
             assert "donor@secret.org" not in sent_prompt
             assert "[REDACTED_EMAIL]" in sent_prompt
+
+
+class TestApexFallbackAndRateLimit:
+    def test_chat_returns_fallback_when_ollama_unavailable(self, client, app, admin_user):
+        from unittest.mock import patch
+        from ngo_homesuite.ai.apex_client import OllamaClientError
+
+        _login(client, "test_admin", "admin_pass_123")
+        with patch("ngo_homesuite.web.ai_routes._client") as mock_client:
+            mock_client.return_value.query.side_effect = OllamaClientError("ollama offline")
+            rv = client.post("/ai/chat", json={"prompt": "Can you summarize donations?"})
+
+        assert rv.status_code == 200
+        payload = rv.get_json()
+        assert payload["mode"] == "fallback"
+        assert "temporarily unavailable" in payload["response"]

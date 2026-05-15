@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional as TypingOptional
 
-from flask import Blueprint, render_template, redirect, url_for, request, flash, send_file, current_app, Response
+from flask import Blueprint, render_template, redirect, url_for, request, flash, send_file, current_app, Response, session
 from flask_login import login_required, current_user
 from flask_wtf import FlaskForm
 from wtforms import BooleanField, FloatField, SelectField, StringField, SubmitField, TextAreaField
@@ -41,6 +41,8 @@ from ngo_homesuite.utils.receipt_pdf import generate_receipt_pdf_bytes
 from ngo_homesuite.compliance.evidence_pack import build_compliance_evidence
 
 main_bp = Blueprint('main', __name__)
+
+_SUPPORTED_LOCALES = {'en', 'es', 'fr'}
 
 
 class DonorForm(FlaskForm):
@@ -644,6 +646,18 @@ def index():
     if current_user.is_authenticated:
         return redirect(url_for('main.dashboard'))
     return render_template('index.html')
+
+
+@main_bp.route('/locale/<string:lang>', methods=['POST'])
+def set_locale(lang: str):
+    normalized = (lang or '').strip().lower()
+    if normalized in _SUPPORTED_LOCALES:
+        session['lang'] = normalized
+
+    next_path = (request.args.get('next') or request.form.get('next') or request.referrer or url_for('main.index')).strip()
+    if not next_path.startswith('/'):
+        next_path = url_for('main.index')
+    return redirect(next_path)
 
 
 @main_bp.route('/give', methods=['GET', 'POST'])

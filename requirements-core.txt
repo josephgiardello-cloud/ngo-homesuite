@@ -1,0 +1,31 @@
+# Core runtime dependencies (no AI or cloud providers)
+Flask==3.1.2
+Flask-Login==0.6.3
+Flask-SQLAlchemy==3.1.1
+Flask-Migrate==4.0.7
+Flask-WTF==1.2.2
+Flask-Babel==4.0.0
+Flask-Limiter==4.1.1
+Pydantic==2.9.2
+PyYAML==6.0.2
+
+# Database
+SQLAlchemy==2.0.36
+alembic==1.14.0
+greenlet==3.3.0
+
+# Forms and validation
+WTForms==3.1.2
+email-validator==2.2.0
+
+# Security and config
+cryptography==46.0.3
+argon2-cffi==25.1.0
+python-dotenv==1.0.1
+
+# Web server and utilities
+gunicorn==22.0.0
+requests==2.32.3
+python-dateutil==2.9.0.post0
+reportlab==4.2.2
+openpyxl==3.1.5

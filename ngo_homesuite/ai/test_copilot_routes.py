@@ -304,3 +304,28 @@ def test_copilot_chat_rejects_cross_tenant_payload(client, app, monkeypatch):
     )
     assert rv.status_code == 403
     assert "tenant_id" in rv.get_json()["error"]
+
+
+def test_copilot_chat_rate_limited(client, app, monkeypatch):
+    _ensure_user(app, "copilot_rate_user", "copilot_rate_user@test.local", "staff", "rate_user_pass_123")
+    _login(client, "copilot_rate_user", "rate_user_pass_123")
+
+    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteCopilot.from_app", lambda: _FakeCopilot())
+
+    old_rate = app.config.get("COPILOT_RATE_LIMIT_PER_MIN")
+    old_enabled = app.config.get("RATELIMIT_ENABLED")
+    try:
+        app.config["COPILOT_RATE_LIMIT_PER_MIN"] = 1
+        app.config["RATELIMIT_ENABLED"] = True
+
+        rv1 = client.post("/ai/copilot/chat", json={"prompt": "First request"})
+        assert rv1.status_code == 200
+
+        rv2 = client.post("/ai/copilot/chat", json={"prompt": "Second request"})
+        assert rv2.status_code == 429
+        body = rv2.get_json()
+        assert "rate limit" in body["error"].lower()
+        assert int(body["retry_after_sec"]) >= 1
+    finally:
+        app.config["COPILOT_RATE_LIMIT_PER_MIN"] = old_rate
+        app.config["RATELIMIT_ENABLED"] = old_enabled

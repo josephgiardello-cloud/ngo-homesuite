@@ -9,13 +9,32 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from ngo_homesuite.models.core import CaseActivity, ProgramCase, db
+from ngo_homesuite.models.core import (
+    Beneficiary,
+    BeneficiaryServiceLog,
+    CaseActivity,
+    CaseOutcomeMetric,
+    ProgramCase,
+    db,
+)
 
 logger = logging.getLogger(__name__)
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _coerce_datetime(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None)
+    if isinstance(value, str):
+        normalized = value.replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is not None:
+            return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return parsed
+    return _utcnow()
 
 
 # ---------------------------------------------------------------------------
@@ -31,7 +50,12 @@ def create_case(
     case_type: str = "service",
     description: Optional[str] = None,
     outcome_metric: Optional[str] = None,
+    target_outcome_value: Optional[float] = None,
     next_review_date: Optional[Any] = None,
+    beneficiary_id: Optional[int] = None,
+    intake_stage: str = "intake",
+    risk_level: Optional[str] = None,
+    intake_summary: Optional[str] = None,
     actor_id: Optional[int] = None,
 ) -> ProgramCase:
     case = ProgramCase(
@@ -39,9 +63,14 @@ def create_case(
         title=title,
         donor_id=donor_id,
         project_id=project_id,
+        beneficiary_id=beneficiary_id,
         case_type=case_type,
         description=description,
         outcome_metric=outcome_metric,
+        target_outcome_value=target_outcome_value,
+        intake_stage=intake_stage,
+        risk_level=risk_level,
+        intake_summary=intake_summary,
         next_review_date=next_review_date,
         status="open",
     )
@@ -135,10 +164,193 @@ def add_note(
     return activity
 
 
+def update_beneficiary_intake(
+    beneficiary_id: int,
+    organization_id: int,
+    *,
+    first_name: Optional[str] = None,
+    last_name: Optional[str] = None,
+    email: Optional[str] = None,
+    phone: Optional[str] = None,
+    country: Optional[str] = None,
+    city: Optional[str] = None,
+    address: Optional[str] = None,
+    program: Optional[str] = None,
+    status: Optional[str] = None,
+    notes: Optional[str] = None,
+) -> Beneficiary:
+    beneficiary = Beneficiary.query.filter_by(id=beneficiary_id, organization_id=organization_id).first_or_404()
+    fields = {
+        "first_name": first_name,
+        "last_name": last_name,
+        "email": email,
+        "phone": phone,
+        "country": country,
+        "city": city,
+        "address": address,
+        "program": program,
+        "status": status,
+        "notes": notes,
+    }
+    for key, value in fields.items():
+        if value is not None:
+            setattr(beneficiary, key, value)
+    db.session.commit()
+    return beneficiary
+
+
+def log_service_delivery(
+    case_id: int,
+    organization_id: int,
+    *,
+    service_type: str,
+    service_date: Optional[Any] = None,
+    duration_minutes: Optional[int] = None,
+    service_units: Optional[float] = None,
+    outcome_note: Optional[str] = None,
+    metadata: Optional[dict[str, Any]] = None,
+    staff_user_id: Optional[int] = None,
+) -> BeneficiaryServiceLog:
+    case = ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    log = BeneficiaryServiceLog(
+        organization_id=organization_id,
+        case_id=case.id,
+        beneficiary_id=case.beneficiary_id,
+        staff_user_id=staff_user_id,
+        service_type=service_type,
+        service_date=_coerce_datetime(service_date) if service_date is not None else _utcnow(),
+        duration_minutes=duration_minutes,
+        service_units=service_units,
+        outcome_note=outcome_note,
+        metadata_json=metadata,
+    )
+    db.session.add(log)
+    _log_activity(
+        case.id,
+        organization_id,
+        activity_type="service_log",
+        content=f"Service logged: {service_type}",
+        actor_id=staff_user_id,
+    )
+    db.session.commit()
+    return log
+
+
+def list_service_logs(case_id: int, organization_id: int) -> List[BeneficiaryServiceLog]:
+    ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    return (
+        BeneficiaryServiceLog.query
+        .filter_by(case_id=case_id, organization_id=organization_id)
+        .order_by(BeneficiaryServiceLog.service_date.asc())
+        .all()
+    )
+
+
+def record_outcome_metric(
+    case_id: int,
+    organization_id: int,
+    *,
+    metric_name: str,
+    current_value: float,
+    unit: Optional[str] = None,
+    baseline_value: Optional[float] = None,
+    target_value: Optional[float] = None,
+    note: Optional[str] = None,
+) -> CaseOutcomeMetric:
+    case = ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    metric = CaseOutcomeMetric(
+        organization_id=organization_id,
+        case_id=case.id,
+        metric_name=metric_name,
+        current_value=current_value,
+        unit=unit,
+        baseline_value=baseline_value,
+        target_value=target_value,
+        note=note,
+    )
+    db.session.add(metric)
+
+    if case.outcome_metric == metric_name or case.outcome_metric is None:
+        case.outcome_metric = metric_name
+        case.outcome_value = current_value
+        if target_value is not None and case.target_outcome_value is None:
+            case.target_outcome_value = target_value
+
+    _recompute_case_progress(case)
+    _log_activity(
+        case.id,
+        organization_id,
+        activity_type="outcome_metric",
+        content=f"Outcome metric updated: {metric_name}={current_value}",
+    )
+    db.session.commit()
+    return metric
+
+
+def case_progress(case_id: int, organization_id: int) -> Dict[str, Any]:
+    case = ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    logs = list_service_logs(case_id, organization_id)
+    metrics = (
+        CaseOutcomeMetric.query
+        .filter_by(case_id=case_id, organization_id=organization_id)
+        .order_by(CaseOutcomeMetric.recorded_at.asc())
+        .all()
+    )
+    activities = (
+        CaseActivity.query
+        .filter_by(case_id=case_id, organization_id=organization_id)
+        .order_by(CaseActivity.created_at.asc())
+        .all()
+    )
+
+    return {
+        "case_id": case.id,
+        "status": case.status,
+        "intake_stage": case.intake_stage,
+        "progress_percent": round(float(case.progress_percent or 0.0), 2),
+        "service_count": len(logs),
+        "last_service_at": logs[-1].service_date.isoformat() if logs else None,
+        "metrics": [
+            {
+                "metric_name": m.metric_name,
+                "current_value": m.current_value,
+                "target_value": m.target_value,
+                "recorded_at": m.recorded_at.isoformat(),
+            }
+            for m in metrics
+        ],
+        "timeline": [
+            {
+                "activity_type": a.activity_type,
+                "content": a.content,
+                "created_at": a.created_at.isoformat(),
+            }
+            for a in activities
+        ],
+    }
+
+
 def delete_case(case_id: int, organization_id: int) -> None:
     case = ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
     db.session.delete(case)
     db.session.commit()
+
+
+def _recompute_case_progress(case: ProgramCase) -> None:
+    if case.target_outcome_value and case.target_outcome_value > 0 and case.outcome_value is not None:
+        pct = (float(case.outcome_value) / float(case.target_outcome_value)) * 100.0
+        case.progress_percent = max(0.0, min(100.0, pct))
+        return
+
+    latest = (
+        CaseOutcomeMetric.query
+        .filter_by(case_id=case.id, organization_id=case.organization_id)
+        .order_by(CaseOutcomeMetric.recorded_at.desc())
+        .first()
+    )
+    if latest and latest.target_value and latest.target_value > 0:
+        pct = (float(latest.current_value) / float(latest.target_value)) * 100.0
+        case.progress_percent = max(0.0, min(100.0, pct))
 
 
 # ---------------------------------------------------------------------------

@@ -20,9 +20,17 @@ class Config:
     SQLALCHEMY_DATABASE_URI = _RUNTIME_SETTINGS.database_url
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {
-        'pool_pre_ping': True,
-        'pool_recycle': 3600,
+        'pool_pre_ping': _RUNTIME_SETTINGS.db_pool_pre_ping,
+        'pool_recycle': _RUNTIME_SETTINGS.db_pool_recycle_sec,
     }
+    if _RUNTIME_SETTINGS.database_backend != 'sqlite' and ':memory:' not in SQLALCHEMY_DATABASE_URI:
+        SQLALCHEMY_ENGINE_OPTIONS.update(
+            {
+                'pool_size': _RUNTIME_SETTINGS.db_pool_size,
+                'max_overflow': _RUNTIME_SETTINGS.db_max_overflow,
+                'pool_timeout': _RUNTIME_SETTINGS.db_pool_timeout_sec,
+            }
+        )
     
     # Session
     PERMANENT_SESSION_LIFETIME = timedelta(seconds=_RUNTIME_SETTINGS.permanent_session_lifetime_seconds)
@@ -84,6 +92,7 @@ class Config:
     COPILOT_APPROVAL_TOKEN_TTL_SEC = _RUNTIME_SETTINGS.copilot_approval_token_ttl_sec
     COPILOT_TOOL_TIMEOUT_SEC = _RUNTIME_SETTINGS.copilot_tool_timeout_sec
     COPILOT_CONVERSATION_MAX_MESSAGES = _RUNTIME_SETTINGS.copilot_conversation_max_messages
+    COPILOT_RATE_LIMIT_PER_MIN = _RUNTIME_SETTINGS.copilot_rate_limit_per_min
     CORS_ALLOWED_ORIGINS = _RUNTIME_SETTINGS.cors_allowed_origins
     ENABLE_DEMO_SEED = _RUNTIME_SETTINGS.enable_demo_seed
 
@@ -103,6 +112,10 @@ class TestingConfig(Config):
     DEBUG = True
     TESTING = True
     SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        'pool_pre_ping': True,
+        'pool_recycle': 3600,
+    }
     WTF_CSRF_ENABLED = False
     RATELIMIT_ENABLED = False
     ENABLE_DEMO_SEED = True

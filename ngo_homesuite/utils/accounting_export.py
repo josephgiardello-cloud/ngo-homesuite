@@ -141,3 +141,99 @@ def export_expenses_quickbooks_iif(
             f.write(f"SPL\t{txn_id}\tCHECK\t{txn_date}\t{expense_account}\t{category}\t{amount:.2f}\t{memo}\n")
             f.write("ENDTRNS\n")
     return len(rows)
+
+
+def export_donations_xero_csv(conn: sqlite3.Connection, csv_path: str) -> int:
+    """Export donations in a Xero-friendly invoice/payment CSV shape."""
+    cur = conn.cursor()
+    rows = _first_supported_query(
+        cur,
+        [
+            "SELECT id, donor_name, amount, currency, donation_date, purpose FROM donations",
+            "SELECT id, donor_name, amount_cents, currency, received_at, purpose FROM donations",
+        ],
+    )
+    amount_field_is_cents = "amount_cents" in cur.description[2][0]
+
+    columns = [
+        "Reference",
+        "ContactName",
+        "Date",
+        "DueDate",
+        "Description",
+        "LineAmount",
+        "Currency",
+        "AccountCode",
+        "TaxType",
+    ]
+    with open(csv_path, "w", newline="", encoding="utf-8") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(columns)
+        for row in rows:
+            txn_id = row[0]
+            donor_name = row[1] or "Unknown Donor"
+            amount = _coerce_amount(row[2], cents=amount_field_is_cents)
+            txn_date = _iso_date(row[4])
+            purpose = row[5] or "Donation"
+            writer.writerow(
+                [
+                    f"DON-{txn_id}",
+                    donor_name,
+                    txn_date,
+                    txn_date,
+                    purpose,
+                    f"{amount:.2f}",
+                    row[3] or "USD",
+                    "400",
+                    "OUTPUT",
+                ]
+            )
+    return len(rows)
+
+
+def export_expenses_xero_csv(conn: sqlite3.Connection, csv_path: str) -> int:
+    """Export expenses in a Xero bills CSV shape."""
+    cur = conn.cursor()
+    rows = _first_supported_query(
+        cur,
+        [
+            "SELECT id, category, amount, currency, paid_date, notes FROM expenses",
+            "SELECT id, category, amount_cents, currency, paid_at, notes FROM expenses",
+        ],
+    )
+    amount_field_is_cents = "amount_cents" in cur.description[2][0]
+
+    columns = [
+        "Reference",
+        "ContactName",
+        "Date",
+        "DueDate",
+        "Description",
+        "LineAmount",
+        "Currency",
+        "AccountCode",
+        "TaxType",
+    ]
+    with open(csv_path, "w", newline="", encoding="utf-8") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(columns)
+        for row in rows:
+            txn_id = row[0]
+            category = row[1] or "Expense"
+            amount = _coerce_amount(row[2], cents=amount_field_is_cents)
+            txn_date = _iso_date(row[4])
+            note = row[5] or category
+            writer.writerow(
+                [
+                    f"EXP-{txn_id}",
+                    category,
+                    txn_date,
+                    txn_date,
+                    note,
+                    f"{amount:.2f}",
+                    row[3] or "USD",
+                    "500",
+                    "INPUT",
+                ]
+            )
+    return len(rows)

@@ -6,6 +6,7 @@ import pytest
 
 from ngo_homesuite.models.core import (
     db,
+    Beneficiary,
     Donor,
     Donation,
     MembershipTier,
@@ -214,6 +215,83 @@ class TestProgramCases:
         activity = add_note(case.id, 1, "Client attended program session")
         db.session.rollback()
         assert activity.activity_type == "note"
+
+    def test_case_service_log_and_progress_tracking(self, ctx):
+        from ngo_homesuite.services.program_impact_service import (
+            case_progress,
+            create_case,
+            log_service_delivery,
+            record_outcome_metric,
+        )
+
+        beneficiary = Beneficiary(
+            organization_id=1,
+            first_name="Marta",
+            last_name="Perez",
+            status="active",
+            program="Housing",
+        )
+        db.session.add(beneficiary)
+        db.session.flush()
+
+        case = create_case(
+            1,
+            "Housing Stabilization",
+            beneficiary_id=beneficiary.id,
+            target_outcome_value=10.0,
+            outcome_metric="sessions_completed",
+            intake_stage="assessment",
+        )
+
+        log_service_delivery(
+            case.id,
+            1,
+            service_type="counseling_session",
+            duration_minutes=60,
+            outcome_note="Initial session complete",
+        )
+        record_outcome_metric(
+            case.id,
+            1,
+            metric_name="sessions_completed",
+            current_value=4.0,
+            target_value=10.0,
+            note="Week 2",
+        )
+
+        progress = case_progress(case.id, 1)
+        db.session.rollback()
+
+        assert progress["service_count"] == 1
+        assert progress["progress_percent"] == 40.0
+        assert len(progress["metrics"]) == 1
+        assert len(progress["timeline"]) >= 2
+
+    def test_update_beneficiary_intake(self, ctx):
+        from ngo_homesuite.services.program_impact_service import update_beneficiary_intake
+
+        beneficiary = Beneficiary(
+            organization_id=1,
+            first_name="Intake",
+            last_name="User",
+            status="active",
+            program="General",
+        )
+        db.session.add(beneficiary)
+        db.session.flush()
+
+        updated = update_beneficiary_intake(
+            beneficiary.id,
+            1,
+            phone="+1-555-0100",
+            city="Austin",
+            notes="Completed intake interview",
+        )
+        db.session.rollback()
+
+        assert updated.phone == "+1-555-0100"
+        assert updated.city == "Austin"
+        assert "intake" in updated.notes.lower()
 
 
 # ============================================================

@@ -24,6 +24,7 @@ ai_bp = Blueprint("ai", __name__, url_prefix="/ai")
 
 _USED_APPROVAL_TOKENS: dict[str, float] = {}
 _APPROVAL_TOKEN_TTL_SEC = 300
+_COPILOT_RATE_BUCKETS: dict[str, list[float]] = {}
 
 
 def _parse_tool_list(raw: Any) -> list[str]:
@@ -74,6 +75,35 @@ def _prune_used_approval_tokens(now_ts: float, ttl_sec: int) -> None:
     stale = [tok for tok, ts in _USED_APPROVAL_TOKENS.items() if now_ts - ts > ttl_sec]
     for tok in stale:
         _USED_APPROVAL_TOKENS.pop(tok, None)
+
+
+def _copilot_rate_limit_status(rate_per_min: int) -> tuple[bool, int]:
+    if rate_per_min <= 0:
+        return False, 0
+
+    user_id = str(getattr(current_user, "id", "anon"))
+    now_ts = time.time()
+    window_start = now_ts - 60.0
+    recent = [ts for ts in _COPILOT_RATE_BUCKETS.get(user_id, []) if ts >= window_start]
+
+    if len(recent) >= rate_per_min:
+        oldest_relevant = min(recent)
+        retry_after = max(1, int((oldest_relevant + 60.0) - now_ts))
+        _COPILOT_RATE_BUCKETS[user_id] = recent
+        return True, retry_after
+
+    recent.append(now_ts)
+    _COPILOT_RATE_BUCKETS[user_id] = recent
+    return False, 0
+
+
+def _apex_chat_fallback(prompt: str, reason: str) -> str:
+    snippet = prompt[:220] + ("..." if len(prompt) > 220 else "")
+    return (
+        "AI assistant is temporarily unavailable, so this is a safe fallback response. "
+        f"Reason: {reason}.\n\n"
+        f"Request received: {snippet}"
+    )
 
 
 def _audit_approval_event(event_name: str, prompt: str, tool: str, reason: str | None = None) -> None:
@@ -377,6 +407,7 @@ def chat_once() -> Response:
         current_app.logger.info("PII redacted from /ai/chat prompt (%d replacements)", n_redacted)
 
     _audit_interaction(redacted_prompt, model, tenant_id)
+    digest = hashlib.sha256(redacted_prompt.encode("utf-8")).hexdigest()
 
     try:
         answer = _client().query(
@@ -388,12 +419,13 @@ def chat_once() -> Response:
             system_prompt=NGO_APEX_POLICY_SYSTEM_PROMPT,
         )
     except OllamaClientError as exc:
-        return jsonify({"error": str(exc)}), 502
+        fallback = _apex_chat_fallback(redacted_prompt, str(exc))
+        _persist_exchange(session_id, model, tenant_id, redacted_prompt, fallback, digest)
+        return jsonify({"response": fallback, "mode": "fallback"})
 
-    digest = hashlib.sha256(redacted_prompt.encode("utf-8")).hexdigest()
     _persist_exchange(session_id, model, tenant_id, redacted_prompt, answer, digest)
 
-    return jsonify({"response": answer})
+    return jsonify({"response": answer, "mode": "normal"})
 
 
 @ai_bp.route("/stream", methods=["POST"])
@@ -452,7 +484,16 @@ def stream_chat() -> Response:
                     redacted_prompt, "".join(tokens), digest,
                 )
         except OllamaClientError as exc:
+            with app.app_context():
+                partial = "".join(tokens)
+                fallback = _apex_chat_fallback(redacted_prompt, str(exc))
+                persisted = partial if partial else fallback
+                _persist_exchange(
+                    session_id, model, tenant_id,
+                    redacted_prompt, persisted, digest,
+                )
             yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+            yield "data: [DONE]\n\n"
 
     response = Response(stream_with_context(event_stream()), mimetype="text/event-stream")
     response.headers["Cache-Control"] = "no-cache"
@@ -471,6 +512,21 @@ def copilot_chat() -> Response:
     prompt = str(payload.get("prompt", "")).strip()
     if not prompt:
         return jsonify({"error": "Prompt is required."}), 400
+
+    if bool(current_app.config.get("RATELIMIT_ENABLED", True)):
+        limited, retry_after = _copilot_rate_limit_status(
+            int(current_app.config.get("COPILOT_RATE_LIMIT_PER_MIN", 30))
+        )
+        if limited:
+            response = jsonify(
+                {
+                    "error": "Copilot rate limit exceeded. Please retry shortly.",
+                    "retry_after_sec": retry_after,
+                }
+            )
+            response.status_code = 429
+            response.headers["Retry-After"] = str(retry_after)
+            return response
 
     context = payload.get("context") if isinstance(payload.get("context"), dict) else {}
     model = str(payload.get("model") or current_app.config.get("OLLAMA_MODEL", "llama3.2"))

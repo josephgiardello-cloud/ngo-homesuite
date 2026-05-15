@@ -17,6 +17,12 @@ def _clear_runtime_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "NGO_HOMESUITE_BACKUP_DIR",
         "LOG_LEVEL",
         "NGO_HOMESUITE_SECRET_FILE",
+        "DB_BACKEND",
+        "DB_POOL_SIZE",
+        "DB_MAX_OVERFLOW",
+        "DB_POOL_TIMEOUT_SEC",
+        "DB_POOL_RECYCLE_SEC",
+        "DB_POOL_PRE_PING",
     ]
     for key in keys:
         monkeypatch.delenv(key, raising=False)
@@ -78,6 +84,7 @@ def test_load_runtime_settings_uses_defaults_when_no_env_or_yaml(monkeypatch: py
     settings = config.load_runtime_settings()
 
     assert settings.database_url.startswith("sqlite:///")
+    assert settings.database_backend == "sqlite"
     assert settings.db_path.endswith(str(Path(config.DEFAULT_DB_PATH)))
     assert settings.backup_directory.endswith(str(Path(config.DEFAULT_BACKUP_DIR)))
     assert settings.log_level == "INFO"
@@ -103,4 +110,48 @@ def test_load_runtime_settings_production_requires_explicit_database_url(monkeyp
     monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
 
     with pytest.raises(RuntimeError, match="DATABASE_URL"):
+        config.load_runtime_settings()
+
+
+def test_load_runtime_settings_infers_postgres_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_runtime_env(monkeypatch)
+
+    monkeypatch.setenv("SECRET_KEY", "postgres-secret")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/ngo")
+    monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
+
+    settings = config.load_runtime_settings()
+    assert settings.database_backend == "postgresql"
+
+
+def test_load_runtime_settings_accepts_pool_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_runtime_env(monkeypatch)
+
+    monkeypatch.setenv("SECRET_KEY", "pool-secret")
+    monkeypatch.setenv("DB_BACKEND", "mysql")
+    monkeypatch.setenv("DATABASE_URL", "mysql+pymysql://user:pass@localhost:3306/ngo")
+    monkeypatch.setenv("DB_POOL_SIZE", "25")
+    monkeypatch.setenv("DB_MAX_OVERFLOW", "40")
+    monkeypatch.setenv("DB_POOL_TIMEOUT_SEC", "55")
+    monkeypatch.setenv("DB_POOL_RECYCLE_SEC", "2200")
+    monkeypatch.setenv("DB_POOL_PRE_PING", "false")
+    monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
+
+    settings = config.load_runtime_settings()
+    assert settings.database_backend == "mysql"
+    assert settings.db_pool_size == 25
+    assert settings.db_max_overflow == 40
+    assert settings.db_pool_timeout_sec == 55
+    assert settings.db_pool_recycle_sec == 2200
+    assert settings.db_pool_pre_ping is False
+
+
+def test_load_runtime_settings_rejects_invalid_database_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_runtime_env(monkeypatch)
+
+    monkeypatch.setenv("SECRET_KEY", "invalid-url-secret")
+    monkeypatch.setenv("DATABASE_URL", "oracle://db-host/ngo")
+    monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
+
+    with pytest.raises(RuntimeError, match="database_url"):
         config.load_runtime_settings()

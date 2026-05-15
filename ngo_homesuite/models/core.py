@@ -643,6 +643,12 @@ class ProgramCase(db.Model):
     outcome = db.Column(db.Text, nullable=True)       # measured outcome / impact statement
     outcome_metric = db.Column(db.String(200), nullable=True)  # e.g. "Families housed"
     outcome_value = db.Column(db.Float, nullable=True)          # e.g. 12
+    target_outcome_value = db.Column(db.Float, nullable=True)
+    progress_percent = db.Column(db.Float, default=0.0, nullable=False)
+
+    intake_stage = db.Column(db.String(32), default='intake', nullable=False)  # intake, assessment, active_service, follow_up, closed
+    risk_level = db.Column(db.String(20), nullable=True)  # low, medium, high, critical
+    intake_summary = db.Column(db.Text, nullable=True)
 
     opened_date = db.Column(db.Date, nullable=True)
     closed_date = db.Column(db.Date, nullable=True)
@@ -652,6 +658,8 @@ class ProgramCase(db.Model):
     updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
 
     activities = db.relationship('CaseActivity', backref='case', cascade='all, delete-orphan', order_by='CaseActivity.created_at')
+    service_logs = db.relationship('BeneficiaryServiceLog', backref='case', cascade='all, delete-orphan', order_by='BeneficiaryServiceLog.service_date')
+    outcome_metrics = db.relationship('CaseOutcomeMetric', backref='case', cascade='all, delete-orphan', order_by='CaseOutcomeMetric.recorded_at')
     organization = db.relationship('Organization', backref='program_cases')
 
     def __repr__(self):
@@ -679,6 +687,53 @@ class CaseActivity(db.Model):
 
     def __repr__(self):
         return f'<CaseActivity case={self.case_id} {self.activity_type}>'
+
+
+class BeneficiaryServiceLog(db.Model):
+    """Structured service delivery entry tied to a beneficiary case."""
+
+    __tablename__ = 'beneficiary_service_logs'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    case_id = db.Column(db.Integer, db.ForeignKey('program_cases.id'), nullable=False, index=True)
+    beneficiary_id = db.Column(db.Integer, db.ForeignKey('beneficiaries.id'), nullable=True, index=True)
+    staff_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+
+    service_type = db.Column(db.String(80), nullable=False)
+    service_date = db.Column(db.DateTime, default=_utcnow_naive, nullable=False, index=True)
+    duration_minutes = db.Column(db.Integer, nullable=True)
+    service_units = db.Column(db.Float, nullable=True)
+    outcome_note = db.Column(db.Text, nullable=True)
+    metadata_json = db.Column('metadata', JSON, nullable=True)
+
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+
+    staff_user = db.relationship('User', backref='beneficiary_service_logs')
+    beneficiary = db.relationship('Beneficiary', backref='service_logs')
+
+    def __repr__(self):
+        return f'<BeneficiaryServiceLog case={self.case_id} {self.service_type}>'
+
+
+class CaseOutcomeMetric(db.Model):
+    """Time-series metric updates for case-level outcome tracking."""
+
+    __tablename__ = 'case_outcome_metrics'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    case_id = db.Column(db.Integer, db.ForeignKey('program_cases.id'), nullable=False, index=True)
+    metric_name = db.Column(db.String(120), nullable=False)
+    unit = db.Column(db.String(40), nullable=True)
+    baseline_value = db.Column(db.Float, nullable=True)
+    target_value = db.Column(db.Float, nullable=True)
+    current_value = db.Column(db.Float, nullable=False)
+    recorded_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False, index=True)
+    note = db.Column(db.Text, nullable=True)
+
+    def __repr__(self):
+        return f'<CaseOutcomeMetric case={self.case_id} {self.metric_name}={self.current_value}>'
 
 
 # ---------------------------------------------------------------------------
@@ -815,6 +870,8 @@ __all__ = [
     'Task',
     'ProgramCase',
     'CaseActivity',
+    'BeneficiaryServiceLog',
+    'CaseOutcomeMetric',
     'DonorEngagementScore',
     'SmartGroup',
     'P2PPage',

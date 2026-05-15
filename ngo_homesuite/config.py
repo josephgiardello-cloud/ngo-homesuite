@@ -5,6 +5,7 @@ import secrets
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 from pydantic import BaseModel, Field, ValidationError, field_validator
@@ -25,6 +26,12 @@ class RuntimeSettings(BaseModel):
     flask_env: str = Field(default="development")
     secret_key: str
     database_url: str = Field(default=DEFAULT_DATABASE_URL)
+    database_backend: str = Field(default="sqlite")
+    db_pool_size: int = Field(default=10)
+    db_max_overflow: int = Field(default=20)
+    db_pool_timeout_sec: int = Field(default=30)
+    db_pool_recycle_sec: int = Field(default=1800)
+    db_pool_pre_ping: bool = Field(default=True)
     db_path: str = Field(default_factory=lambda: str(Path(DEFAULT_DB_PATH).resolve()))
     backup_directory: str = Field(default_factory=lambda: str(Path(DEFAULT_BACKUP_DIR).resolve()))
     host: str = Field(default="127.0.0.1")
@@ -67,6 +74,7 @@ class RuntimeSettings(BaseModel):
     copilot_approval_token_ttl_sec: int = Field(default=300)
     copilot_tool_timeout_sec: float = Field(default=8.0)
     copilot_conversation_max_messages: int = Field(default=200)
+    copilot_rate_limit_per_min: int = Field(default=30)
 
     cors_allowed_origins: list[str] = Field(default_factory=list)
 
@@ -127,11 +135,53 @@ class RuntimeSettings(BaseModel):
             raise ValueError("timeout values must be > 0")
         return value
 
-    @field_validator("copilot_rag_k", "copilot_approval_token_ttl_sec", "copilot_conversation_max_messages")
+    @field_validator(
+        "copilot_rag_k",
+        "copilot_approval_token_ttl_sec",
+        "copilot_conversation_max_messages",
+        "copilot_rate_limit_per_min",
+    )
     @classmethod
     def _validate_positive_int(cls, value: int) -> int:
         if value <= 0:
             raise ValueError("value must be > 0")
+        return value
+
+    @field_validator("database_url")
+    @classmethod
+    def _validate_database_url(cls, value: str) -> str:
+        raw = str(value).strip()
+        if raw == ":memory:":
+            return raw
+
+        parsed = urlparse(raw)
+        if parsed.scheme in {"sqlite", "postgresql", "postgresql+psycopg2", "mysql", "mysql+pymysql"}:
+            return raw
+        raise ValueError(
+            "database_url must use sqlite://, postgresql://, postgresql+psycopg2://, mysql://, or mysql+pymysql://"
+        )
+
+    @field_validator("database_backend")
+    @classmethod
+    def _validate_database_backend(cls, value: str) -> str:
+        normalized = str(value).strip().lower()
+        allowed = {"sqlite", "postgresql", "mysql"}
+        if normalized not in allowed:
+            raise ValueError(f"database_backend must be one of {sorted(allowed)}, got: {value!r}")
+        return normalized
+
+    @field_validator("db_pool_size", "db_pool_timeout_sec", "db_pool_recycle_sec")
+    @classmethod
+    def _validate_non_negative_int(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("value must be >= 0")
+        return value
+
+    @field_validator("db_max_overflow")
+    @classmethod
+    def _validate_db_max_overflow(cls, value: int) -> int:
+        if value < -1:
+            raise ValueError("db_max_overflow must be >= -1")
         return value
 
 
@@ -222,6 +272,17 @@ def load_runtime_settings() -> RuntimeSettings:
         else:
             database_url = f"sqlite:///{db_path}"
 
+    database_backend = os.environ.get("DB_BACKEND")
+    if not database_backend:
+        parsed = urlparse(database_url)
+        scheme = parsed.scheme.lower()
+        if scheme.startswith("postgresql"):
+            database_backend = "postgresql"
+        elif scheme.startswith("mysql"):
+            database_backend = "mysql"
+        else:
+            database_backend = "sqlite"
+
     log_level = (
         os.environ.get("LOG_LEVEL")
         or _nested(yaml_cfg, "logging", "level")
@@ -232,6 +293,12 @@ def load_runtime_settings() -> RuntimeSettings:
         "flask_env": os.environ.get("FLASK_ENV", "development"),
         "secret_key": _get_or_create_secret_key(),
         "database_url": database_url,
+        "database_backend": database_backend,
+        "db_pool_size": int(os.environ.get("DB_POOL_SIZE", "10")),
+        "db_max_overflow": int(os.environ.get("DB_MAX_OVERFLOW", "20")),
+        "db_pool_timeout_sec": int(os.environ.get("DB_POOL_TIMEOUT_SEC", "30")),
+        "db_pool_recycle_sec": int(os.environ.get("DB_POOL_RECYCLE_SEC", "1800")),
+        "db_pool_pre_ping": _parse_bool(os.environ.get("DB_POOL_PRE_PING"), True),
         "db_path": str(Path(str(db_path)).expanduser().resolve(strict=False)) if db_path not in {":memory:"} else db_path,
         "backup_directory": str(Path(str(backup_directory)).expanduser().resolve(strict=False)),
         "host": os.environ.get("HOST", "127.0.0.1"),
@@ -269,6 +336,7 @@ def load_runtime_settings() -> RuntimeSettings:
         "copilot_approval_token_ttl_sec": int(os.environ.get("COPILOT_APPROVAL_TOKEN_TTL_SEC", "300")),
         "copilot_tool_timeout_sec": float(os.environ.get("COPILOT_TOOL_TIMEOUT_SEC", "8")),
         "copilot_conversation_max_messages": int(os.environ.get("COPILOT_CONVERSATION_MAX_MESSAGES", "200")),
+        "copilot_rate_limit_per_min": int(os.environ.get("COPILOT_RATE_LIMIT_PER_MIN", "30")),
         "cors_allowed_origins": _split_csv(os.environ.get("CORS_ALLOWED_ORIGINS")),
         "migration_timeout_sec": float(os.environ.get("NGO_HOMESUITE_MIGRATION_TIMEOUT_SEC", "30")),
         "backup_before_migrate": _parse_bool(os.environ.get("NGO_HOMESUITE_BACKUP_BEFORE_MIGRATE"), True),

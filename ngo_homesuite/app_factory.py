@@ -10,7 +10,7 @@ from pathlib import Path
 import time
 import uuid
 
-from flask import Flask, g, request
+from flask import Flask, g, request, session
 from flask_login import LoginManager
 from flask_migrate import Migrate
 from flask_babel import Babel, lazy_gettext as _l
@@ -56,7 +56,11 @@ def create_app(config=None):
     )
     limiter.init_app(app)
     def select_locale():
-        return 'en'
+        supported = ('en', 'es', 'fr')
+        preferred = str(session.get('lang', '')).strip().lower()
+        if preferred in supported:
+            return preferred
+        return request.accept_languages.best_match(supported) or 'en'
 
     babel = Babel(app, locale_selector=select_locale)
     
@@ -93,6 +97,7 @@ def create_app(config=None):
     from ngo_homesuite.web.program_routes import program_bp
     from ngo_homesuite.web.smart_groups_routes import smart_groups_bp
     from ngo_homesuite.web.p2p_routes import p2p_bp
+    from ngo_homesuite.web.integrations_routes import integrations_bp
     from ngo_homesuite.api.v1 import api_v1_bp
     from ngo_homesuite.web.v2_routes import v2_bp
 
@@ -109,6 +114,7 @@ def create_app(config=None):
     app.register_blueprint(program_bp)
     app.register_blueprint(smart_groups_bp)
     app.register_blueprint(p2p_bp)
+    app.register_blueprint(integrations_bp)
     app.register_blueprint(api_v1_bp)
     app.register_blueprint(v2_bp)
     

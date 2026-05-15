@@ -263,6 +263,20 @@
 
         .error-message { color: var(--danger); font-size: 0.84rem; margin-top: 0.2rem; }
 
+        .form-error-summary {
+            margin-top: 0.65rem;
+            padding: 0.6rem 0.7rem;
+            border-radius: 8px;
+            border: 1px solid rgba(201, 63, 63, 0.38);
+            background: var(--error-bg);
+            color: var(--error-text);
+            font-size: 0.86rem;
+        }
+
+        .form-error-summary ul {
+            margin: 0.35rem 0 0 1rem;
+        }
+
         .form-group.error input,
         .form-group.error select,
         .form-group.error textarea { border-color: #e26f7d; background: rgba(226, 111, 125, 0.08); }
@@ -290,6 +304,31 @@
         .btn-danger:hover { background: var(--danger-hover); }
         .btn-secondary { background: var(--secondary); }
         .btn-secondary:hover { background: var(--secondary-hover); }
+
+        button.is-loading,
+        .btn.is-loading {
+            opacity: 0.8;
+            cursor: wait;
+            transform: none;
+        }
+
+        button.is-loading::after,
+        .btn.is-loading::after {
+            content: "";
+            display: inline-block;
+            width: 0.75rem;
+            height: 0.75rem;
+            margin-left: 0.45rem;
+            border: 2px solid rgba(255, 255, 255, 0.55);
+            border-top-color: rgba(255, 255, 255, 0.95);
+            border-radius: 50%;
+            animation: spin 0.75s linear infinite;
+            vertical-align: -1px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
 
         .card {
             background: var(--surface);
@@ -1011,6 +1050,47 @@
                     }
                 });
             }
+
+            // Shared form UX: surface invalid fields and lock submit buttons while posting.
+            document.querySelectorAll('form').forEach(function(form) {
+                if (form.id === 'aiForm' || form.hasAttribute('data-no-loading')) {
+                    return;
+                }
+
+                form.addEventListener('submit', function(event) {
+                    const existingSummary = form.querySelector('.form-error-summary');
+                    if (existingSummary) {
+                        existingSummary.remove();
+                    }
+
+                    const invalidFields = Array.from(form.querySelectorAll(':invalid'));
+                    if (invalidFields.length > 0) {
+                        event.preventDefault();
+                        const summary = document.createElement('div');
+                        summary.className = 'form-error-summary';
+                        summary.innerHTML = '<strong>Please fix the highlighted fields:</strong>';
+
+                        const list = document.createElement('ul');
+                        invalidFields.slice(0, 5).forEach(function(field) {
+                            const label = field.closest('.form-group') && field.closest('.form-group').querySelector('label');
+                            const text = (label && label.textContent) || field.getAttribute('name') || 'Field';
+                            const li = document.createElement('li');
+                            li.textContent = text.trim();
+                            list.appendChild(li);
+                        });
+                        summary.appendChild(list);
+                        form.prepend(summary);
+                        invalidFields[0].focus();
+                        return;
+                    }
+
+                    form.setAttribute('aria-busy', 'true');
+                    form.querySelectorAll('button[type="submit"], input[type="submit"]').forEach(function(btn) {
+                        btn.classList.add('is-loading');
+                        btn.disabled = true;
+                    });
+                });
+            });
         })();
     </script>
     {% block extra_js %}{% endblock %}

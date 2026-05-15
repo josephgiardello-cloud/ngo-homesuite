@@ -1,52 +1,12 @@
-# Core dependencies
-Flask==3.1.2
-Flask-Login==0.6.3
-Flask-SQLAlchemy==3.1.1
-Flask-Migrate==4.0.7
-Flask-WTF==1.2.2
-Flask-Babel==4.0.0
-Flask-Limiter==4.1.1
-Pydantic==2.9.2
-PyYAML==6.0.2
+# Full runtime dependency bundle (backward compatible)
+#
+# This file installs all runtime groups and preserves existing behavior.
+# For lean installs, use one or more of:
+#   - requirements-core.txt
+#   - requirements-ai.txt
+#   - requirements-cloud.txt
 
-# Database
-SQLAlchemy==2.0.36
-alembic==1.14.0
-greenlet==3.3.0
-
-# Web Forms & Validation
-WTForms==3.1.2
-email-validator==2.2.0
-
-# Cryptography & Security
-cryptography==46.0.3
-argon2-cffi==25.1.0
-python-dotenv==1.0.1
-
-# Database drivers
-# SQLite is built-in, but you may want:
-# psycopg2-binary  # For PostgreSQL
-# mysql-connector-python  # For MySQL
-
-# Cloud & Storage (AWS, Azure)
-boto3==1.42.18
-botocore==1.42.18
-azure-identity==1.25.1
-azure-keyvault-keys==4.11.0
-
-# Web Server
-gunicorn==22.0.0
-
-# Utilities
-requests==2.32.3
-ollama==0.3.3
-langchain==0.3.27
-langchain-ollama==0.3.3
-langchain-community==0.3.27
-chromadb==0.5.5
-pypdf==5.9.0
-python-dateutil==2.9.0.post0
-reportlab==4.2.2
-openpyxl==3.1.5
-
-# Testing (see requirements-dev.txt for optional test dependencies)
+-r requirements-core.txt
+-r requirements-db.txt
+-r requirements-ai.txt
+-r requirements-cloud.txt

@@ -7,6 +7,8 @@ from ngo_homesuite.utils.accounting_export import (
     export_expenses_quickbooks,
     export_donations_quickbooks_iif,
     export_expenses_quickbooks_iif,
+    export_donations_xero_csv,
+    export_expenses_xero_csv,
 )
 
 
@@ -118,3 +120,57 @@ def test_export_expenses_quickbooks_iif(tmp_path):
     assert "TRNS\t2\tCHECK" in text
     assert "SPL\t2\tCHECK" in text
     assert "ENDTRNS" in text
+
+
+def test_export_donations_xero_csv(tmp_path):
+    conn = sqlite3.connect(":memory:")
+    conn.execute(
+        """
+        CREATE TABLE donations (
+            id INTEGER PRIMARY KEY,
+            donor_name TEXT,
+            amount_cents INTEGER,
+            currency TEXT,
+            received_at TEXT,
+            purpose TEXT
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO donations (id, donor_name, amount_cents, currency, received_at, purpose) VALUES (11, 'Lina Donor', 4500, 'USD', '2026-05-15', 'Scholarship Fund')"
+    )
+    out = tmp_path / "donations_xero.csv"
+
+    count = export_donations_xero_csv(conn, str(out))
+
+    assert count == 1
+    text = out.read_text(encoding="utf-8")
+    assert "Reference,ContactName,Date,DueDate,Description,LineAmount,Currency,AccountCode,TaxType" in text
+    assert "DON-11,Lina Donor,2026-05-15,2026-05-15,Scholarship Fund,45.00,USD,400,OUTPUT" in text
+
+
+def test_export_expenses_xero_csv(tmp_path):
+    conn = sqlite3.connect(":memory:")
+    conn.execute(
+        """
+        CREATE TABLE expenses (
+            id INTEGER PRIMARY KEY,
+            category TEXT,
+            amount REAL,
+            currency TEXT,
+            paid_date TEXT,
+            notes TEXT
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO expenses (id, category, amount, currency, paid_date, notes) VALUES (22, 'Transport', 30.5, 'USD', '2026-05-16', 'Client transport support')"
+    )
+    out = tmp_path / "expenses_xero.csv"
+
+    count = export_expenses_xero_csv(conn, str(out))
+
+    assert count == 1
+    text = out.read_text(encoding="utf-8")
+    assert "Reference,ContactName,Date,DueDate,Description,LineAmount,Currency,AccountCode,TaxType" in text
+    assert "EXP-22,Transport,2026-05-16,2026-05-16,Client transport support,30.50,USD,500,INPUT" in text

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -280,3 +281,91 @@ def test_auto_migrate_enforces_backup_policy_when_required(tmp_path, monkeypatch
 
     with pytest.raises(MigrationError, match="Backup before migrate is disabled"):
         auto_migrate(str(db_path))
+
+
+def test_plan_migrations_fails_fast_when_encrypted_db_key_present(tmp_path, monkeypatch):
+    migrations_dir = tmp_path / "migrations"
+    migrations_dir.mkdir(parents=True, exist_ok=True)
+    _write_migration(
+        migrations_dir,
+        "0001_initial.sql",
+        """
+        CREATE TABLE IF NOT EXISTS schema_version (
+            version INTEGER PRIMARY KEY,
+            applied_at_utc TEXT NOT NULL,
+            hash TEXT NOT NULL
+        );
+        """,
+    )
+
+    import ngo_homesuite.migrations as migrations_module
+
+    monkeypatch.setattr(migrations_module, "MIGRATIONS_DIR", migrations_dir)
+    monkeypatch.setenv("NGO_HOMESUITE_DB_KEY", "hex:" + ("aa" * 32))
+
+    with pytest.raises(MigrationError, match="Encrypted database migration is not supported"):
+        plan_migrations(str(tmp_path / "encrypted.db"))
+
+
+def test_plan_migrations_wraps_database_lock_errors(tmp_path, monkeypatch):
+    migrations_dir = tmp_path / "migrations"
+    migrations_dir.mkdir(parents=True, exist_ok=True)
+    _write_migration(
+        migrations_dir,
+        "0001_initial.sql",
+        """
+        CREATE TABLE IF NOT EXISTS schema_version (
+            version INTEGER PRIMARY KEY,
+            applied_at_utc TEXT NOT NULL,
+            hash TEXT NOT NULL
+        );
+        """,
+    )
+
+    import ngo_homesuite.migrations as migrations_module
+
+    monkeypatch.setattr(migrations_module, "MIGRATIONS_DIR", migrations_dir)
+    monkeypatch.setenv("NGO_HOMESUITE_MIGRATION_TIMEOUT_SEC", "0.05")
+
+    db_path = tmp_path / "locked_plan.db"
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("CREATE TABLE IF NOT EXISTS hold_lock (id INTEGER PRIMARY KEY)")
+        conn.commit()
+        conn.execute("BEGIN EXCLUSIVE")
+
+        with pytest.raises(MigrationError, match="lock or access error"):
+            plan_migrations(str(db_path))
+    finally:
+        try:
+            conn.rollback()
+        except sqlite3.Error:
+            pass
+        conn.close()
+
+
+def test_plan_migrations_handles_larger_pending_sets(tmp_path, monkeypatch):
+    migrations_dir = tmp_path / "migrations"
+    migrations_dir.mkdir(parents=True, exist_ok=True)
+
+    for version in range(1, 31):
+        if version == 1:
+            sql = (
+                "CREATE TABLE IF NOT EXISTS schema_version ("
+                "version INTEGER PRIMARY KEY,"
+                "applied_at_utc TEXT NOT NULL,"
+                "hash TEXT NOT NULL"
+                ");"
+            )
+        else:
+            sql = f"CREATE TABLE IF NOT EXISTS t_{version:04d} (id INTEGER PRIMARY KEY);"
+        _write_migration(migrations_dir, f"{version:04d}_m{version}.sql", sql)
+
+    import ngo_homesuite.migrations as migrations_module
+
+    monkeypatch.setattr(migrations_module, "MIGRATIONS_DIR", migrations_dir)
+
+    plan = plan_migrations(str(tmp_path / "large_pending.db"))
+    assert plan.pending_count == 30
+    assert plan.pending[0].version == 1
+    assert plan.pending[-1].version == 30

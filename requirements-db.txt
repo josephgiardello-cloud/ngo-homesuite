@@ -1,0 +1,6 @@
+# Optional relational database drivers for production backends
+# PostgreSQL
+psycopg2-binary==2.9.9
+
+# MySQL / MariaDB
+PyMySQL==1.1.1

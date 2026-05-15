@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from ngo_homesuite.config import get_runtime_settings
+from ngo_homesuite.config import DB_ENCRYPTION_KEY_ENV, get_runtime_settings
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -26,6 +26,14 @@ def _env_float(name: str, default: float) -> float:
     if raw is None:
         return default
     return float(raw)
+
+
+def _guard_encrypted_db_not_supported() -> None:
+    if os.environ.get(DB_ENCRYPTION_KEY_ENV):
+        raise MigrationPlanError(
+            "Encrypted database migration is not supported by the sqlite3 migration runner. "
+            f"Unset {DB_ENCRYPTION_KEY_ENV} for plaintext DBs, or run migrations with a SQLCipher-aware workflow."
+        )
 
 
 class MigrationError(RuntimeError):
@@ -163,6 +171,7 @@ def _insert_schema_version_row(conn: sqlite3.Connection, version: int, hash_valu
 
 
 def plan_migrations(db_path: str | None = None, migrations_dir: Path | None = None) -> MigrationPlan:
+    _guard_encrypted_db_not_supported()
     resolved_db_path = db_path or "ngo_data.db"
     directory = Path(migrations_dir) if migrations_dir is not None else _resolve_migrations_dir()
     migration_files = sorted(directory.glob("*.sql"))
@@ -170,44 +179,47 @@ def plan_migrations(db_path: str | None = None, migrations_dir: Path | None = No
     conn = sqlite3.connect(resolved_db_path, detect_types=sqlite3.PARSE_DECLTYPES, timeout=timeout_s)
     conn.row_factory = sqlite3.Row
     try:
-        conn.execute("PRAGMA busy_timeout = 30000")
-        applied = _load_applied_hashes(conn)
-        applied_versions = sorted(applied.keys())
-        pending: list[PlannedMigration] = []
-        for mf in migration_files:
-            version = _migration_version_from_name(mf)
-            hash_val = hashlib.sha256(mf.read_bytes()).hexdigest()
-            if version in applied:
-                if applied[version] != hash_val:
-                    raise MigrationDriftError(
-                        f"Migration {mf.name} hash mismatch! DB: {applied[version]} File: {hash_val}"
+        try:
+            conn.execute("PRAGMA busy_timeout = 30000")
+            applied = _load_applied_hashes(conn)
+            applied_versions = sorted(applied.keys())
+            pending: list[PlannedMigration] = []
+            for mf in migration_files:
+                version = _migration_version_from_name(mf)
+                hash_val = hashlib.sha256(mf.read_bytes()).hexdigest()
+                if version in applied:
+                    if applied[version] != hash_val:
+                        raise MigrationDriftError(
+                            f"Migration {mf.name} hash mismatch! DB: {applied[version]} File: {hash_val}"
+                        )
+                    continue
+                pending.append(PlannedMigration(version=version, name=mf.name, hash=hash_val))
+
+            expected_next = (max(applied_versions) + 1) if applied_versions else 1
+            for migration in pending:
+                if migration.version != expected_next:
+                    raise MigrationPlanError(
+                        f"Migration gap detected: expected v{expected_next}, found v{migration.version} ({migration.name})"
                     )
-                continue
-            pending.append(PlannedMigration(version=version, name=mf.name, hash=hash_val))
+                expected_next += 1
 
-        expected_next = (max(applied_versions) + 1) if applied_versions else 1
-        for migration in pending:
-            if migration.version != expected_next:
-                raise MigrationPlanError(
-                    f"Migration gap detected: expected v{expected_next}, found v{migration.version} ({migration.name})"
-                )
-            expected_next += 1
-
-        plan = MigrationPlan(
-            db_path=resolved_db_path,
-            migrations_dir=str(directory),
-            applied_versions=applied_versions,
-            pending=pending,
-        )
-        _emit_migration_event(
-            step="plan",
-            status="ok",
-            message="Migration plan created",
-            db_path=plan.db_path,
-            pending_count=plan.pending_count,
-            applied_count=len(plan.applied_versions),
-        )
-        return plan
+            plan = MigrationPlan(
+                db_path=resolved_db_path,
+                migrations_dir=str(directory),
+                applied_versions=applied_versions,
+                pending=pending,
+            )
+            _emit_migration_event(
+                step="plan",
+                status="ok",
+                message="Migration plan created",
+                db_path=plan.db_path,
+                pending_count=plan.pending_count,
+                applied_count=len(plan.applied_versions),
+            )
+            return plan
+        except sqlite3.Error as exc:
+            raise MigrationPlanError(f"Migration planning failed due to database lock or access error: {exc}") from exc
     finally:
         conn.close()
 
@@ -267,6 +279,7 @@ def _restore_backup_if_needed(db_path: str, backup_path: str | None) -> None:
 
 
 def auto_migrate(db_path: str | None = None) -> None:
+    _guard_encrypted_db_not_supported()
     resolved_db_path = db_path or "ngo_data.db"
     migration_plan = plan_migrations(resolved_db_path)
     migration_files = [
