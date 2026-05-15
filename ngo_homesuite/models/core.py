@@ -316,6 +316,41 @@ class Expense(db.Model):
         return f'<Expense {self.amount} {self.currency}>'
 
 
+class AIConversation(db.Model):
+    """Persisted AI assistant conversation session."""
+
+    __tablename__ = 'ai_conversations'
+
+    id = db.Column(db.Integer, primary_key=True)
+    session_id = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=True, index=True)
+    model = db.Column(db.String(100), nullable=True)
+    tenant_id = db.Column(db.String(100), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    messages = db.relationship('AIMessage', backref='conversation', cascade='all, delete-orphan', order_by='AIMessage.id')
+
+    def __repr__(self):
+        return f'<AIConversation {self.session_id}>'
+
+
+class AIMessage(db.Model):
+    """Single message in an AI conversation."""
+
+    __tablename__ = 'ai_messages'
+
+    id = db.Column(db.Integer, primary_key=True)
+    conversation_id = db.Column(db.Integer, db.ForeignKey('ai_conversations.id'), nullable=False, index=True)
+    role = db.Column(db.String(16), nullable=False)   # 'user' or 'assistant'
+    content = db.Column(db.Text, nullable=False)
+    prompt_sha256 = db.Column(db.String(64), nullable=True)   # hash of user message for audit
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    def __repr__(self):
+        return f'<AIMessage {self.role} conv={self.conversation_id}>'
+
+
 # Export all models
 __all__ = [
     'db',
@@ -328,4 +363,6 @@ __all__ = [
     'Volunteer',
     'Expense',
     'Beneficiary',
+    'AIConversation',
+    'AIMessage',
 ]

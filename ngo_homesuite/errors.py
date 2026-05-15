@@ -14,7 +14,7 @@ def init_error_handlers(app):
     @app.errorhandler(404)
     def page_not_found(error):
         """Handle 404 errors."""
-        if request.accept_mimetypes.get('application/json'):
+        if request.accept_mimetypes.best_match(['application/json', 'text/html']) == 'application/json':
             return jsonify({
                 'error': 'Not Found',
                 'status': 404,
@@ -25,7 +25,7 @@ def init_error_handlers(app):
     @app.errorhandler(403)
     def forbidden(error):
         """Handle 403 errors."""
-        if request.accept_mimetypes.get('application/json'):
+        if request.accept_mimetypes.best_match(['application/json', 'text/html']) == 'application/json':
             return jsonify({
                 'error': 'Forbidden',
                 'status': 403,
@@ -36,7 +36,7 @@ def init_error_handlers(app):
     @app.errorhandler(500)
     def internal_error(error):
         """Handle 500 errors."""
-        if request.accept_mimetypes.get('application/json'):
+        if request.accept_mimetypes.best_match(['application/json', 'text/html']) == 'application/json':
             return jsonify({
                 'error': 'Internal Server Error',
                 'status': 500,
@@ -47,7 +47,7 @@ def init_error_handlers(app):
     @app.errorhandler(400)
     def bad_request(error):
         """Handle 400 errors."""
-        if request.accept_mimetypes.get('application/json'):
+        if request.accept_mimetypes.best_match(['application/json', 'text/html']) == 'application/json':
             return jsonify({
                 'error': 'Bad Request',
                 'status': 400,
@@ -66,7 +66,7 @@ def init_error_handlers(app):
         app.logger.error(f'Unhandled exception: {error}', exc_info=True)
         
         # Return a generic error response
-        if request.accept_mimetypes.get('application/json'):
+        if request.accept_mimetypes.best_match(['application/json', 'text/html']) == 'application/json':
             return jsonify({
                 'error': 'Internal Server Error',
                 'status': 500,
