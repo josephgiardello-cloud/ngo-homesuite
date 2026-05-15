@@ -4,8 +4,7 @@ import hashlib
 import sys
 import datetime
 import json
-from typing import Any, Callable, Dict, cast
-import shutil
+from typing import Any, Callable, Dict
 
 # --- AUTOMATED ROLLBACK SUPPORT ---
 def rollback_schema(conn: Any, cur: Any, backup_path: str) -> None:
@@ -98,17 +97,6 @@ def detect_schema_drift(cur: Any, expected_tables: set[str], migration_phase: st
         if expected_hash and actual_hash != expected_hash:
             print(f"[SCHEMA DRIFT][{migration_phase}] Object {name} hash mismatch: expected {expected_hash}, got {actual_hash}", file=sys.stderr)
             raise RuntimeError(f"Schema drift detected for object {name} during {migration_phase}")
-
-
-def _migration_lock_host() -> str:
-    uname_fn = getattr(os, 'uname', None)
-    if callable(uname_fn):
-        try:
-            host_info = uname_fn()
-            return str(getattr(host_info, 'nodename', 'unknown'))
-        except Exception:
-            pass
-    return os.environ.get('COMPUTERNAME', 'unknown')
 
 # --- CONFIGURATION & LOGGING ---
 
@@ -1133,13 +1121,12 @@ def migrate_schema(conn: Any, cur: Any) -> None:
                 db_path = row[2]
                 break
         from ngo_homesuite.db.migrate import auto_migrate  # pyright: ignore[reportUnknownVariableType]
-        auto_migrate_fn = cast(Callable[[str | None], None], auto_migrate)
 
         print(
             "[MIGRATION] db.schema.migrate_schema is deprecated; delegating to ngo_homesuite.db.migrate.auto_migrate",
             file=sys.stderr,
         )
-        auto_migrate_fn(db_path or None)
+        auto_migrate(db_path or None)
         return
     except Exception as delegated_exc:
         allow_legacy_fallback = os.getenv("NGO_HOMESUITE_ALLOW_LEGACY_SCHEMA_FALLBACK", "0").lower() in {"1", "true", "yes", "on"}
@@ -1153,158 +1140,9 @@ def migrate_schema(conn: Any, cur: Any) -> None:
             file=sys.stderr,
         )
 
-    def backup_db_file():
-        db_path = getattr(conn, 'database', None)
-        if not db_path or db_path in (':memory:', ''):
-            print("[BACKUP] Skipping backup: in-memory or unknown DB.", file=sys.stderr)
-            return None
-        backup_path = db_path + ".bak"
-        try:
-            shutil.copy2(db_path, backup_path)
-            print(f"[BACKUP] Database backed up to {backup_path}", file=sys.stdout)
-            return backup_path
-        except Exception as e:
-            print(f"[BACKUP] Backup failed: {e}", file=sys.stderr)
-            return None
+    from ngo_homesuite.db.schema_legacy_fallback import run_legacy_schema_migration
 
-    backup_path = backup_db_file()
-    migration_configure_connection(conn, cur)
-
-    import time
-    # --- MIGRATION LOCK ACQUISITION (with retry logic, BEGIN IMMEDIATE) ---
-    lock_acquired = False
-    max_wait = 30  # seconds
-    wait_interval = 1  # seconds
-    waited = 0
-    lock_id = 1
-    lock_owner = f"pid:{os.getpid()}@{_migration_lock_host()}"
-    while not lock_acquired and waited < max_wait:
-        try:
-            cur.execute("BEGIN IMMEDIATE")
-            cur.execute("INSERT OR IGNORE INTO migration_lock (id, locked_at, locked_by) VALUES (?, NULL, NULL)", (lock_id,))
-            cur.execute("SELECT locked_at, locked_by FROM migration_lock WHERE id = ?", (lock_id,))
-            row = cur.fetchone()
-            if row and row[0] is None:
-                now_utc = datetime.datetime.now(datetime.timezone.utc).isoformat()
-                cur.execute("UPDATE migration_lock SET locked_at = ?, locked_by = ? WHERE id = ?", (now_utc, lock_owner, lock_id))
-                lock_acquired = True
-                conn.commit()
-            else:
-                conn.rollback()
-                print(f"[MIGRATION LOCK] Another migration is in progress by {row[1]} since {row[0]}. Waiting...", file=sys.stderr)
-                time.sleep(wait_interval)
-                waited += wait_interval
-        except sqlite3.OperationalError as e:
-            conn.rollback()
-            print(f"[MIGRATION LOCK] DB busy or locked: {e}. Retrying...", file=sys.stderr)
-            time.sleep(wait_interval)
-            waited += wait_interval
-
-    import traceback
-    try:
-        # Unified transaction for all migrations (Neon-style)
-        cur.execute("BEGIN IMMEDIATE TRANSACTION")
-        # Ensure foreign key enforcement inside transaction (for pooled/reused connections)
-        cur.execute("PRAGMA foreign_keys = ON;")
-        version = get_current_schema_version(cur)
-        migration_versions = MIGRATION_VERSIONS;
-
-        # Run migrations first, then drift detection
-        for v in migration_versions:
-            if v > version:
-                expected_version = version + 1
-                if v != expected_version:
-                    raise RuntimeError(f"Migration gap or out-of-order migration: expected v{expected_version}, got v{v}")
-                if v not in MIGRATIONS:
-                    raise ValueError(f"No migration for v{v}")
-                # Validate schema hash before migration (drift detection)
-                if version > 0:
-                    cur.execute("SELECT schema_hash FROM schema_version WHERE version = ?", (version,))
-                    expected_hash = cur.fetchone()
-                    cur.execute("SELECT name, sql FROM sqlite_master WHERE type IN ('table','index','trigger','view') AND name NOT LIKE 'sqlite_%'")
-                    items = sorted(cur.fetchall())
-                    current_schema_sql = '\n'.join([row[1] for row in items if row[1]])
-                    current_schema_hash = compute_schema_hash(current_schema_sql)
-                    if expected_hash and expected_hash[0] != current_schema_hash:
-                        raise RuntimeError(f"Schema drift detected before migration v{v}: expected {expected_hash[0]}, got {current_schema_hash}")
-                MIGRATIONS[v](conn, cur)
-                # After each migration, compute the hash of the current schema
-                cur.execute("SELECT name, sql FROM sqlite_master WHERE type IN ('table','index','trigger','view') AND name NOT LIKE 'sqlite_%'")
-                items = sorted(cur.fetchall())
-                schema_sql = '\n'.join([row[1] for row in items if row[1]])
-                schema_hash = compute_schema_hash(schema_sql)
-                description = 'Initial fundraising schema with donor lists' if v == 1 else f'Migrating to v{v}'
-                cur.execute(
-                    "INSERT INTO schema_version (version, description, schema_hash) VALUES (?, ?, ?)",
-                    (v, description, schema_hash)
-                )
-                # Validate schema hash after migration
-                cur.execute("SELECT schema_hash FROM schema_version WHERE version = ?", (v,))
-                expected_hash_post = cur.fetchone()
-                if expected_hash_post and expected_hash_post[0] != schema_hash:
-                    raise RuntimeError(f"Schema hash mismatch after migration v{v}: expected {expected_hash_post[0]}, got {schema_hash}")
-                version = v
-
-        # After all migrations, set the canonical schema hash for future drift detection
-        cur.execute("SELECT name, sql FROM sqlite_master WHERE type IN ('table','index','trigger','view') AND name NOT LIKE 'sqlite_%'")
-        items = sorted(cur.fetchall())
-        final_schema_sql = '\n'.join([row[1] for row in items if row[1]])
-        final_schema_hash = compute_schema_hash(final_schema_sql)
-        # Update the latest schema_version row with the canonical hash
-        cur.execute("UPDATE schema_version SET schema_hash = ? WHERE version = ?", (final_schema_hash, version))
-
-        # Now check for schema drift after all migrations
-        # expected_tables is now version-dependent
-        expected_tables = set([
-            'schema_version', 'staff', 'bank_accounts', 'donors', 'donor_lists', 'donor_list_members',
-            'allowed_currencies', 'active_staff', 'active_donors', 'migration_lock', 'migration_log', '__db_metadata__'
-        ])
-        if version >= 2:
-            expected_tables.update(['funds', 'projects', 'donations', 'expenses', 'audit_log'])
-        if version >= 4:
-            expected_tables.update([
-                'campaigns', 'pledges', 'interactions', 'households', 'donor_relationships', 'grants',
-                'active_campaigns', 'active_pledges', 'active_interactions', 'active_households', 'active_grants', 'active_donor_relationships'
-            ])
-        if version >= 9:
-            expected_tables.update([
-                'events', 'registrations', 'active_events', 'event_registrations'
-            ])
-        if version >= 11:
-            expected_tables.update(['volunteers', 'volunteer_assignments', 'active_volunteers'])
-        if version >= 12:
-            expected_tables.update(['peer_fundraising_pages', 'peer_fundraising_donations'])
-        detect_schema_drift(cur, expected_tables, 'POST')
-
-        try:
-            cur.execute("PRAGMA optimize;")
-            print("[MIGRATION] PRAGMA optimize executed.", file=sys.stdout)
-        except Exception as e:
-            print(f"[MIGRATION] PRAGMA optimize failed: {type(e).__name__}: {e}", file=sys.stderr)
-        conn.commit()
-        # Release migration lock on success
-        cur.execute("UPDATE migration_lock SET locked_at = NULL, locked_by = NULL WHERE id = ?", (lock_id,))
-        conn.commit()
-    except Exception as e:
-        conn.rollback()
-        print(f"FATAL: Migration failed. {type(e).__name__}: {e}", file=sys.stderr)
-        print(traceback.format_exc(), file=sys.stderr)
-        # Automated rollback attempt
-        if backup_path:
-            try:
-                log_migration_event(cur, -1, 'ROLLBACK', f'Attempting rollback from backup: {backup_path}')
-                rollback_schema(conn, cur, backup_path)
-                print(f"[ROLLBACK] Rollback from backup {backup_path} completed.", file=sys.stdout)
-            except Exception as rb_e:
-                print(f"[ROLLBACK] Rollback failed: {rb_e}", file=sys.stderr)
-        else:
-            print("[ROLLBACK] No backup available for rollback.", file=sys.stderr)
-        # Always release migration lock on failure
-        try:
-            cur.execute("UPDATE migration_lock SET locked_at = NULL, locked_by = NULL WHERE id = ?", (lock_id,))
-            conn.commit()
-        except Exception:
-            pass
+    run_legacy_schema_migration(conn, cur)
 
 # --- AUDIT LOG INTEGRITY VALIDATION ---
 def validate_audit_log_integrity(cur: Any) -> bool:

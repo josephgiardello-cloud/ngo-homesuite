@@ -217,3 +217,36 @@ def test_legacy_schema_migrate_requires_explicit_fallback_opt_in(monkeypatch):
 
     with pytest.raises(RuntimeError, match="legacy fallback is disabled"):
         legacy_schema.migrate_schema(_FakeConn(), _FakeCursor())
+
+
+def test_legacy_schema_migrate_uses_legacy_runner_when_opted_in(monkeypatch):
+    class _FakeCursor:
+        def execute(self, _sql):
+            return None
+
+        def fetchall(self):
+            return []
+
+    class _FakeConn:
+        database = "memory"
+
+    monkeypatch.setenv("NGO_HOMESUITE_ALLOW_LEGACY_SCHEMA_FALLBACK", "1")
+
+    import ngo_homesuite.db.migrate as migrate_module
+
+    def _raise_delegate(_db_path=None):
+        raise RuntimeError("delegate failed")
+
+    monkeypatch.setattr(migrate_module, "auto_migrate", _raise_delegate)
+
+    import ngo_homesuite.db.schema_legacy_fallback as fallback_module
+
+    called = {"used": False}
+
+    def _fake_legacy_runner(_conn, _cur):
+        called["used"] = True
+
+    monkeypatch.setattr(fallback_module, "run_legacy_schema_migration", _fake_legacy_runner)
+
+    legacy_schema.migrate_schema(_FakeConn(), _FakeCursor())
+    assert called["used"] is True
