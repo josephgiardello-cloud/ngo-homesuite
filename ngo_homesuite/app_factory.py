@@ -172,12 +172,17 @@ def create_app(config=None):
         response.headers.setdefault('X-Request-ID', getattr(g, 'request_id', str(uuid.uuid4())))
         response.headers.setdefault('X-Content-Type-Options', 'nosniff')
         response.headers.setdefault('X-Frame-Options', 'SAMEORIGIN')
+        response.headers.setdefault('X-Permitted-Cross-Domain-Policies', 'none')
+        response.headers.setdefault('Cross-Origin-Opener-Policy', 'same-origin')
+        response.headers.setdefault('Cross-Origin-Resource-Policy', 'same-origin')
         response.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
         response.headers.setdefault('Permissions-Policy', 'geolocation=(), microphone=(), camera=()')
         response.headers.setdefault(
             'Content-Security-Policy',
             "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'",
         )
+        if bool(app.config.get('SESSION_COOKIE_SECURE', False)):
+            response.headers.setdefault('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
 
         allowed_origins = app.config.get("CORS_ALLOWED_ORIGINS", []) or []
         req_origin = request.headers.get("Origin", "")
