@@ -27,6 +27,7 @@
 
 <div class="mb-3 mt-2">
     <a href="{{ url_for('main.donor_create') }}" class="btn btn-primary">Add Donor</a>
+    <a href="{{ url_for('main.donor_import') }}" class="btn btn-secondary">Import Donors</a>
     <a href="{{ url_for('main.donor_dedupe') }}" class="btn btn-secondary">Find Duplicates</a>
     <a href="{{ url_for('main.donors_export', file_type='csv', q=filter_q, donor_type=filter_donor_type) }}" class="btn btn-secondary">Export CSV</a>
     <a href="{{ url_for('main.donors_export', file_type='xlsx', q=filter_q, donor_type=filter_donor_type) }}" class="btn btn-secondary">Export Excel</a>

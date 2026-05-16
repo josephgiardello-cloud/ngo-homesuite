@@ -57,6 +57,7 @@ ROUTE_POLICY_MANIFEST: dict[str, RoutePolicy] = {
     "/donations/new": RoutePolicy(access="authenticated"),
     "/donations/recurring": RoutePolicy(access="authenticated"),
     "/donors": RoutePolicy(access="authenticated"),
+    "/donors/import": RoutePolicy(access="authenticated"),
     "/donors/dedupe": RoutePolicy(access="authenticated"),
     "/donors/new": RoutePolicy(access="authenticated"),
     "/expenses": RoutePolicy(access="authenticated"),

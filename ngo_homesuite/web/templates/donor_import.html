@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+
+{% block title %}Import Donors - NGO HomeSuite{% endblock %}
+
+{% block content %}
+<h1>Import Donors</h1>
+<p class="text-muted">Upload CSV/XLSX, map columns, preview issues, and import clean rows.</p>
+
+<div class="card" style="margin-bottom: 1rem;">
+    <h3 style="margin-bottom: 0.75rem;">1) Upload & Preview</h3>
+    <form method="post" enctype="multipart/form-data" style="display:grid; gap:0.75rem;">
+        <input type="hidden" name="action" value="preview">
+        <div>
+            <label for="import_file">File (CSV or XLSX)</label>
+            <input id="import_file" type="file" name="import_file" accept=".csv,.xlsx" required>
+        </div>
+        <button type="submit" class="btn btn-primary">Preview Import</button>
+    </form>
+</div>
+
+{% if preview %}
+<div class="card" style="margin-bottom: 1rem;">
+    <h3 style="margin-bottom: 0.75rem;">2) Confirm Mapping & Import</h3>
+    <p class="text-muted" style="margin-bottom: 0.75rem;">Source: {{ source_filename or 'uploaded file' }}</p>
+
+    <form method="post" style="display:grid; gap:0.75rem;">
+        <input type="hidden" name="action" value="import">
+        <input type="hidden" name="cache_id" value="{{ cache_id }}">
+
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:0.75rem;">
+            <div>
+                <label for="map_name">Name (required)</label>
+                <select id="map_name" name="map_name" required>
+                    <option value="">-- Select --</option>
+                    {% for h in headers %}
+                    <option value="{{ h }}" {{ 'selected' if mapping.name == h else '' }}>{{ h }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label for="map_email">Email</label>
+                <select id="map_email" name="map_email">
+                    <option value="">-- Not mapped --</option>
+                    {% for h in headers %}
+                    <option value="{{ h }}" {{ 'selected' if mapping.email == h else '' }}>{{ h }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label for="map_phone">Phone</label>
+                <select id="map_phone" name="map_phone">
+                    <option value="">-- Not mapped --</option>
+                    {% for h in headers %}
+                    <option value="{{ h }}" {{ 'selected' if mapping.phone == h else '' }}>{{ h }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label for="map_donor_type">Donor Type</label>
+                <select id="map_donor_type" name="map_donor_type">
+                    <option value="">-- Not mapped --</option>
+                    {% for h in headers %}
+                    <option value="{{ h }}" {{ 'selected' if mapping.donor_type == h else '' }}>{{ h }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label for="map_notes">Notes</label>
+                <select id="map_notes" name="map_notes">
+                    <option value="">-- Not mapped --</option>
+                    {% for h in headers %}
+                    <option value="{{ h }}" {{ 'selected' if mapping.notes == h else '' }}>{{ h }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+
+        <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+            <button type="submit" class="btn btn-primary">Import Ready Rows</button>
+            <a href="{{ url_for('main.donor_import') }}" class="btn btn-secondary">Start Over</a>
+        </div>
+    </form>
+</div>
+
+<div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-bottom: 1rem;">
+    <div class="card"><div class="card-text">Rows</div><div class="card-value">{{ preview.summary.total }}</div></div>
+    <div class="card"><div class="card-text">Ready</div><div class="card-value">{{ preview.summary.ready }}</div></div>
+    <div class="card"><div class="card-text">Duplicates</div><div class="card-value">{{ preview.summary.duplicates }}</div></div>
+    <div class="card"><div class="card-text">Errors</div><div class="card-value">{{ preview.summary.errors }}</div></div>
+</div>
+
+<div class="table-wrap">
+<table>
+    <thead>
+        <tr>
+            <th>Row</th>
+            <th>Status</th>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Phone</th>
+            <th>Type</th>
+            <th>Notes</th>
+            <th>Details</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for row in preview.rows[:100] %}
+        <tr>
+            <td>{{ row.row_number }}</td>
+            <td>
+                {% if row.status == 'ready' %}
+                <span class="badge badge-success">ready</span>
+                {% elif row.status == 'duplicate' %}
+                <span class="badge badge-secondary">duplicate</span>
+                {% else %}
+                <span class="badge badge-info">error</span>
+                {% endif %}
+            </td>
+            <td>{{ row.name or '-' }}</td>
+            <td>{{ row.email or '-' }}</td>
+            <td>{{ row.phone or '-' }}</td>
+            <td>{{ row.donor_type or '-' }}</td>
+            <td>{{ row.notes or '-' }}</td>
+            <td>
+                {% if row.errors %}
+                    {{ row.errors|join('; ') }}
+                {% elif row.duplicate_match %}
+                    Duplicate of #{{ row.duplicate_match.id }} {{ row.duplicate_match.name }}
+                {% elif row.warnings %}
+                    {{ row.warnings|join('; ') }}
+                {% else %}
+                    OK
+                {% endif %}
+            </td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+{% if preview.rows|length > 100 %}
+<p class="text-muted" style="margin-top: 0.75rem;">Showing first 100 preview rows.</p>
+{% endif %}
+{% endif %}
+{% endblock %}

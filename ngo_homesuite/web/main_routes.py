@@ -3,6 +3,7 @@
 import csv
 import json
 import time
+import uuid
 from ngo_homesuite.ai.copilot_tools import CopilotToolRegistry
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -15,7 +16,7 @@ from werkzeug.exceptions import NotFound
 from wtforms import BooleanField, DateField, FloatField, SelectField, StringField, SubmitField, TextAreaField
 from wtforms.validators import DataRequired, Optional as WTOptional, NumberRange, Email
 from io import BytesIO
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
 from ngo_homesuite.models.core import (
     Organization, Beneficiary, Project, Donation, Donor, Fund, Expense, DonationReceipt, P2PPage, Volunteer, db
@@ -54,6 +55,9 @@ from ngo_homesuite.compliance.evidence_pack import build_compliance_evidence
 main_bp = Blueprint('main', __name__)
 
 _SUPPORTED_LOCALES = {'en', 'es', 'fr'}
+_DONOR_IMPORT_ALLOWED_EXTENSIONS = {'.csv', '.xlsx'}
+_DONOR_IMPORT_MAX_ROWS = 2500
+_DONOR_IMPORT_VALID_TYPES = {'individual', 'corporate', 'foundation', 'anonymous'}
 
 # Track process start time for uptime calculation.
 _PROCESS_START = time.monotonic()
@@ -391,6 +395,197 @@ def _normalize_text(value: str) -> str:
 
 def _normalize_phone(value: str) -> str:
     return ''.join(ch for ch in (value or '') if ch.isdigit())
+
+
+def _donor_import_cache_dir() -> Path:
+    cache_dir = Path(current_app.instance_path) / 'donor_import_cache'
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir
+
+
+def _parse_donor_import_file(path: Path) -> tuple[list[str], list[dict[str, str]]]:
+    ext = path.suffix.lower()
+    if ext not in _DONOR_IMPORT_ALLOWED_EXTENSIONS:
+        raise ValueError('Only CSV and Excel (.xlsx) files are supported.')
+
+    headers: list[str] = []
+    rows: list[dict[str, str]] = []
+
+    if ext == '.csv':
+        try:
+            with path.open('r', encoding='utf-8-sig', newline='') as fh:
+                reader = csv.DictReader(fh)
+                headers = [str(h or '').strip() for h in (reader.fieldnames or []) if str(h or '').strip()]
+                for idx, row in enumerate(reader, start=1):
+                    if idx > _DONOR_IMPORT_MAX_ROWS:
+                        break
+                    rows.append({h: str((row or {}).get(h, '') or '').strip() for h in headers})
+        except UnicodeDecodeError:
+            with path.open('r', encoding='latin-1', newline='') as fh:
+                reader = csv.DictReader(fh)
+                headers = [str(h or '').strip() for h in (reader.fieldnames or []) if str(h or '').strip()]
+                for idx, row in enumerate(reader, start=1):
+                    if idx > _DONOR_IMPORT_MAX_ROWS:
+                        break
+                    rows.append({h: str((row or {}).get(h, '') or '').strip() for h in headers})
+    else:
+        workbook = load_workbook(filename=path, read_only=True, data_only=True)
+        ws = workbook.active
+        sheet_rows = ws.iter_rows(values_only=True)
+        raw_headers = next(sheet_rows, None)
+        if raw_headers is None:
+            return [], []
+
+        headers = [str(c or '').strip() for c in raw_headers]
+        headers = [h if h else f'column_{idx + 1}' for idx, h in enumerate(headers)]
+        for idx, values in enumerate(sheet_rows, start=1):
+            if idx > _DONOR_IMPORT_MAX_ROWS:
+                break
+            row_map: dict[str, str] = {}
+            for col_idx, header in enumerate(headers):
+                value = ''
+                if values and col_idx < len(values):
+                    value = str(values[col_idx] or '').strip()
+                row_map[header] = value
+            rows.append(row_map)
+
+    return headers, rows
+
+
+def _guess_donor_import_mapping(headers: list[str]) -> dict[str, str]:
+    aliases = {
+        'name': {'name', 'full name', 'donor', 'donor name'},
+        'email': {'email', 'email address', 'e-mail'},
+        'phone': {'phone', 'phone number', 'mobile', 'telephone'},
+        'donor_type': {'type', 'donor type', 'category'},
+        'notes': {'notes', 'note', 'comments', 'comment'},
+    }
+
+    mapping: dict[str, str] = {'name': '', 'email': '', 'phone': '', 'donor_type': '', 'notes': ''}
+    normalized = {h: _normalize_text(h) for h in headers}
+    for target, candidates in aliases.items():
+        for header, normalized_header in normalized.items():
+            if normalized_header in candidates and not mapping[target]:
+                mapping[target] = header
+    if not mapping['name'] and headers:
+        mapping['name'] = headers[0]
+    return mapping
+
+
+def _extract_donor_import_mapping(form_data) -> dict[str, str]:
+    mapping = {
+        'name': (form_data.get('map_name') or '').strip(),
+        'email': (form_data.get('map_email') or '').strip(),
+        'phone': (form_data.get('map_phone') or '').strip(),
+        'donor_type': (form_data.get('map_donor_type') or '').strip(),
+        'notes': (form_data.get('map_notes') or '').strip(),
+    }
+    return mapping
+
+
+def _build_donor_import_preview(org_id: int, rows: list[dict[str, str]], mapping: dict[str, str]) -> dict[str, object]:
+    donors = DonorService().list_all_donors(org_id)
+    existing_by_email: dict[str, Donor] = {}
+    existing_by_name_phone: dict[str, Donor] = {}
+    for donor in donors:
+        email_key = _normalize_text(donor.email)
+        if email_key:
+            existing_by_email[email_key] = donor
+        name_phone_key = f"{_normalize_text(donor.name)}::{_normalize_phone(donor.phone)}"
+        if _normalize_phone(donor.phone):
+            existing_by_name_phone[name_phone_key] = donor
+
+    preview_rows: list[dict[str, object]] = []
+    error_count = 0
+    duplicate_count = 0
+    ready_count = 0
+
+    for idx, row in enumerate(rows, start=1):
+        mapped_name = str(row.get(mapping['name'], '') if mapping.get('name') else '').strip()
+        mapped_email = str(row.get(mapping['email'], '') if mapping.get('email') else '').strip().lower()
+        mapped_phone = str(row.get(mapping['phone'], '') if mapping.get('phone') else '').strip()
+        mapped_type = str(row.get(mapping['donor_type'], '') if mapping.get('donor_type') else '').strip().lower() or 'individual'
+        mapped_notes = str(row.get(mapping['notes'], '') if mapping.get('notes') else '').strip()
+
+        errors: list[str] = []
+        warnings: list[str] = []
+
+        if not mapped_name:
+            errors.append('Missing donor name')
+        if mapped_type not in _DONOR_IMPORT_VALID_TYPES:
+            warnings.append(f"Unknown donor type '{mapped_type}' -> default to individual")
+            mapped_type = 'individual'
+
+        duplicate_match = None
+        if mapped_email:
+            duplicate_match = existing_by_email.get(mapped_email)
+        if duplicate_match is None and _normalize_phone(mapped_phone):
+            duplicate_match = existing_by_name_phone.get(f"{_normalize_text(mapped_name)}::{_normalize_phone(mapped_phone)}")
+
+        status = 'ready'
+        if errors:
+            status = 'error'
+            error_count += 1
+        elif duplicate_match is not None:
+            status = 'duplicate'
+            duplicate_count += 1
+        else:
+            ready_count += 1
+
+        preview_rows.append(
+            {
+                'row_number': idx,
+                'name': mapped_name,
+                'email': mapped_email,
+                'phone': mapped_phone,
+                'donor_type': mapped_type,
+                'notes': mapped_notes,
+                'status': status,
+                'errors': errors,
+                'warnings': warnings,
+                'duplicate_match': duplicate_match,
+            }
+        )
+
+    return {
+        'rows': preview_rows,
+        'summary': {
+            'total': len(preview_rows),
+            'ready': ready_count,
+            'duplicates': duplicate_count,
+            'errors': error_count,
+        },
+    }
+
+
+def _apply_donor_import(org_id: int, preview_rows: list[dict[str, object]]) -> dict[str, int]:
+    created = 0
+    skipped_duplicates = 0
+    skipped_errors = 0
+    for item in preview_rows:
+        status = str(item.get('status') or '')
+        if status == 'error':
+            skipped_errors += 1
+            continue
+        if status == 'duplicate':
+            skipped_duplicates += 1
+            continue
+
+        DonorService().create_donor(
+            org_id,
+            str(item.get('name') or '').strip(),
+            email=(str(item.get('email') or '').strip() or None),
+            phone=(str(item.get('phone') or '').strip() or None),
+            donor_type=str(item.get('donor_type') or 'individual').strip() or 'individual',
+            notes=(str(item.get('notes') or '').strip() or None),
+        )
+        created += 1
+
+    return {
+        'created': created,
+        'skipped_duplicates': skipped_duplicates,
+        'skipped_errors': skipped_errors,
+    }
 
 
 def _next_charge_date(current: date, frequency: str) -> date:
@@ -1256,6 +1451,127 @@ def donor_dedupe():
                 seen_name_phone[name_phone_key] = donor
 
     return render_template('donor_dedupe.html', candidates=candidates, active_page='donors')
+
+
+@main_bp.route('/donors/import', methods=['GET', 'POST'])
+@login_required
+@roles_required('admin', 'staff')
+def donor_import():
+    """CSV/XLSX donor import with field mapping, preview, and duplicate suggestions."""
+    org = _current_org()
+    if not org:
+        flash('No organization is available.', 'error')
+        return redirect(url_for('main.donors_list'))
+
+    headers: list[str] = []
+    mapping = {'name': '', 'email': '', 'phone': '', 'donor_type': '', 'notes': ''}
+    preview: dict[str, object] | None = None
+    cache_id: str | None = None
+    filename: str | None = None
+
+    if request.method == 'POST':
+        action = (request.form.get('action') or 'preview').strip().lower()
+
+        if action == 'preview':
+            uploaded = request.files.get('import_file')
+            if uploaded is None or not uploaded.filename:
+                flash('Please choose a CSV or XLSX file to preview.', 'error')
+                return render_template('donor_import.html', active_page='donors')
+
+            filename = uploaded.filename
+            ext = Path(filename).suffix.lower()
+            if ext not in _DONOR_IMPORT_ALLOWED_EXTENSIONS:
+                flash('Unsupported file type. Use CSV or XLSX.', 'error')
+                return render_template('donor_import.html', active_page='donors')
+
+            cache_id = uuid.uuid4().hex
+            cache_path = _donor_import_cache_dir() / f'{cache_id}{ext}'
+            uploaded.save(cache_path)
+
+            try:
+                headers, rows = _parse_donor_import_file(cache_path)
+            except Exception:
+                cache_path.unlink(missing_ok=True)
+                flash('Could not parse file. Please check the format and try again.', 'error')
+                return render_template('donor_import.html', active_page='donors')
+
+            if not headers:
+                cache_path.unlink(missing_ok=True)
+                flash('No header row found in file.', 'error')
+                return render_template('donor_import.html', active_page='donors')
+
+            if not rows:
+                cache_path.unlink(missing_ok=True)
+                flash('No data rows found in file.', 'error')
+                return render_template('donor_import.html', active_page='donors')
+
+            mapping = _extract_donor_import_mapping(request.form)
+            guessed = _guess_donor_import_mapping(headers)
+            for key, guessed_value in guessed.items():
+                if not mapping.get(key):
+                    mapping[key] = guessed_value
+
+            preview = _build_donor_import_preview(org.id, rows, mapping)
+            return render_template(
+                'donor_import.html',
+                active_page='donors',
+                headers=headers,
+                mapping=mapping,
+                preview=preview,
+                cache_id=cache_id,
+                source_filename=filename,
+            )
+
+        if action == 'import':
+            cache_id = (request.form.get('cache_id') or '').strip()
+            if not cache_id:
+                flash('Import preview expired. Please upload and preview again.', 'error')
+                return redirect(url_for('main.donor_import'))
+
+            cache_dir = _donor_import_cache_dir()
+            candidates = list(cache_dir.glob(f'{cache_id}.*'))
+            if not candidates:
+                flash('Import preview cache not found. Please preview again.', 'error')
+                return redirect(url_for('main.donor_import'))
+
+            cache_path = candidates[0]
+            filename = cache_path.name
+            try:
+                headers, rows = _parse_donor_import_file(cache_path)
+            except Exception:
+                cache_path.unlink(missing_ok=True)
+                flash('Failed to read cached import file. Please preview again.', 'error')
+                return redirect(url_for('main.donor_import'))
+
+            mapping = _extract_donor_import_mapping(request.form)
+            if not mapping.get('name'):
+                flash('Please map a Name column before importing.', 'error')
+                preview = _build_donor_import_preview(org.id, rows, mapping)
+                return render_template(
+                    'donor_import.html',
+                    active_page='donors',
+                    headers=headers,
+                    mapping=mapping,
+                    preview=preview,
+                    cache_id=cache_id,
+                    source_filename=filename,
+                )
+
+            preview = _build_donor_import_preview(org.id, rows, mapping)
+            result = _apply_donor_import(org.id, preview['rows'])
+            cache_path.unlink(missing_ok=True)
+
+            flash(
+                (
+                    f"Import completed: created {result['created']}, "
+                    f"skipped duplicates {result['skipped_duplicates']}, "
+                    f"skipped errors {result['skipped_errors']}."
+                ),
+                'success',
+            )
+            return redirect(url_for('main.donors_list'))
+
+    return render_template('donor_import.html', active_page='donors')
 
 
 @main_bp.route('/donors/merge', methods=['POST'])
