@@ -66,6 +66,10 @@ def create_grant(
     amount_requested: Optional[float] = None,
     currency: str = "USD",
     application_deadline: Optional[date] = None,
+    submission_date: Optional[date] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    report_due_date: Optional[date] = None,
     project_id: Optional[int] = None,
     requirements: Optional[str] = None,
     notes: Optional[str] = None,
@@ -88,6 +92,10 @@ def create_grant(
         amount_requested=amount_requested,
         currency=_validate_currency(currency),
         application_deadline=application_deadline,
+        submission_date=submission_date,
+        start_date=start_date,
+        end_date=end_date,
+        report_due_date=report_due_date,
         project_id=project_id,
         requirements=requirements,
         notes=notes,
@@ -267,3 +275,101 @@ def total_disbursed(organization_id: int, grant_id: Optional[int] = None) -> flo
     if grant_id is not None:
         stmt = stmt.where(GrantDisbursement.grant_id == grant_id)
     return float(db.session.scalar(stmt) or 0)
+
+
+def grant_calendar_events(organization_id: int, within_days: int = 120) -> List[dict]:
+    """Flatten grant lifecycle milestones into light calendar events."""
+    today = _today()
+    cutoff = today + timedelta(days=max(1, within_days))
+
+    grants = list(
+        db.session.scalars(
+            select(Grant)
+            .where(Grant.organization_id == organization_id)
+            .order_by(Grant.application_deadline.asc().nullslast(), Grant.created_at.desc())
+        )
+    )
+
+    events: List[dict] = []
+    for grant in grants:
+        milestones = [
+            ("application_deadline", grant.application_deadline, "Application deadline"),
+            ("submission_date", grant.submission_date, "Proposal submitted"),
+            ("award_date", grant.award_date, "Awarded"),
+            ("report_due_date", grant.report_due_date, "Report due"),
+            ("start_date", grant.start_date, "Grant period starts"),
+            ("end_date", grant.end_date, "Grant period ends"),
+        ]
+
+        for milestone_type, milestone_date, label in milestones:
+            if milestone_date is None:
+                continue
+            if milestone_date < today or milestone_date > cutoff:
+                continue
+
+            events.append(
+                {
+                    "grant_id": int(grant.id),
+                    "title": grant.title,
+                    "funder_name": grant.funder_name,
+                    "status": grant.status,
+                    "event_type": milestone_type,
+                    "event_label": label,
+                    "event_date": milestone_date.isoformat(),
+                }
+            )
+
+    events.sort(key=lambda e: (e["event_date"], e["title"]))
+    return events
+
+
+def restricted_funding_summary(organization_id: int) -> dict:
+    """Summarize awarded grant balances as restricted funding visibility."""
+    grants = list(
+        db.session.scalars(
+            select(Grant)
+            .where(
+                Grant.organization_id == organization_id,
+                Grant.status.in_(["awarded", "reporting", "closed"]),
+                Grant.amount_awarded.is_not(None),
+                Grant.amount_awarded > 0,
+            )
+            .order_by(Grant.award_date.desc().nullslast(), Grant.created_at.desc())
+        )
+    )
+
+    grant_rows: List[dict] = []
+    total_awarded = 0.0
+    total_disbursed_amount = 0.0
+    total_restricted_remaining = 0.0
+
+    for grant in grants:
+        awarded = float(grant.amount_awarded or 0)
+        disbursed = total_disbursed(organization_id, grant_id=int(grant.id))
+        remaining = max(0.0, awarded - disbursed)
+
+        total_awarded += awarded
+        total_disbursed_amount += disbursed
+        total_restricted_remaining += remaining
+
+        grant_rows.append(
+            {
+                "grant_id": int(grant.id),
+                "title": grant.title,
+                "funder_name": grant.funder_name,
+                "status": grant.status,
+                "award_date": grant.award_date.isoformat() if grant.award_date else None,
+                "report_due_date": grant.report_due_date.isoformat() if grant.report_due_date else None,
+                "amount_awarded": awarded,
+                "amount_disbursed": disbursed,
+                "outstanding_balance": remaining,
+            }
+        )
+
+    return {
+        "grant_count": len(grant_rows),
+        "total_awarded": total_awarded,
+        "total_disbursed": total_disbursed_amount,
+        "total_restricted_remaining": total_restricted_remaining,
+        "grants": grant_rows,
+    }

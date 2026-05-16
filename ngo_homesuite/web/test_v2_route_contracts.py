@@ -33,6 +33,7 @@ def test_v2_grant_advance_and_disbursement_contract(client):
             "title": "Contract Test Grant",
             "funder_name": "Route Contract Foundation",
             "amount_requested": 1200,
+            "application_deadline": "2099-12-20",
         },
     )
     assert created.status_code == 201
@@ -48,6 +49,13 @@ def test_v2_grant_advance_and_disbursement_contract(client):
     assert advanced.status_code == 200
     assert advanced.get_json()["status"] == "submitted"
 
+    awarded = client.post(
+        f"/api/v2/grants/{grant_id}/advance",
+        json={"new_status": "awarded", "amount_awarded": 1000},
+    )
+    assert awarded.status_code == 200
+    assert awarded.get_json()["status"] == "awarded"
+
     bad_date = client.post(
         f"/api/v2/grants/{grant_id}/disbursements",
         json={"amount": 500, "received_date": "15/05/2026"},
@@ -62,6 +70,20 @@ def test_v2_grant_advance_and_disbursement_contract(client):
     payload = disbursed.get_json()
     assert payload["amount"] == 500.0
     assert payload["received_date"] == "2026-05-15"
+
+    calendar = client.get("/api/v2/grants/calendar?within_days=30000")
+    assert calendar.status_code == 200
+    calendar_payload = calendar.get_json()
+    assert isinstance(calendar_payload, list)
+    assert any(int(item.get("grant_id", 0)) == int(grant_id) for item in calendar_payload)
+
+    restricted = client.get("/api/v2/grants/restricted-funds")
+    assert restricted.status_code == 200
+    restricted_payload = restricted.get_json()
+    assert isinstance(restricted_payload, dict)
+    assert isinstance(restricted_payload.get("grants"), list)
+    assert restricted_payload.get("total_awarded", 0) >= 1000
+    assert restricted_payload.get("total_disbursed", 0) >= 500
 
 
 def test_v2_p2p_detail_endpoints_require_auth(client):

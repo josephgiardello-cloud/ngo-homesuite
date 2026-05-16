@@ -36,6 +36,20 @@ def _parse_iso_date(value: str) -> date:
     return date.fromisoformat((value or "").strip())
 
 
+def _normalize_grant_dates(data: dict[str, Any], fields: tuple[str, ...]) -> tuple[dict[str, Any], str | None]:
+    payload = dict(data)
+    for field in fields:
+        if field not in payload or payload[field] in (None, ""):
+            continue
+        if isinstance(payload[field], date):
+            continue
+        try:
+            payload[field] = _parse_iso_date(str(payload[field]))
+        except ValueError:
+            return payload, f"{field} must be ISO format YYYY-MM-DD"
+    return payload, None
+
+
 # ------------------------------------------------------------------ #
 # GRANTS
 # ------------------------------------------------------------------ #
@@ -55,8 +69,14 @@ def list_grants():
 def create_grant():
     from ngo_homesuite.services.grant_service import create_grant as svc_create
     data = _json_or_400(required=["title", "funder_name"])
+    payload, error = _normalize_grant_dates(
+        data,
+        ("application_deadline", "submission_date", "award_date", "start_date", "end_date", "report_due_date"),
+    )
+    if error:
+        return jsonify({"error": error}), 400
     try:
-        grant = svc_create(_org_id(), **data)
+        grant = svc_create(_org_id(), **payload)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify(_grant_dict(grant)), 201
@@ -78,12 +98,15 @@ def get_grant(grant_id: int):
 def advance_grant(grant_id: int):
     from ngo_homesuite.services.grant_service import advance_grant_status, GrantNotFound, InvalidGrantTransition
     data = _json_or_400(required=["new_status"])
+    payload, error = _normalize_grant_dates(data, ("submission_date", "award_date", "report_due_date"))
+    if error:
+        return jsonify({"error": error}), 400
     try:
         grant = advance_grant_status(
             grant_id,
             _org_id(),
-            new_status=data["new_status"],
-            **{k: v for k, v in data.items() if k != "new_status"},
+            new_status=payload["new_status"],
+            **{k: v for k, v in payload.items() if k != "new_status"},
         )
     except GrantNotFound as exc:
         return jsonify({"error": str(exc)}), 404
@@ -121,18 +144,43 @@ def grants_pipeline_summary():
     return jsonify(grant_pipeline_summary(_org_id()))
 
 
+@v2_bp.route("/grants/calendar", methods=["GET"])
+@login_required
+def grants_calendar():
+    from ngo_homesuite.services.grant_service import grant_calendar_events
+
+    within_days = request.args.get("within_days", 120, type=int)
+    return jsonify(grant_calendar_events(_org_id(), within_days=max(1, min(within_days, 730)) ))
+
+
+@v2_bp.route("/grants/restricted-funds", methods=["GET"])
+@login_required
+def grants_restricted_funds():
+    from ngo_homesuite.services.grant_service import restricted_funding_summary
+
+    return jsonify(restricted_funding_summary(_org_id()))
+
+
 def _grant_dict(g) -> dict:
     return {
         "id": g.id,
         "title": g.title,
         "funder_name": g.funder_name,
+        "funder_type": g.funder_type,
+        "funder_contact": g.funder_contact,
+        "funder_email": g.funder_email,
         "amount_requested": g.amount_requested,
         "amount_awarded": g.amount_awarded,
         "currency": g.currency,
         "status": g.status,
         "application_deadline": str(g.application_deadline) if g.application_deadline else None,
+        "submission_date": str(g.submission_date) if g.submission_date else None,
         "award_date": str(g.award_date) if g.award_date else None,
+        "start_date": str(g.start_date) if g.start_date else None,
+        "end_date": str(g.end_date) if g.end_date else None,
         "report_due_date": str(g.report_due_date) if g.report_due_date else None,
+        "requirements": g.requirements,
+        "notes": g.notes,
     }
 
 
