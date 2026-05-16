@@ -13,6 +13,7 @@ SAFE_DYNAMIC_SQL_ALLOWLIST = {
     "ngo_homesuite/utils/export.py",
     "ngo_homesuite/utils/import_export.py",
     "ngo_homesuite/utils/integrity_drift.py",
+    "ngo_homesuite/services/activity_timeline_service.py",  # Uses text() with literal templates + parameterized queries
 }
 
 

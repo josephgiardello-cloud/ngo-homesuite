@@ -1,0 +1,136 @@
+{# Global Activity Dashboard #}
+{% extends "base.html" %}
+
+{% block title %}Activity Feed - NGO HomeSuite{% endblock %}
+
+{% block content %}
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem;">
+    <div>
+        <h1>Activity Feed</h1>
+        <p class="text-muted">Real-time organization activity across all constituents.</p>
+    </div>
+    <div class="actions-row">
+        <a href="{{ url_for('main.dashboard') }}" class="btn btn-secondary">← Dashboard</a>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom: 1rem;">
+    <h3 style="margin-bottom: 1rem;">Recent Activity</h3>
+    <div id="activity-feed">
+        {# Activity will be loaded via HTMX or JavaScript #}
+        <div style="text-align: center; padding: 2rem;">
+            <p class="text-muted">Loading activity...</p>
+        </div>
+    </div>
+</div>
+
+<script>
+// Load activity feed from API
+async function loadActivityFeed() {
+    try {
+        const response = await fetch('/api/v2/activity/global?limit=50');
+        if (!response.ok) throw new Error('Failed to load activity');
+        
+        const items = await response.json();
+        const feedContainer = document.getElementById('activity-feed');
+        
+        if (items.length === 0) {
+            feedContainer.innerHTML = '<p class="text-muted" style="text-align: center; padding: 2rem;">No activity yet.</p>';
+            return;
+        }
+        
+        feedContainer.innerHTML = '';
+        
+        const timelineDiv = document.createElement('div');
+        timelineDiv.style.borderLeft = '3px solid var(--border)';
+        timelineDiv.style.paddingLeft = '1.5rem';
+        
+        const typeColors = {
+            'interaction': '#4CAF50',
+            'donation': '#2196F3',
+            'pledge': '#2196F3',
+            'case_note': '#FF9800',
+            'service_log': '#FF9800',
+            'task': '#9C27B0',
+            'workflow_event': '#00BCD4',
+            'volunteer_hour': '#4CAF50',
+        };
+        
+        items.forEach(item => {
+            const itemDiv = document.createElement('div');
+            itemDiv.style.marginBottom = '2rem';
+            itemDiv.style.position = 'relative';
+            
+            // Timeline dot
+            const dot = document.createElement('div');
+            dot.style.position = 'absolute';
+            dot.style.left = '-1.8rem';
+            dot.style.top = '0.35rem';
+            dot.style.width = '12px';
+            dot.style.height = '12px';
+            dot.style.borderRadius = '50%';
+            dot.style.background = 'var(--primary)';
+            dot.style.border = '2px solid white';
+            itemDiv.appendChild(dot);
+            
+            // Activity item card
+            const card = document.createElement('div');
+            card.style.padding = '0.75rem 1rem';
+            card.style.borderRadius = '8px';
+            card.style.background = 'var(--background-secondary, rgba(0,0,0,0.02))';
+            card.style.border = '1px solid var(--border)';
+            
+            const typeColor = typeColors[item.activity_type] || '#9E9E9E';
+            
+            // Header
+            const header = document.createElement('div');
+            header.style.display = 'flex';
+            header.style.justifyContent = 'space-between';
+            header.style.alignItems = 'center';
+            header.style.marginBottom = '0.5rem';
+            
+            const badgeSpan = document.createElement('span');
+            badgeSpan.style.display = 'inline-block';
+            badgeSpan.style.padding = '0.25rem 0.75rem';
+            badgeSpan.style.borderRadius = '12px';
+            badgeSpan.style.backgroundColor = typeColor + '22';
+            badgeSpan.style.color = typeColor;
+            badgeSpan.style.fontSize = '0.85rem';
+            badgeSpan.style.fontWeight = '600';
+            badgeSpan.style.textTransform = 'capitalize';
+            badgeSpan.textContent = item.activity_type.replace('_', ' ');
+            header.appendChild(badgeSpan);
+            
+            const timeSpan = document.createElement('span');
+            timeSpan.style.fontSize = '0.9rem';
+            timeSpan.style.color = 'var(--text-muted, #999)';
+            timeSpan.textContent = item.occurred_at.substring(0, 10);
+            header.appendChild(timeSpan);
+            
+            card.appendChild(header);
+            
+            // Summary
+            const summaryP = document.createElement('p');
+            summaryP.style.margin = '0.5rem 0';
+            summaryP.style.fontSize = '0.95rem';
+            const summaryB = document.createElement('strong');
+            summaryB.textContent = item.summary;
+            summaryP.appendChild(summaryB);
+            card.appendChild(summaryP);
+            
+            itemDiv.appendChild(card);
+            timelineDiv.appendChild(itemDiv);
+        });
+        
+        feedContainer.appendChild(timelineDiv);
+    } catch (error) {
+        console.error('Error loading activity:', error);
+        document.getElementById('activity-feed').innerHTML = '<p class="text-muted" style="text-align: center; padding: 2rem;">Failed to load activity feed.</p>';
+    }
+}
+
+// Load activity when page loads
+document.addEventListener('DOMContentLoaded', loadActivityFeed);
+</script>
+
+{% endblock %}

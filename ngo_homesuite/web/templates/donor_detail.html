@@ -81,6 +81,8 @@
     {% endif %}
 </div>
 
+{% include '_activity_timeline.html' with context %}
+
 <div class="card" style="margin-bottom: 1rem;">
     <h3>Recent Donations</h3>
     {% if recent_donations %}

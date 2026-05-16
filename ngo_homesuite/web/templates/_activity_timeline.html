@@ -1,0 +1,114 @@
+{# Timeline component for displaying unified activity feed #}
+{# Usage: {% include '_activity_timeline.html' with context %} #}
+{# Expects: timeline_items (list), entity_type, entity_id #}
+
+{% if timeline_items %}
+<div class="card" style="margin-bottom: 1rem;">
+    <h3 style="margin-bottom: 1rem;">Activity Timeline</h3>
+    <div style="border-left: 3px solid var(--border); padding-left: 1.5rem;">
+        {% for item in timeline_items %}
+        <div style="margin-bottom: 2rem; position: relative;">
+            {# Timeline dot #}
+            <div style="
+                position: absolute;
+                left: -1.8rem;
+                top: 0.35rem;
+                width: 12px;
+                height: 12px;
+                border-radius: 50%;
+                background: var(--primary);
+                border: 2px solid white;
+            "></div>
+
+            {# Activity item #}
+            <div style="
+                padding: 0.75rem 1rem;
+                border-radius: 8px;
+                background: var(--background-secondary, rgba(0,0,0,0.02));
+                border: 1px solid var(--border);
+            ">
+                {# Header row: Type badge + time #}
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                        {# Activity type badge #}
+                        {% set type_colors = {
+                            'interaction': '#4CAF50',
+                            'donation': '#2196F3',
+                            'pledge': '#2196F3',
+                            'case_note': '#FF9800',
+                            'service_log': '#FF9800',
+                            'task': '#9C27B0',
+                            'workflow_event': '#00BCD4',
+                            'volunteer_hour': '#4CAF50',
+                        } %}
+                        <span style="
+                            display: inline-block;
+                            padding: 0.25rem 0.75rem;
+                            border-radius: 12px;
+                            background-color: {{ type_colors.get(item.activity_type, '#9E9E9E') }}22;
+                            color: {{ type_colors.get(item.activity_type, '#9E9E9E') }};
+                            font-size: 0.85rem;
+                            font-weight: 600;
+                            text-transform: capitalize;
+                        ">
+                            {{ item.activity_type.replace('_', ' ') }}
+                        </span>
+                    </div>
+                    <span class="text-muted" style="font-size: 0.9rem;">
+                        {# Format time relative to now if available, otherwise use absolute #}
+                        {% if item.occurred_at %}
+                            {{ item.occurred_at[:10] }}
+                        {% endif %}
+                    </span>
+                </div>
+
+                {# Summary #}
+                <p style="margin: 0.5rem 0; font-size: 0.95rem;">
+                    <strong>{{ item.summary }}</strong>
+                </p>
+
+                {# Metadata details (type-specific) #}
+                {% if item.metadata %}
+                <div style="margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid rgba(0,0,0,0.05);">
+                    {% if item.activity_type == 'interaction' %}
+                        {% if item.metadata.get('channel') %}
+                        <p style="margin: 0.25rem 0; font-size: 0.9rem;">
+                            <strong>Channel:</strong> {{ item.metadata.channel }}
+                        </p>
+                        {% endif %}
+                        {% if item.metadata.get('follow_up_due') %}
+                        <p style="margin: 0.25rem 0; font-size: 0.9rem;">
+                            <strong>Follow-up Due:</strong> {{ item.metadata.follow_up_due }}
+                        </p>
+                        {% endif %}
+                        {% if item.metadata.get('next_action') %}
+                        <p style="margin: 0.25rem 0; font-size: 0.9rem;">
+                            <strong>Next Action:</strong> {{ item.metadata.next_action }}
+                        </p>
+                        {% endif %}
+                    {% elif item.activity_type == 'donation' %}
+                        {% if item.metadata.get('amount_formatted') %}
+                        <p style="margin: 0.25rem 0; font-size: 0.9rem;">
+                            <strong>Amount:</strong> {{ item.metadata.amount_formatted }}
+                        </p>
+                        {% endif %}
+                    {% endif %}
+                </div>
+                {% endif %}
+
+                {# Actor attribution #}
+                {% if item.actor_name %}
+                <p style="margin: 0.5rem 0 0 0; font-size: 0.85rem; color: var(--text-muted, #999);">
+                    by {{ item.actor_name }}
+                </p>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% else %}
+<div class="card" style="margin-bottom: 1rem; padding: 2rem; text-align: center;">
+    <p class="text-muted">No activity recorded yet.</p>
+</div>
+{% endif %}

@@ -869,6 +869,22 @@ def dashboard():
     return render_template('dashboard.html', stats=stats, active_page='dashboard', ai_context=ai_context)
 
 
+@main_bp.route('/activity')
+@login_required
+def activity_feed():
+    """Organization-wide activity feed dashboard."""
+    org = _current_org()
+    if not org:
+        flash('No organization found for your account.', 'error')
+        return redirect(url_for('main.dashboard'))
+
+    return render_template(
+        'activity_feed.html',
+        active_page='activity',
+        organization_name=org.name,
+    )
+
+
 @main_bp.route('/mobile/intake', methods=['GET', 'POST'])
 @login_required
 @roles_required('admin', 'staff', 'volunteer')
@@ -1035,6 +1051,8 @@ def donors_list():
 @main_bp.route('/donors/<int:donor_id>')
 @login_required
 def donor_detail(donor_id: int):
+    from ngo_homesuite.services.activity_timeline_service import ActivityTimelineService
+
     org = _current_org()
     donor_summary = ReportingService().donor_profile_summary(org.id, donor_id, recent_limit=10)
     donor = donor_summary['donor']
@@ -1063,6 +1081,14 @@ def donor_detail(donor_id: int):
     except Exception:
         donor_ai_insights = None
 
+    # Fetch unified activity timeline
+    timeline_items = []
+    try:
+        timeline_items = ActivityTimelineService.get_donor_timeline(org.id, donor_id, limit=25)
+    except Exception:
+        # If timeline fetch fails, continue without it
+        timeline_items = []
+
     return render_template(
         'donor_detail.html',
         donor=donor,
@@ -1073,6 +1099,7 @@ def donor_detail(donor_id: int):
         active_recurring_plans=donor_summary['active_recurring_plans'],
         recent_donations=donor_summary['recent_donations'],
         recurring_plans=donor_summary['recurring_plans'],
+        timeline_items=timeline_items,
         active_page='donors',
         ai_context=ai_context,
         donor_ai_insights=donor_ai_insights,
@@ -2042,6 +2069,8 @@ def beneficiary_new():
 @main_bp.route('/beneficiaries/<int:beneficiary_id>')
 @login_required
 def beneficiary_detail(beneficiary_id: int):
+    from ngo_homesuite.services.activity_timeline_service import ActivityTimelineService
+
     org = _current_org()
     if not org:
         abort(404)
@@ -2051,6 +2080,14 @@ def beneficiary_detail(beneficiary_id: int):
         abort(404)
 
     cases = list_cases(org.id, beneficiary_id=beneficiary_id)
+
+    # Fetch unified activity timeline
+    timeline_items = []
+    try:
+        timeline_items = ActivityTimelineService.get_beneficiary_timeline(org.id, beneficiary_id, limit=25)
+    except Exception:
+        # If timeline fetch fails, continue without it
+        timeline_items = []
 
     ai_context = {
         'active_page': 'beneficiaries',
@@ -2063,6 +2100,7 @@ def beneficiary_detail(beneficiary_id: int):
         'beneficiary_detail.html',
         beneficiary=beneficiary,
         cases=cases,
+        timeline_items=timeline_items,
         active_page='beneficiaries',
         ai_context=ai_context,
     )

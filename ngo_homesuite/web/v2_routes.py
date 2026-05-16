@@ -500,3 +500,64 @@ def _tier_dict(t) -> dict:
         "benefits": t.benefits,
         "is_active": bool(t.is_active),
     }
+
+
+# ------------------------------------------------------------------ #
+# ACTIVITY TIMELINES (Unified Constituent Activity Feed)
+# ------------------------------------------------------------------ #
+
+@v2_bp.route("/activity/donor/<int:donor_id>", methods=["GET"])
+@login_required
+def get_donor_activity_timeline(donor_id: int):
+    """Unified timeline for a donor including interactions, donations, pledges."""
+    from ngo_homesuite.services.activity_timeline_service import ActivityTimelineService
+
+    limit = request.args.get("limit", 100, type=int)
+    offset = request.args.get("offset", 0, type=int)
+
+    # Validate pagination bounds
+    limit = min(limit, 500)
+    offset = max(offset, 0)
+
+    items = ActivityTimelineService.get_donor_timeline(_org_id(), donor_id, limit=limit, offset=offset)
+    return jsonify([item.to_dict() for item in items])
+
+
+@v2_bp.route("/activity/beneficiary/<int:beneficiary_id>", methods=["GET"])
+@login_required
+def get_beneficiary_activity_timeline(beneficiary_id: int):
+    """Unified timeline for a beneficiary including case notes, service logs, appointments."""
+    from ngo_homesuite.services.activity_timeline_service import ActivityTimelineService
+
+    limit = request.args.get("limit", 100, type=int)
+    offset = request.args.get("offset", 0, type=int)
+
+    # Validate pagination bounds
+    limit = min(limit, 500)
+    offset = max(offset, 0)
+
+    items = ActivityTimelineService.get_beneficiary_timeline(_org_id(), beneficiary_id, limit=limit, offset=offset)
+    return jsonify([item.to_dict() for item in items])
+
+
+@v2_bp.route("/activity/global", methods=["GET"])
+@login_required
+def get_organization_activity_feed():
+    """Organization-wide activity feed for dashboard (all interactions, donations, key events)."""
+    from ngo_homesuite.services.activity_timeline_service import ActivityTimelineService
+
+    limit = request.args.get("limit", 50, type=int)
+    offset = request.args.get("offset", 0, type=int)
+    entity_type = request.args.get("entity_type")  # Optional: "donor", "beneficiary", etc.
+
+    # Validate pagination bounds
+    limit = min(limit, 500)
+    offset = max(offset, 0)
+
+    items = ActivityTimelineService.get_organization_activity(
+        _org_id(),
+        limit=limit,
+        offset=offset,
+        entity_type_filter=entity_type,
+    )
+    return jsonify([item.to_dict() for item in items])
