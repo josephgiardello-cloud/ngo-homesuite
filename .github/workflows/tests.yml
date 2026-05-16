@@ -125,7 +125,7 @@ jobs:
       env:
         NGO_HOMESUITE_DB_KEY: ""
       run: |
-        pytest ngo_homesuite/ai/test_ai_hardening.py ngo_homesuite/ai/test_copilot_routes.py -v --maxfail=10
+        pytest ngo_homesuite/ai/test_ai_hardening.py ngo_homesuite/ai/test_copilot_routes.py ngo_homesuite/web/test_auth_security_routes.py -v --maxfail=10
 
   db-policy:
     name: DB Policy (${{ matrix.mode }})

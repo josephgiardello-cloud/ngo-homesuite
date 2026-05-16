@@ -4,7 +4,7 @@ Authentication blueprint for NGO HomeSuite.
 Handles user login, registration, logout, and password management.
 """
 
-from flask import Blueprint, render_template, redirect, url_for, flash, request
+from flask import Blueprint, render_template, redirect, url_for, flash, request, session
 from flask_login import login_user, logout_user, login_required, current_user
 from wtforms import StringField, PasswordField, BooleanField, SubmitField
 from wtforms.validators import DataRequired, Email, EqualTo, ValidationError, Length
@@ -14,6 +14,18 @@ from sqlalchemy import select
 from ngo_homesuite.models.core import db, User
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
+
+
+def _is_safe_next_path(next_page: str | None) -> bool:
+    if not next_page:
+        return False
+    value = str(next_page).strip()
+    if not value.startswith('/'):
+        return False
+    # Block scheme-relative and backslash-prefixed values that can trigger external redirects.
+    if value.startswith('//') or value.startswith('/\\'):
+        return False
+    return True
 
 
 class LoginForm(FlaskForm):
@@ -80,12 +92,14 @@ def login():
             flash('Your account has been deactivated. Please contact support.', 'error')
             return redirect(url_for('auth.login'))
         
+        # Rotate/clear session before authentication to reduce fixation risk.
+        session.clear()
         login_user(user, remember=form.remember_me.data)
         flash(f'Welcome back, {user.first_name or user.username}!', 'success')
         
         # Redirect to next page or dashboard
         next_page = request.args.get('next')
-        if next_page and next_page.startswith('/'):
+        if _is_safe_next_path(next_page):
             return redirect(next_page)
         return redirect(url_for('main.dashboard'))
     
