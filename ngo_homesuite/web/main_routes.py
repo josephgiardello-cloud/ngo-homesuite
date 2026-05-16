@@ -22,6 +22,7 @@ from ngo_homesuite.models.core import (
 from ngo_homesuite.services.donation_service import DonationService
 from ngo_homesuite.services.donor_service import DonorService
 from ngo_homesuite.services.fund_service import FundService
+from ngo_homesuite.services.reporting_service import ReportingService
 from ngo_homesuite.domain import (
     BeneficiaryEntity,
     CampaignEntity,
@@ -713,35 +714,10 @@ def dashboard():
 
     org = _current_org()
     if org:
-        beneficiary_count = Beneficiary.query.filter_by(organization_id=org.id, status='active').count()
-        project_count = Project.query.filter_by(organization_id=org.id, status='active').count()
-
-        _donor_svc = DonorService()
-        donor_count = _donor_svc.list_donors(org.id, per_page=1)['total']
-
-        _donation_svc = DonationService()
-        donation_page = _donation_svc.list_donations(org.id, per_page=5)
-        recent_donations = donation_page['items']
-        total_donations = (
-            db.session.query(func.sum(Donation.amount)).filter_by(organization_id=org.id).scalar() or 0
-        )
-
-        total_budget = db.session.query(func.sum(Project.budget)).filter_by(organization_id=org.id).scalar() or 0
-        total_expenses = db.session.query(func.sum(Expense.amount)).filter_by(organization_id=org.id).scalar() or 0
-
-        _fund_svc = FundService()
-        total_funds = _fund_svc.list_funds(org.id, active_only=True, per_page=1)['total']
-
+        summary = ReportingService().organization_dashboard_summary(org.id, recent_donations_limit=5)
         stats = {
             'organization': org,
-            'beneficiary_count': beneficiary_count,
-            'project_count': project_count,
-            'donor_count': donor_count,
-            'total_donations': total_donations,
-            'total_budget': total_budget,
-            'total_expenses': total_expenses,
-            'total_funds': total_funds,
-            'recent_donations': recent_donations,
+            **summary,
         }
     else:
         stats = {
@@ -959,33 +935,16 @@ def donors_list():
 @login_required
 def donor_detail(donor_id: int):
     org = _current_org()
-    donor = Donor.query.filter_by(id=donor_id, organization_id=org.id).first_or_404()
-
-    donation_count, total_amount = (
-        db.session.query(func.count(Donation.id), func.coalesce(func.sum(Donation.amount), 0.0))
-        .filter_by(organization_id=org.id, donor_id=donor.id)
-        .first()
-    )
-
-    recent_donations = (
-        Donation.query.filter_by(organization_id=org.id, donor_id=donor.id)
-        .order_by(Donation.donation_date.desc())
-        .limit(10)
-        .all()
-    )
-    recurring_plans = (
-        RecurringDonationPlan.query.filter_by(organization_id=org.id, donor_id=donor.id)
-        .order_by(RecurringDonationPlan.created_at.desc())
-        .all()
-    )
+    donor_summary = ReportingService().donor_profile_summary(org.id, donor_id, recent_limit=10)
+    donor = donor_summary['donor']
 
     ai_context = {
         'active_page': 'donors',
         'organization': org.name if org else None,
         'donor_id': donor.id,
         'donor_name': donor.name,
-        'donation_count': int(donation_count or 0),
-        'donation_total': float(total_amount or 0.0),
+        'donation_count': donor_summary['donation_count'],
+        'donation_total': donor_summary['donation_total'],
     }
 
     donor_ai_insights = None
@@ -1006,10 +965,13 @@ def donor_detail(donor_id: int):
     return render_template(
         'donor_detail.html',
         donor=donor,
-        donation_count=int(donation_count or 0),
-        donation_total=float(total_amount or 0.0),
-        recent_donations=recent_donations,
-        recurring_plans=recurring_plans,
+        donation_count=donor_summary['donation_count'],
+        donation_total=donor_summary['donation_total'],
+        first_gift_date=donor_summary['first_gift_date'],
+        last_gift_date=donor_summary['last_gift_date'],
+        active_recurring_plans=donor_summary['active_recurring_plans'],
+        recent_donations=donor_summary['recent_donations'],
+        recurring_plans=donor_summary['recurring_plans'],
         active_page='donors',
         ai_context=ai_context,
         donor_ai_insights=donor_ai_insights,

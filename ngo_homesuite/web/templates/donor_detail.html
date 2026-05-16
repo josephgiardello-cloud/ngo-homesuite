@@ -3,8 +3,16 @@
 {% block title %}Donor Profile - NGO HomeSuite{% endblock %}
 
 {% block content %}
-<h1>{{ donor.name }}</h1>
-<p class="text-muted">Donor profile and contribution history.</p>
+<div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:1rem;margin-bottom:1rem;">
+    <div>
+        <h1 style="margin-bottom:0.35rem;">{{ donor.name }}</h1>
+        <p class="text-muted">Donor profile and contribution history.</p>
+    </div>
+    <div style="padding:0.75rem 1rem;border:1px solid var(--border);border-radius:14px;background:linear-gradient(135deg, rgba(20,118,212,0.08), rgba(20,118,212,0.02));">
+        <div class="card-text">Lifetime Giving</div>
+        <div class="card-value">{{ '%.2f'|format(donation_total) }}</div>
+    </div>
+</div>
 
 <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); margin-bottom: 1rem;">
     <div class="card">
@@ -19,6 +27,10 @@
         <div class="card-text">Donor Type</div>
         <div class="card-value" style="font-size: 1rem; text-transform: capitalize;">{{ donor.donor_type }}</div>
     </div>
+    <div class="card">
+        <div class="card-text">Recurring Plans</div>
+        <div class="card-value">{{ active_recurring_plans }}</div>
+    </div>
 </div>
 
 <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; margin-bottom: 1rem;">
@@ -27,6 +39,8 @@
         <p><strong>Email:</strong> {{ donor.email or '-' }}</p>
         <p><strong>Phone:</strong> {{ donor.phone or '-' }}</p>
         <p><strong>Created:</strong> {{ donor.created_at.strftime('%Y-%m-%d') if donor.created_at else '-' }}</p>
+        <p><strong>First Gift:</strong> {{ first_gift_date or '-' }}</p>
+        <p><strong>Last Gift:</strong> {{ last_gift_date or '-' }}</p>
         <a href="{{ url_for('main.donor_edit', donor_id=donor.id) }}" class="btn btn-primary">Edit Donor</a>
         <a href="{{ url_for('main.donations_list', donor_id=donor.id) }}" class="btn btn-secondary">Filter Donations</a>
     </div>
@@ -88,7 +102,7 @@
                     <td>{{ donation.amount }} {{ donation.currency }}</td>
                     <td>{{ donation.payment_method or '-' }}</td>
                     <td>{{ donation.purpose or '-' }}</td>
-                    <td>{{ donation.status }}</td>
+                    <td><span style="padding:0.2rem 0.6rem;border-radius:999px;border:1px solid var(--border);background:var(--surface-soft);">{{ donation.status }}</span></td>
                 </tr>
                 {% endfor %}
             </tbody>

@@ -3,7 +3,16 @@
 {% block title %}Dashboard - NGO HomeSuite{% endblock %}
 
 {% block content %}
-<h1>Dashboard</h1>
+<div style="display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:1rem;margin-bottom:1rem;">
+    <div>
+        <h1 style="margin-bottom:0.35rem;">Dashboard</h1>
+        <p class="text-muted" style="max-width: 60ch;">A compact view of donations, budgets, and program activity for {{ stats.organization.name }}.</p>
+    </div>
+    <div style="padding:0.75rem 1rem;border:1px solid var(--border);border-radius:14px;background:linear-gradient(135deg, rgba(20,118,212,0.08), rgba(20,118,212,0.02));">
+        <div class="card-text">Net Cashflow</div>
+        <div class="card-value">${{ "%.2f"|format(stats.net_cashflow) }}</div>
+    </div>
+</div>
 
 {% if stats.organization %}
     <p class="text-muted">Organization: <strong>{{ stats.organization.name }}</strong></p>
