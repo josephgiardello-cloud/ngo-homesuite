@@ -50,6 +50,7 @@ ROUTE_POLICY_MANIFEST: dict[str, RoutePolicy] = {
     "/api/v2/p2p/leaderboard": RoutePolicy(access="authenticated"),
     "/api/v2/p2p/pages": RoutePolicy(access="authenticated"),
     "/api/v2/smart-groups": RoutePolicy(access="authenticated"),
+        "/api/v2/campaigns": RoutePolicy(access="authenticated"),
     "/api/v2/tasks": RoutePolicy(access="authenticated"),
     "/api/v2/tasks/overdue-summary": RoutePolicy(access="authenticated"),
     "/auth/login": RoutePolicy(access="public"),

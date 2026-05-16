@@ -924,6 +924,53 @@ class SmartGroup(db.Model):
 # P2P Fundraising (ORM-backed)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Campaigns
+# ---------------------------------------------------------------------------
+
+class Campaign(db.Model):
+    """Fundraising campaign (annual, capital, event, emergency, P2P umbrella, etc.)."""
+
+    __tablename__ = 'campaigns'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    fund_id = db.Column(db.Integer, db.ForeignKey('funds.id'), nullable=True, index=True)
+
+    name = db.Column(db.String(200), nullable=False)
+    slug = db.Column(db.String(120), nullable=False, index=True)
+    description = db.Column(db.Text, nullable=True)
+    campaign_type = db.Column(
+        db.String(30),
+        default='general',
+        nullable=False,
+    )  # annual, capital, event, emergency, recurring, p2p, general
+    status = db.Column(db.String(20), default='draft', nullable=False, index=True)  # draft, active, paused, closed
+    goal_amount = db.Column(db.Float, nullable=False, default=0.0)
+    raised_amount = db.Column(db.Float, nullable=False, default=0.0)
+    currency = db.Column(db.String(3), default='USD', nullable=False)
+    start_date = db.Column(db.Date, nullable=True)
+    end_date = db.Column(db.Date, nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
+
+    organization = db.relationship('Organization', backref='campaigns')
+    fund = db.relationship('Fund', backref='campaigns')
+    p2p_pages = db.relationship('P2PPage', backref='campaign', foreign_keys='P2PPage.campaign_id')
+
+    __table_args__ = (
+        db.UniqueConstraint('organization_id', 'slug', name='uq_campaign_org_slug'),
+    )
+
+    def __repr__(self):
+        return f'<Campaign {self.name} [{self.status}]>'
+
+
+# ---------------------------------------------------------------------------
+# P2P Fundraising (ORM-backed)
+# ---------------------------------------------------------------------------
+
 class P2PPage(db.Model):
     """Supporter-created peer-to-peer fundraising page."""
 
@@ -933,6 +980,7 @@ class P2PPage(db.Model):
     organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
     donor_id = db.Column(db.Integer, db.ForeignKey('donors.id'), nullable=False, index=True)  # page owner
     campaign_slug = db.Column(db.String(120), nullable=True, index=True)  # optional parent campaign
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaigns.id'), nullable=True, index=True)
 
     title = db.Column(db.String(300), nullable=False)
     story = db.Column(db.Text, nullable=True)
@@ -1243,6 +1291,7 @@ __all__ = [
     'ProgramCaseFollowUp',
     'DonorEngagementScore',
     'SmartGroup',
+    'Campaign',
     'P2PPage',
     'P2PPageDonation',
     'BeneficiaryAssessment',
