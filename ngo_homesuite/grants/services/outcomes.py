@@ -1,6 +1,6 @@
 """Outcomes service adapter for grants domain."""
 
-from ngo_homesuite.services import grant_outcomes_service as _impl
+from ngo_homesuite.grants.services import outcomes_impl as _impl
 
 
 class OutcomesService:

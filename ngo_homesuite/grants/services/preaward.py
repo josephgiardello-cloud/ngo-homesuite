@@ -1,6 +1,6 @@
 """Pre-award service adapter for grants domain."""
 
-from ngo_homesuite.services import grant_preaward_service as _impl
+from ngo_homesuite.grants.services import preaward_impl as _impl
 
 
 class PreawardService:

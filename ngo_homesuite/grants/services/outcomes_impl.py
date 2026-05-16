@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-import warnings
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -9,14 +7,6 @@ from sqlalchemy import func, select
 
 from ngo_homesuite.db.utils import audit
 from ngo_homesuite.models.core import Grant, GrantOutcomeRecord, GrantOutcomeTemplate, ProgramCase, db
-
-
-if os.getenv("NGOHS_WARN_DIRECT_GRANT_SERVICE_IMPORTS", "0") == "1":
-    warnings.warn(
-        "Direct import of grant_outcomes_service is deprecated. Use ngo_homesuite.grants.facade.GrantsFacade instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
 
 
 def _utcnow_naive() -> datetime:

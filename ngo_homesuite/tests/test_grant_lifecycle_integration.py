@@ -4,8 +4,9 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
+from ngo_homesuite.grants.services import lifecycle as grant_service
+from ngo_homesuite.grants.services import outcomes_impl as grant_outcomes_service
 from ngo_homesuite.models.core import GrantApprovalRequest, Organization, db
-from ngo_homesuite.services import grant_outcomes_service, grant_service
 from ngo_homesuite.services.expense_service import ExpenseService
 
 

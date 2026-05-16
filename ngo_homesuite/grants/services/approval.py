@@ -1,6 +1,6 @@
 """Approval service adapter for grants domain."""
 
-from ngo_homesuite.services import grant_approval_service as _impl
+from ngo_homesuite.grants.services import approval_impl as _impl
 
 
 class ApprovalService:

@@ -1,6 +1,6 @@
 """Accounting policy service adapter for grants domain."""
 
-from ngo_homesuite.services import grant_accounting_policy_service as _impl
+from ngo_homesuite.grants.services import accounting_policy_impl as _impl
 
 
 class AccountingService:

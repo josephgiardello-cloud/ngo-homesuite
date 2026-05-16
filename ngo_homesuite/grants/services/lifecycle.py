@@ -1,8 +1,6 @@
 """Grant management service — full lifecycle from prospect to reporting."""
 from __future__ import annotations
 
-import os
-import warnings
 from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional
 
@@ -22,18 +20,10 @@ from ngo_homesuite.models.core import (
     GrantProposal,
     db,
 )
-from ngo_homesuite.services import grant_accounting_policy_service
-from ngo_homesuite.services import grant_approval_service
-from ngo_homesuite.services import grant_preaward_service
-from ngo_homesuite.services import grant_outcomes_service
-
-
-if os.getenv("NGOHS_WARN_DIRECT_GRANT_SERVICE_IMPORTS", "0") == "1":
-    warnings.warn(
-        "Direct import of grant_service is deprecated. Use ngo_homesuite.grants.facade.GrantsFacade instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
+from ngo_homesuite.grants.services import accounting_policy_impl as grant_accounting_policy_service
+from ngo_homesuite.grants.services import approval_impl as grant_approval_service
+from ngo_homesuite.grants.services import outcomes_impl as grant_outcomes_service
+from ngo_homesuite.grants.services import preaward_impl as grant_preaward_service
 
 
 GrantApprovalError = grant_approval_service.GrantApprovalError

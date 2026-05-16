@@ -4,8 +4,8 @@ from datetime import date
 
 import pytest
 
+from ngo_homesuite.grants.services import lifecycle as grant_service
 from ngo_homesuite.models.core import Expense, GrantExpenseAllocation, Organization, db
-from ngo_homesuite.services import grant_service
 from ngo_homesuite.services.expense_service import ExpenseService
 
 

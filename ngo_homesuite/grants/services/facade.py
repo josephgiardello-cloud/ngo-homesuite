@@ -7,9 +7,9 @@ from typing import Optional
 
 from ngo_homesuite.grants.services.accounting import AccountingService
 from ngo_homesuite.grants.services.approval import ApprovalService
+from ngo_homesuite.grants.services import lifecycle as _grant_lifecycle
 from ngo_homesuite.grants.services.outcomes import OutcomesService
 from ngo_homesuite.grants.services.preaward import PreawardService
-from ngo_homesuite.services import grant_service as _grant_lifecycle
 
 
 class GrantsFacade:

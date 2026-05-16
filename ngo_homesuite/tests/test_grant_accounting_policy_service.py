@@ -4,8 +4,9 @@ from datetime import datetime
 
 import pytest
 
+from ngo_homesuite.grants.services import accounting_policy_impl as grant_accounting_policy_service
+from ngo_homesuite.grants.services import lifecycle as grant_service
 from ngo_homesuite.models.core import Expense, GrantDisbursement, Organization, db
-from ngo_homesuite.services import grant_accounting_policy_service, grant_service
 
 
 @pytest.fixture(scope="module")

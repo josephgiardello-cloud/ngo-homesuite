@@ -1,8 +1,6 @@
 """Grant approval workflow service with configurable chains and SoD enforcement."""
 from __future__ import annotations
 
-import os
-import warnings
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -15,14 +13,6 @@ from ngo_homesuite.models.core import (
     GrantApprovalRequest,
     db,
 )
-
-
-if os.getenv("NGOHS_WARN_DIRECT_GRANT_SERVICE_IMPORTS", "0") == "1":
-    warnings.warn(
-        "Direct import of grant_approval_service is deprecated. Use ngo_homesuite.grants.facade.GrantsFacade instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
 
 
 class GrantApprovalError(ValueError):
