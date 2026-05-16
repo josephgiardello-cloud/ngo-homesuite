@@ -910,8 +910,7 @@ def donors_list():
         'organization': org.name if org else None,
         'donor_count': len(donors),
     }
-    return render_template(
-        'donors.html',
+    ctx = dict(
         donors=donors,
         delete_form=delete_form,
         active_page='donors',
@@ -919,6 +918,9 @@ def donors_list():
         filter_donor_type=donor_type,
         ai_context=ai_context,
     )
+    if request.headers.get('HX-Request'):
+        return render_template('_donors_rows.html', **ctx)
+    return render_template('donors.html', **ctx)
 
 
 @main_bp.route('/donors/<int:donor_id>')
@@ -1882,14 +1884,16 @@ def beneficiaries_list():
         'organization': org.name if org else None,
         'beneficiary_count': len(beneficiaries),
     }
-    return render_template(
-        'beneficiaries.html',
+    ctx = dict(
         beneficiaries=beneficiaries,
         active_page='beneficiaries',
         filter_q=query,
         filter_status=status_filter,
         ai_context=ai_context,
     )
+    if request.headers.get('HX-Request'):
+        return render_template('_beneficiaries_rows.html', **ctx)
+    return render_template('beneficiaries.html', **ctx)
 
 
 @main_bp.route('/beneficiaries/new', methods=['GET', 'POST'])

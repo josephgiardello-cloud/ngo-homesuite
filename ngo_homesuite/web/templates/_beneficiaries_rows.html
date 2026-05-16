@@ -1,0 +1,40 @@
+{% if beneficiaries %}
+<div class="table-wrap">
+<table>
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Phone</th>
+            <th>Program</th>
+            <th>Status</th>
+            <th>Added</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for b in beneficiaries %}
+        <tr>
+            <td><a href="{{ url_for('main.beneficiary_detail', beneficiary_id=b.id) }}">{{ b.first_name }} {{ b.last_name }}</a></td>
+            <td>{{ b.email or '-' }}</td>
+            <td>{{ b.phone or '-' }}</td>
+            <td>{{ b.program or '-' }}</td>
+            <td>
+                <span class="badge {{ 'badge-success' if b.status == 'active' else 'badge-secondary' }}">{{ b.status }}</span>
+            </td>
+            <td>{{ b.created_at.strftime('%Y-%m-%d') if b.created_at else '-' }}</td>
+            <td>
+                <div class="actions-row">
+                    <a href="{{ url_for('main.beneficiary_detail', beneficiary_id=b.id) }}" class="btn btn-secondary">View</a>
+                </div>
+            </td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<div class="card">
+    <p>No beneficiaries match your search. <a href="{{ url_for('main.beneficiary_new') }}">Add the first one.</a></p>
+</div>
+{% endif %}

@@ -1,0 +1,39 @@
+{% if donors %}
+<div class="table-wrap">
+<table id="donor_table">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Phone</th>
+            <th>Type</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for donor in donors %}
+        <tr data-donor-row data-name="{{ (donor.name or '')|lower }}" data-email="{{ (donor.email or '')|lower }}" data-phone="{{ (donor.phone or '')|lower }}" data-type="{{ (donor.donor_type or '')|lower }}">
+            <td><a href="{{ url_for('main.donor_detail', donor_id=donor.id) }}">{{ donor.name }}</a></td>
+            <td>{{ donor.email or '-' }}</td>
+            <td>{{ donor.phone or '-' }}</td>
+            <td>{{ donor.donor_type }}</td>
+            <td>
+                <div class="actions-row">
+                    <a href="{{ url_for('main.donor_detail', donor_id=donor.id) }}" class="btn btn-secondary">View</a>
+                    <a href="{{ url_for('main.donor_edit', donor_id=donor.id) }}" class="btn btn-secondary">Edit</a>
+                    <form method="post" action="{{ url_for('main.donor_delete', donor_id=donor.id) }}" onsubmit="return confirm('Delete this donor? This cannot be undone.');">
+                        {{ delete_form.hidden_tag() }}
+                        {{ delete_form.submit(class_='btn btn-danger') }}
+                    </form>
+                </div>
+            </td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<div class="card">
+    <p>No donors match your search. <a href="{{ url_for('main.donors_list') }}">Clear filters</a></p>
+</div>
+{% endif %}

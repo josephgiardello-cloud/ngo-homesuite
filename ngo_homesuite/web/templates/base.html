@@ -8,6 +8,7 @@
     <!-- marked.js: fast, safe Markdown renderer for AI assistant responses -->
     <script src="https://cdn.jsdelivr.net/npm/marked@13/marked.min.js"></script>
     <script src="https://unpkg.com/htmx.org@1.9.12" integrity="sha384-3xX4rRr8A9fP6VW4Zx9j4m3KnnNAQwA8V3hM4sD5CM5f8PchPpV4fcbQ4L2QfY2E" crossorigin="anonymous"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
     <style>
         :root {
             --bg: #f4f7fb;
@@ -234,6 +235,7 @@
         input[type="email"],
         input[type="password"],
         input[type="number"],
+        input[type="date"],
         select,
         textarea {
             width: 100%;
@@ -250,6 +252,7 @@
         input[type="email"]:focus,
         input[type="password"]:focus,
         input[type="number"]:focus,
+        input[type="date"]:focus,
         select:focus,
         textarea:focus {
             outline: none;
@@ -648,6 +651,61 @@
             border-color: var(--primary);
         }
 
+        /* HTMX top progress bar */
+        #htmx-progress {
+            position: fixed;
+            top: 0; left: 0;
+            width: 0;
+            height: 3px;
+            background: var(--primary);
+            z-index: 9999;
+            transition: width 0.25s ease, opacity 0.4s ease;
+            opacity: 0;
+        }
+        #htmx-progress.running { opacity: 1; }
+
+        /* Mobile nav toggle button */
+        .nav-toggle {
+            display: none;
+            background: transparent;
+            border: 1px solid rgba(255,255,255,0.3);
+            color: var(--header-text);
+            border-radius: 8px;
+            padding: 0.4rem 0.6rem;
+            font-size: 1.15rem;
+            cursor: pointer;
+            line-height: 1;
+        }
+
+        @media (max-width: 979px) {
+            .nav-toggle { display: inline-flex; align-items: center; }
+            .sidebar { display: none; margin-bottom: 0; }
+            .sidebar.sidebar-open { display: block !important; }
+        }
+
+        /* Flash dismiss button */
+        .alert {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 0.5rem;
+        }
+        .alert-dismiss {
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            color: inherit;
+            opacity: 0.6;
+            font-size: 1rem;
+            padding: 0;
+            line-height: 1;
+            flex-shrink: 0;
+            min-width: 0;
+        }
+        .alert-dismiss:hover { opacity: 1; transform: none; filter: none; }
+        .alert-body { flex: 1; }
+        [x-cloak] { display: none !important; }
+
         /* Markdown inside assistant bubbles */
         .ai-msg.assistant p { margin: 0 0 0.4em; }
         .ai-msg.assistant p:last-child { margin-bottom: 0; }
@@ -668,8 +726,12 @@
     {% block extra_css %}{% endblock %}
 </head>
 <body>
+    <div id="htmx-progress"></div>
     <header>
         <a class="brand" href="{{ url_for('main.index') }}">NGO HomeSuite</a>
+        {% if current_user.is_authenticated %}
+        <button type="button" class="nav-toggle" id="navToggle" aria-label="Toggle menu" aria-expanded="false">&#9776;</button>
+        {% endif %}
         <nav>
             {% if current_user.is_authenticated %}
                 <a href="{{ url_for('main.dashboard') }}">Dashboard</a>
@@ -694,8 +756,15 @@
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
                 {% for category, message in messages %}
-                    <div class="alert alert-{{ 'error' if category == 'error' else category }}">
-                        {{ message }}
+                    <div class="alert alert-{{ 'error' if category == 'error' else category }}"
+                         x-data="{ show: true }"
+                         x-show="show"
+                         x-init="setTimeout(() => show = false, 5500)"
+                         x-transition:leave="transition-fade"
+                         x-cloak
+                         style="display:flex;">
+                        <span class="alert-body">{{ message }}</span>
+                        <button type="button" class="alert-dismiss" @click="show = false" aria-label="Dismiss">&times;</button>
                     </div>
                 {% endfor %}
             {% endif %}
@@ -703,7 +772,7 @@
         
         <div class="container">
             {% if current_user.is_authenticated %}
-            <aside class="sidebar">
+            <aside class="sidebar" id="mainSidebar">
                 <ul>
                     <li><a href="{{ url_for('main.dashboard') }}" class="{{ 'active' if active_page == 'dashboard' else '' }}">Dashboard</a></li>
                     <li><a href="{{ url_for('main.donors_list') }}" class="{{ 'active' if active_page == 'donors' else '' }}">Donors</a></li>
@@ -1099,6 +1168,45 @@
     </script>
     {% block extra_js %}{% endblock %}
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+    <script>
+        // Mobile sidebar toggle
+        (function() {
+            const btn = document.getElementById('navToggle');
+            const sidebar = document.getElementById('mainSidebar');
+            if (!btn || !sidebar) return;
+            btn.addEventListener('click', function() {
+                const open = sidebar.classList.toggle('sidebar-open');
+                btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+            });
+            // Auto-close sidebar on desktop resize
+            window.addEventListener('resize', function() {
+                if (window.innerWidth >= 980) {
+                    sidebar.classList.remove('sidebar-open');
+                    btn.setAttribute('aria-expanded', 'false');
+                }
+            });
+        })();
+
+        // HTMX top progress bar
+        (function() {
+            const bar = document.getElementById('htmx-progress');
+            if (!bar) return;
+            let timer;
+            document.body.addEventListener('htmx:beforeRequest', function() {
+                clearTimeout(timer);
+                bar.style.width = '0';
+                bar.classList.add('running');
+                requestAnimationFrame(function() { bar.style.width = '70%'; });
+            });
+            document.body.addEventListener('htmx:afterRequest', function() {
+                bar.style.width = '100%';
+                timer = setTimeout(function() {
+                    bar.classList.remove('running');
+                    bar.style.width = '0';
+                }, 400);
+            });
+        })();
+    </script>
 </body>
 </html>
 
