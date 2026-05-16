@@ -95,3 +95,24 @@ class DbEventStore:
             )
             for record in records
         ]
+
+
+def verify_workflow_event_immutability_guards(conn: Any) -> dict[str, Any]:
+    """Verify DB-level append-only trigger guards for workflow events.
+
+    This check is SQLite-focused and ensures expected trigger names exist.
+    """
+    rows = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name='workflow_events_v2'"
+    ).fetchall()
+    trigger_names = {str(row[0]) for row in rows}
+    expected = {
+        "trg_workflow_events_v2_no_update",
+        "trg_workflow_events_v2_no_delete",
+    }
+    missing = sorted(expected - trigger_names)
+    return {
+        "ok": not missing,
+        "missing": missing,
+        "present": sorted(trigger_names),
+    }

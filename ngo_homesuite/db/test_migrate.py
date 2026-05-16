@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from ngo_homesuite.audit.event_store import verify_workflow_event_immutability_guards
 from ngo_homesuite.db.migrate import (
     MigrationApplyError,
     MigrationError,
@@ -369,3 +370,45 @@ def test_plan_migrations_handles_larger_pending_sets(tmp_path, monkeypatch):
     assert plan.pending_count == 30
     assert plan.pending[0].version == 1
     assert plan.pending[-1].version == 30
+
+
+def test_workflow_event_table_is_append_only_after_migrations(tmp_path):
+    db_path = tmp_path / "append_only.db"
+    db_path.write_text("", encoding="utf-8")
+
+    auto_migrate(str(db_path))
+
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute(
+            """
+            INSERT INTO workflow_events_v2 (
+                event_id, org_id, event_type, aggregate_type, aggregate_id, actor_id, payload_json, occurred_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "evt_test_append_only",
+                "org-1",
+                "intake_submit",
+                "workflow_instance",
+                "wf_1",
+                "user_1",
+                "{}",
+                "2026-05-16T00:00:00Z",
+            ),
+        )
+        conn.commit()
+
+        guards = verify_workflow_event_immutability_guards(conn)
+        assert guards["ok"] is True
+
+        with pytest.raises(sqlite3.DatabaseError, match="append-only"):
+            conn.execute(
+                "UPDATE workflow_events_v2 SET payload_json=? WHERE event_id=?",
+                ("{\"changed\":true}", "evt_test_append_only"),
+            )
+
+        with pytest.raises(sqlite3.DatabaseError, match="append-only"):
+            conn.execute("DELETE FROM workflow_events_v2 WHERE event_id=?", ("evt_test_append_only",))
+    finally:
+        conn.close()
