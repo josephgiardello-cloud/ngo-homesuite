@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 from datetime import date
+from datetime import datetime
+from datetime import timezone
+import os
+from typing import Any
 from typing import Optional
 
+import requests
 from sqlalchemy import func, select
 
 from ngo_homesuite.db.utils import audit
@@ -11,6 +16,261 @@ from ngo_homesuite.models.core import Grant, GrantOpportunity, GrantProposal, db
 
 _VALID_OPPORTUNITY_STATUSES = {"identified", "qualified", "in_progress", "submitted", "awarded", "declined", "archived"}
 _VALID_PROPOSAL_OUTCOMES = {"draft", "submitted", "awarded", "declined", "withdrawn"}
+_SUPPORTED_EXTERNAL_SOURCES = {"grants_gov"}
+_GRANTS_GOV_DEFAULT_SEARCH_URL = "https://api.grants.gov/v1/api/search2"
+
+
+def _utcnow_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _extract_float(value: Any) -> Optional[float]:
+    if value in (None, ""):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip().replace(",", "")
+    if not text:
+        return None
+    return float(text)
+
+
+def _extract_iso_date(value: Any) -> Optional[date]:
+    if value in (None, ""):
+        return None
+    if isinstance(value, date):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    # Accept common external timestamp forms while storing date granularity.
+    if "T" in text:
+        text = text.split("T", 1)[0]
+    return date.fromisoformat(text)
+
+
+def _normalize_grants_gov_record(record: dict[str, Any]) -> dict[str, Any]:
+    title = (
+        str(record.get("opportunityTitle") or record.get("title") or record.get("opportunity_title") or "").strip()
+    )
+    funder_name = (
+        str(record.get("agencyName") or record.get("agency") or record.get("funder_name") or "U.S. Federal Agency").strip()
+    )
+    opportunity_number = str(
+        record.get("opportunityNumber")
+        or record.get("opportunity_number")
+        or record.get("fundingOpportunityNumber")
+        or ""
+    ).strip()
+    external_id = str(
+        record.get("opportunityId")
+        or record.get("opportunity_id")
+        or opportunity_number
+        or ""
+    ).strip()
+    url = str(record.get("opportunityUrl") or record.get("url") or record.get("link") or "").strip()
+    deadline = _extract_iso_date(record.get("closeDate") or record.get("deadline") or record.get("close_date"))
+    amount_min = _extract_float(record.get("awardFloor") or record.get("award_floor") or record.get("minAward"))
+    amount_max = _extract_float(record.get("awardCeiling") or record.get("award_ceiling") or record.get("maxAward"))
+    notes_parts = [
+        "source=grants_gov",
+        f"external_id={external_id or 'unknown'}",
+    ]
+    if opportunity_number:
+        notes_parts.append(f"opportunity_number={opportunity_number}")
+    if url:
+        notes_parts.append(f"url={url}")
+    notes_parts.append(f"synced_at={_utcnow_iso()}")
+    return {
+        "source": "grants_gov",
+        "external_id": external_id,
+        "opportunity_number": opportunity_number,
+        "source_url": url,
+        "title": title,
+        "funder_name": funder_name,
+        "program_name": str(record.get("category") or record.get("program_name") or "Federal Program").strip(),
+        "deadline": deadline,
+        "amount_min": amount_min,
+        "amount_max": amount_max,
+        "notes": " | ".join(notes_parts),
+    }
+
+
+def calibrate_external_opportunity(source: str, payload: dict[str, Any]) -> dict[str, Any]:
+    source_key = str(source or "").strip().lower()
+    if source_key not in _SUPPORTED_EXTERNAL_SOURCES:
+        raise ValueError(f"unsupported source '{source}'")
+    normalized = _normalize_grants_gov_record(payload)
+    required = {
+        "external_id": normalized.get("external_id"),
+        "title": normalized.get("title"),
+        "funder_name": normalized.get("funder_name"),
+        "deadline": normalized.get("deadline"),
+    }
+    missing = [key for key, value in required.items() if value in (None, "")]
+    score = round(((len(required) - len(missing)) / len(required)) * 100, 1)
+    return {
+        "source": source_key,
+        "score": score,
+        "required_fields": sorted(required.keys()),
+        "missing_fields": missing,
+        "is_ready": len(missing) == 0,
+        "normalized_preview": {
+            "external_id": normalized["external_id"],
+            "opportunity_number": normalized.get("opportunity_number"),
+            "title": normalized["title"],
+            "funder_name": normalized["funder_name"],
+            "program_name": normalized["program_name"],
+            "deadline": normalized["deadline"].isoformat() if normalized["deadline"] else None,
+            "amount_min": normalized["amount_min"],
+            "amount_max": normalized["amount_max"],
+            "source_url": normalized.get("source_url"),
+        },
+    }
+
+
+def _find_existing_external_opportunity(organization_id: int, source: str, external_id: str) -> Optional[GrantOpportunity]:
+    if not external_id:
+        return None
+    marker = f"source={source} | external_id={external_id}"
+    return db.session.scalars(
+        select(GrantOpportunity)
+        .where(
+            GrantOpportunity.organization_id == organization_id,
+            GrantOpportunity.notes.contains(marker),
+        )
+        .limit(1)
+    ).first()
+
+
+def import_external_opportunity(
+    organization_id: int,
+    *,
+    source: str,
+    payload: dict[str, Any],
+    probability: float = 0.4,
+    status: str = "identified",
+) -> GrantOpportunity:
+    calibration = calibrate_external_opportunity(source, payload)
+    if not calibration["is_ready"]:
+        missing = ", ".join(calibration["missing_fields"])
+        raise ValueError(f"external opportunity is missing required fields: {missing}")
+
+    normalized = _normalize_grants_gov_record(payload)
+    existing = _find_existing_external_opportunity(
+        organization_id,
+        source=normalized["source"],
+        external_id=normalized["external_id"],
+    )
+    if existing is not None:
+        return update_opportunity(
+            existing.id,
+            organization_id,
+            funder_name=normalized["funder_name"],
+            program_name=normalized["program_name"],
+            title=normalized["title"],
+            deadline=normalized["deadline"],
+            amount_min=normalized["amount_min"],
+            amount_max=normalized["amount_max"],
+            probability=probability,
+            status=status,
+            notes=normalized["notes"],
+        )
+
+    return create_opportunity(
+        organization_id,
+        funder_name=normalized["funder_name"],
+        program_name=normalized["program_name"],
+        title=normalized["title"],
+        deadline=normalized["deadline"],
+        amount_min=normalized["amount_min"],
+        amount_max=normalized["amount_max"],
+        probability=probability,
+        status=status,
+        notes=normalized["notes"],
+    )
+
+
+def _grants_gov_records_from_response(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if not isinstance(payload, dict):
+        return []
+    for key in ("data", "opportunitiesData", "opportunities", "results"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def import_grants_gov_opportunities(
+    organization_id: int,
+    *,
+    keyword: Optional[str] = None,
+    rows: int = 25,
+    status: str = "identified",
+    probability: float = 0.4,
+    endpoint: Optional[str] = None,
+    timeout_seconds: int = 25,
+) -> dict[str, Any]:
+    rows = max(1, min(int(rows), 100))
+    search_url = endpoint or os.environ.get("GRANTS_GOV_SEARCH_URL", _GRANTS_GOV_DEFAULT_SEARCH_URL)
+    headers = {"Accept": "application/json"}
+    api_key = os.environ.get("GRANTS_GOV_API_KEY")
+    if api_key:
+        headers["X-Api-Key"] = api_key
+
+    request_payload = {
+        "keyword": (keyword or "").strip(),
+        "rows": rows,
+        "sortBy": "openDate|desc",
+        "oppStatuses": ["posted", "forecasted"],
+    }
+    response = requests.post(
+        search_url,
+        json=request_payload,
+        headers=headers,
+        timeout=max(5, int(timeout_seconds)),
+    )
+    response.raise_for_status()
+    response_payload = response.json()
+    records = _grants_gov_records_from_response(response_payload)
+
+    imported: list[GrantOpportunity] = []
+    calibration_failures: list[dict[str, Any]] = []
+    for record in records:
+        calibration = calibrate_external_opportunity("grants_gov", record)
+        if not calibration["is_ready"]:
+            calibration_failures.append(
+                {
+                    "external_id": calibration["normalized_preview"].get("external_id"),
+                    "missing_fields": calibration["missing_fields"],
+                    "score": calibration["score"],
+                }
+            )
+            continue
+        imported.append(
+            import_external_opportunity(
+                organization_id,
+                source="grants_gov",
+                payload=record,
+                probability=probability,
+                status=status,
+            )
+        )
+
+    return {
+        "source": "grants_gov",
+        "request": {
+            "keyword": (keyword or "").strip() or None,
+            "rows": rows,
+            "endpoint": search_url,
+        },
+        "fetched": len(records),
+        "imported": len(imported),
+        "calibration_failures": calibration_failures,
+        "opportunity_ids": [int(item.id) for item in imported],
+    }
 
 
 def _compute_probability_weighted_amount(amount_min: Optional[float], amount_max: Optional[float], probability: float) -> float:
