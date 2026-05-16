@@ -8,12 +8,16 @@ from flask import Blueprint, render_template, redirect, url_for, flash, request,
 from flask_login import login_user, logout_user, login_required, current_user
 from wtforms import StringField, PasswordField, BooleanField, SubmitField
 from wtforms.validators import DataRequired, Email, EqualTo, ValidationError, Length
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from flask_wtf import FlaskForm
 from sqlalchemy import select
 from ngo_homesuite.models.core import db, User
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
+
+# Account lockout policy
+_MAX_FAILED_ATTEMPTS = 5
+_LOCKOUT_DURATION_MINUTES = 15
 
 
 def _is_safe_next_path(next_page: str | None) -> bool:
@@ -83,8 +87,27 @@ def login():
         user = db.session.scalars(
             select(User).where(User.username == form.username.data).limit(1)
         ).first()
-        
+
+        if user is not None and user.locked_until is not None:
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            if user.locked_until > now:
+                remaining = int((user.locked_until - now).total_seconds() // 60) + 1
+                flash(
+                    f'Account temporarily locked after too many failed attempts. '
+                    f'Try again in {remaining} minute(s).',
+                    'error',
+                )
+                return redirect(url_for('auth.login'))
+
         if user is None or not user.check_password(form.password.data):
+            if user is not None:
+                user.failed_login_count = (user.failed_login_count or 0) + 1
+                if user.failed_login_count >= _MAX_FAILED_ATTEMPTS:
+                    user.locked_until = (
+                        datetime.now(timezone.utc).replace(tzinfo=None)
+                        + timedelta(minutes=_LOCKOUT_DURATION_MINUTES)
+                    )
+                db.session.commit()
             flash('Invalid username or password.', 'error')
             return redirect(url_for('auth.login'))
         
@@ -92,6 +115,11 @@ def login():
             flash('Your account has been deactivated. Please contact support.', 'error')
             return redirect(url_for('auth.login'))
         
+        # Successful login — clear lockout counters and rotate session.
+        user.failed_login_count = 0
+        user.locked_until = None
+        db.session.commit()
+
         # Rotate/clear session before authentication to reduce fixation risk.
         session.clear()
         login_user(user, remember=form.remember_me.data)

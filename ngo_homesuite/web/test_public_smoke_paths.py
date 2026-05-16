@@ -19,7 +19,12 @@ def client(app):
 def test_public_health_smoke(client):
     rv = client.get("/health")
     assert rv.status_code == 200
-    assert rv.data.decode("utf-8") == "ok"
+    body = rv.get_json()
+    assert body is not None
+    assert body.get("status") in ("ok", "degraded")
+    assert "db" in body
+    assert "migration_version" in body
+    assert "uptime_seconds" in body
 
 
 def test_public_give_page_smoke(client):

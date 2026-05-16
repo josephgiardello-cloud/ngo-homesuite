@@ -51,6 +51,10 @@ class User(UserMixin, db.Model):
     created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
     updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
     last_login = db.Column(db.DateTime, nullable=True)
+
+    # Account lockout after repeated failed logins
+    failed_login_count = db.Column(db.Integer, default=0, nullable=False)
+    locked_until = db.Column(db.DateTime, nullable=True)
     
     def set_password(self, password):
         """Hash and set password."""

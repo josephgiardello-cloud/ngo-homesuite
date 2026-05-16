@@ -2,6 +2,7 @@
 
 import csv
 import json
+import time
 from ngo_homesuite.ai.copilot_tools import CopilotToolRegistry
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -54,10 +55,58 @@ main_bp = Blueprint('main', __name__)
 
 _SUPPORTED_LOCALES = {'en', 'es', 'fr'}
 
+# Track process start time for uptime calculation.
+_PROCESS_START = time.monotonic()
+
 
 @main_bp.route('/health', methods=['GET'])
 def health() -> Response:
-    return Response('ok', status=200, mimetype='text/plain')
+    """Structured health probe: DB reachability, migration version, uptime."""
+    from ngo_homesuite.models.core import db as _db
+
+    # DB reachability
+    db_ok = False
+    db_error: str | None = None
+    try:
+        _db.session.scalar(_db.text("SELECT 1"))
+        db_ok = True
+    except Exception as exc:  # pragma: no cover
+        db_error = str(exc)
+
+    # Latest applied migration version (from schema_version table)
+    migration_version: int | None = None
+    try:
+        if db_ok:
+            raw = _db.session.scalar(_db.text("SELECT MAX(version) FROM schema_version"))
+            migration_version = int(raw) if raw is not None else None
+    except Exception:  # pragma: no cover
+        pass
+
+    # Expected version = highest numbered SQL migration file on disk
+    from pathlib import Path as _Path
+    _migrations_dir = _Path(__file__).parent.parent / "migrations"
+    _sql_files = sorted(_migrations_dir.glob("[0-9]*.sql"))
+    expected_version: int = 0
+    if _sql_files:
+        try:
+            expected_version = int(_sql_files[-1].name.split("_")[0])
+        except ValueError:  # pragma: no cover
+            expected_version = 0
+
+    payload: dict = {
+        "status": "ok" if db_ok else "degraded",
+        "db": "ok" if db_ok else f"error: {db_error}",
+        "migration_version": migration_version,
+        "expected_migration_version": expected_version,
+        "migration_current": migration_version == expected_version,
+        "uptime_seconds": round(time.monotonic() - _PROCESS_START, 1),
+    }
+    status_code = 200 if db_ok else 503
+    return Response(
+        json.dumps(payload),
+        status=status_code,
+        mimetype="application/json",
+    )
 
 
 class DonorForm(FlaskForm):

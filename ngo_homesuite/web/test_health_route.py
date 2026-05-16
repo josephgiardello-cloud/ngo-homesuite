@@ -16,4 +16,8 @@ def client(app):
 def test_health_endpoint_is_public_and_ok(client):
     rv = client.get("/health")
     assert rv.status_code == 200
-    assert rv.get_data(as_text=True) == "ok"
+    body = rv.get_json()
+    assert body is not None
+    assert body.get("status") in ("ok", "degraded")
+    assert "db" in body
+    assert "migration_version" in body
