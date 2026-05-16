@@ -1001,6 +1001,45 @@ def create_approval_request(
     )
 
 
+def list_approval_chain_configs(organization_id: int, *, action_type: Optional[str] = None):
+    return grant_approval_service.list_chain_configs(organization_id, action_type=action_type)
+
+
+def upsert_approval_chain_config(
+    organization_id: int,
+    *,
+    action_type: str,
+    approver_roles: list[str],
+    required_approvals: int,
+    min_amount: Optional[float] = None,
+    max_amount: Optional[float] = None,
+    escalation_role: Optional[str] = None,
+    sla_hours: int = 72,
+    escalation_sla_hours: int = 24,
+    priority: int = 100,
+    is_active: bool = True,
+    config_id: Optional[int] = None,
+):
+    return grant_approval_service.upsert_chain_config(
+        organization_id,
+        action_type=action_type,
+        approver_roles=approver_roles,
+        required_approvals=required_approvals,
+        min_amount=min_amount,
+        max_amount=max_amount,
+        escalation_role=escalation_role,
+        sla_hours=sla_hours,
+        escalation_sla_hours=escalation_sla_hours,
+        priority=priority,
+        is_active=is_active,
+        config_id=config_id,
+    )
+
+
+def disable_approval_chain_config(config_id: int, organization_id: int):
+    return grant_approval_service.disable_chain_config(config_id, organization_id)
+
+
 def decide_approval_request(
     request_id: int,
     organization_id: int,
@@ -1047,6 +1086,14 @@ def escalate_expired_approval_requests(
     now: Optional[datetime] = None,
 ):
     return grant_approval_service.escalate_expired_requests(organization_id, now=now)
+
+
+def process_approval_escalation_sla_queue(
+    *,
+    organization_id: Optional[int] = None,
+    now: Optional[datetime] = None,
+) -> dict:
+    return grant_approval_service.process_escalation_sla_queue(organization_id=organization_id, now=now)
 
 
 def submit_proposal_with_approval(

@@ -724,6 +724,30 @@ class GrantApprovalDecision(db.Model):
         return f'<GrantApprovalDecision request={self.request_id} decision={self.decision}>'
 
 
+class GrantApprovalChainConfig(db.Model):
+    """Per-organization approval chain policy for grant actions."""
+
+    __tablename__ = 'grant_approval_chain_configs'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    action_type = db.Column(db.String(60), nullable=False, index=True)
+    min_amount = db.Column(db.Float, nullable=True)
+    max_amount = db.Column(db.Float, nullable=True)
+    required_approvals = db.Column(db.Integer, nullable=False, default=1)
+    approver_roles_json = db.Column(JSON, nullable=False)
+    escalation_role = db.Column(db.String(40), nullable=True)
+    sla_hours = db.Column(db.Integer, nullable=False, default=72)
+    escalation_sla_hours = db.Column(db.Integer, nullable=False, default=24)
+    priority = db.Column(db.Integer, nullable=False, default=100, index=True)
+    is_active = db.Column(db.Boolean, nullable=False, default=True, index=True)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
+
+    def __repr__(self):
+        return f'<GrantApprovalChainConfig org={self.organization_id} action={self.action_type} priority={self.priority}>'
+
+
 class MembershipTier(db.Model):
     """Configurable membership tier for an organization."""
 
@@ -1517,6 +1541,7 @@ __all__ = [
     'GrantOutcomeRecord',
     'GrantApprovalRequest',
     'GrantApprovalDecision',
+    'GrantApprovalChainConfig',
     'MembershipTier',
     'MembershipRecord',
     'StewardshipJourney',

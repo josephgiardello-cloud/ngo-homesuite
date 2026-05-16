@@ -7,7 +7,12 @@ from typing import Optional
 from sqlalchemy import func, select
 
 from ngo_homesuite.db.utils import audit
-from ngo_homesuite.models.core import GrantApprovalDecision, GrantApprovalRequest, db
+from ngo_homesuite.models.core import (
+    GrantApprovalChainConfig,
+    GrantApprovalDecision,
+    GrantApprovalRequest,
+    db,
+)
 
 
 class GrantApprovalError(ValueError):
@@ -40,6 +45,146 @@ def _normalize_roles(roles: Optional[list[str]]) -> list[str]:
     return normalized
 
 
+def _extract_payload_amount(payload: Optional[dict]) -> Optional[float]:
+    if not isinstance(payload, dict):
+        return None
+    candidate = payload.get("amount")
+    if candidate is None:
+        return None
+    try:
+        return float(candidate)
+    except (TypeError, ValueError):
+        return None
+
+
+def list_chain_configs(organization_id: int, *, action_type: Optional[str] = None) -> list[GrantApprovalChainConfig]:
+    stmt = select(GrantApprovalChainConfig).where(
+        GrantApprovalChainConfig.organization_id == organization_id,
+    )
+    if action_type:
+        stmt = stmt.where(GrantApprovalChainConfig.action_type == action_type)
+    stmt = stmt.order_by(GrantApprovalChainConfig.priority.asc(), GrantApprovalChainConfig.id.asc())
+    return list(db.session.scalars(stmt))
+
+
+def upsert_chain_config(
+    organization_id: int,
+    *,
+    action_type: str,
+    approver_roles: list[str],
+    required_approvals: int,
+    min_amount: Optional[float] = None,
+    max_amount: Optional[float] = None,
+    escalation_role: Optional[str] = None,
+    sla_hours: int = 72,
+    escalation_sla_hours: int = 24,
+    priority: int = 100,
+    is_active: bool = True,
+    config_id: Optional[int] = None,
+) -> GrantApprovalChainConfig:
+    if action_type not in _VALID_APPROVAL_ACTIONS:
+        raise GrantApprovalError(f"invalid approval action '{action_type}'")
+    normalized_roles = _normalize_roles(approver_roles)
+    if not normalized_roles:
+        raise GrantApprovalError("approver_roles must include at least one role")
+    if int(required_approvals) <= 0:
+        raise GrantApprovalError("required_approvals must be positive")
+    if int(sla_hours) <= 0:
+        raise GrantApprovalError("sla_hours must be positive")
+    if int(escalation_sla_hours) <= 0:
+        raise GrantApprovalError("escalation_sla_hours must be positive")
+    if min_amount is not None and max_amount is not None and float(min_amount) > float(max_amount):
+        raise GrantApprovalError("min_amount must be less than or equal to max_amount")
+
+    if config_id is None:
+        config = GrantApprovalChainConfig(organization_id=organization_id, action_type=action_type)
+        db.session.add(config)
+        event_action = "grant.approval.chain_config.create"
+    else:
+        config = db.session.scalars(
+            select(GrantApprovalChainConfig).where(
+                GrantApprovalChainConfig.id == config_id,
+                GrantApprovalChainConfig.organization_id == organization_id,
+            ).with_for_update().limit(1)
+        ).first()
+        if config is None:
+            raise GrantApprovalError("approval chain config not found for organization")
+        event_action = "grant.approval.chain_config.update"
+
+    config.action_type = action_type
+    config.min_amount = float(min_amount) if min_amount is not None else None
+    config.max_amount = float(max_amount) if max_amount is not None else None
+    config.required_approvals = int(required_approvals)
+    config.approver_roles_json = normalized_roles
+    config.escalation_role = (escalation_role or "").strip().lower() or None
+    config.sla_hours = int(sla_hours)
+    config.escalation_sla_hours = int(escalation_sla_hours)
+    config.priority = int(priority)
+    config.is_active = bool(is_active)
+    db.session.commit()
+
+    audit(
+        event_action,
+        entity_type="grant_approval_chain_config",
+        entity_id=int(config.id),
+        details={
+            "organization_id": int(organization_id),
+            "action_type": config.action_type,
+            "min_amount": config.min_amount,
+            "max_amount": config.max_amount,
+            "required_approvals": int(config.required_approvals),
+            "approver_roles": config.approver_roles_json,
+            "escalation_role": config.escalation_role,
+            "sla_hours": int(config.sla_hours),
+            "escalation_sla_hours": int(config.escalation_sla_hours),
+            "priority": int(config.priority),
+            "is_active": bool(config.is_active),
+        },
+    )
+    return config
+
+
+def disable_chain_config(config_id: int, organization_id: int) -> GrantApprovalChainConfig:
+    config = db.session.scalars(
+        select(GrantApprovalChainConfig).where(
+            GrantApprovalChainConfig.id == config_id,
+            GrantApprovalChainConfig.organization_id == organization_id,
+        ).with_for_update().limit(1)
+    ).first()
+    if config is None:
+        raise GrantApprovalError("approval chain config not found for organization")
+    config.is_active = False
+    db.session.commit()
+    audit(
+        "grant.approval.chain_config.disable",
+        entity_type="grant_approval_chain_config",
+        entity_id=int(config.id),
+        details={
+            "organization_id": int(organization_id),
+            "action_type": config.action_type,
+            "priority": int(config.priority),
+        },
+    )
+    return config
+
+
+def _resolve_chain_config(organization_id: int, action_type: str, payload: Optional[dict]) -> Optional[GrantApprovalChainConfig]:
+    amount = _extract_payload_amount(payload)
+    configs = list_chain_configs(organization_id, action_type=action_type)
+    for config in configs:
+        if not config.is_active:
+            continue
+        if amount is not None:
+            if config.min_amount is not None and amount < float(config.min_amount):
+                continue
+            if config.max_amount is not None and amount > float(config.max_amount):
+                continue
+        elif config.min_amount is not None or config.max_amount is not None:
+            continue
+        return config
+    return None
+
+
 def _get_approval_request(request_id: int, organization_id: int) -> GrantApprovalRequest:
     approval = db.session.scalars(
         select(GrantApprovalRequest).where(
@@ -53,7 +198,36 @@ def _get_approval_request(request_id: int, organization_id: int) -> GrantApprova
 
 
 def _expire_if_needed(approval: GrantApprovalRequest, now: datetime) -> None:
-    if approval.expires_at and approval.expires_at <= now and approval.status in {"pending", "escalated"}:
+    if not approval.expires_at or approval.expires_at > now:
+        return
+
+    if approval.status == "pending":
+        escalation_role = (approval.escalation_role or "").strip().lower() or "org_admin"
+        escalation_hours = int((approval.payload_json or {}).get("escalation_sla_hours", 24))
+        approval.status = "escalated"
+        approval.escalated_at = now
+        approval.escalation_role = escalation_role
+        approval.expires_at = now + timedelta(hours=escalation_hours)
+        db.session.commit()
+        audit(
+            "grant.approval.request.escalated",
+            entity_type="grant_approval_request",
+            entity_id=int(approval.id),
+            details={
+                "organization_id": int(approval.organization_id),
+                "action_type": approval.action_type,
+                "resource_type": approval.resource_type,
+                "resource_id": int(approval.resource_id),
+                "required_approvals": int(approval.required_approvals or 1),
+                "escalation_role": approval.escalation_role,
+                "escalated_at": approval.escalated_at.isoformat() if approval.escalated_at else None,
+                "next_expires_at": approval.expires_at.isoformat() if approval.expires_at else None,
+                "status": approval.status,
+            },
+        )
+        return
+
+    if approval.status == "escalated":
         approval.status = "expired"
         db.session.commit()
         audit(
@@ -67,6 +241,7 @@ def _expire_if_needed(approval: GrantApprovalRequest, now: datetime) -> None:
                 "resource_id": int(approval.resource_id),
                 "expires_at": approval.expires_at.isoformat() if approval.expires_at else None,
                 "required_approvals": int(approval.required_approvals or 1),
+                "status": approval.status,
             },
         )
 
@@ -87,6 +262,55 @@ def _resolve_allowed_roles(action_type: str, approver_roles: Optional[list[str]]
             raise GrantApprovalError("approver_roles must include at least one role")
         return normalized
     return default_roles
+
+
+def _resolve_request_policy(
+    organization_id: int,
+    action_type: str,
+    payload: Optional[dict],
+    *,
+    required_approvals: Optional[int],
+    approver_roles: Optional[list[str]],
+    escalation_role: Optional[str],
+    expires_at: Optional[datetime],
+    expires_in_hours: Optional[int],
+) -> tuple[int, list[str], Optional[str], Optional[datetime], dict]:
+    config = _resolve_chain_config(organization_id, action_type, payload)
+    metadata: dict = {}
+    if config is not None:
+        metadata["chain_config_id"] = int(config.id)
+        metadata["escalation_sla_hours"] = int(config.escalation_sla_hours)
+
+    resolved_required_approvals = _resolve_required_approvals(
+        action_type,
+        required_approvals if required_approvals is not None else (int(config.required_approvals) if config else None),
+    )
+    resolved_approver_roles = _resolve_allowed_roles(
+        action_type,
+        approver_roles if approver_roles else (list(config.approver_roles_json or []) if config else None),
+    )
+
+    resolved_escalation_role = (escalation_role or "").strip().lower() or None
+    if resolved_escalation_role is None and config and config.escalation_role:
+        resolved_escalation_role = str(config.escalation_role).strip().lower() or None
+
+    now = _utcnow_naive()
+    resolved_expires_at = expires_at
+    if resolved_expires_at is None and expires_in_hours is not None:
+        resolved_expires_at = now + timedelta(hours=int(expires_in_hours))
+    if resolved_expires_at is None and config:
+        resolved_expires_at = now + timedelta(hours=int(config.sla_hours))
+
+    if resolved_expires_at is not None and resolved_expires_at <= now:
+        raise GrantApprovalError("expires_at must be in the future")
+
+    return (
+        resolved_required_approvals,
+        resolved_approver_roles,
+        resolved_escalation_role,
+        resolved_expires_at,
+        metadata,
+    )
 
 
 def create_approval_request(
@@ -111,15 +335,25 @@ def create_approval_request(
     if int(resource_id) <= 0:
         raise GrantApprovalError("resource_id must be positive")
 
-    now = _utcnow_naive()
-    effective_expires_at = expires_at
-    if effective_expires_at is None and expires_in_hours is not None:
-        effective_expires_at = now + timedelta(hours=int(expires_in_hours))
-    if effective_expires_at is not None and effective_expires_at <= now:
-        raise GrantApprovalError("expires_at must be in the future")
+    (
+        resolved_required_approvals,
+        resolved_approver_roles,
+        resolved_escalation_role,
+        effective_expires_at,
+        policy_metadata,
+    ) = _resolve_request_policy(
+        organization_id,
+        action_type,
+        payload,
+        required_approvals=required_approvals,
+        approver_roles=approver_roles,
+        escalation_role=escalation_role,
+        expires_at=expires_at,
+        expires_in_hours=expires_in_hours,
+    )
 
-    resolved_required_approvals = _resolve_required_approvals(action_type, required_approvals)
-    resolved_approver_roles = _resolve_allowed_roles(action_type, approver_roles)
+    effective_payload = dict(payload or {})
+    effective_payload.update(policy_metadata)
 
     approval = GrantApprovalRequest(
         organization_id=organization_id,
@@ -132,8 +366,8 @@ def create_approval_request(
         required_approvals=resolved_required_approvals,
         approver_roles_json=resolved_approver_roles,
         expires_at=effective_expires_at,
-        escalation_role=(escalation_role or "").strip().lower() or None,
-        payload_json=payload or None,
+        escalation_role=resolved_escalation_role,
+        payload_json=effective_payload or None,
     )
     db.session.add(approval)
     db.session.commit()
@@ -156,6 +390,7 @@ def create_approval_request(
                 "expires_at": approval.expires_at.isoformat() if approval.expires_at else None,
                 "escalation_role": approval.escalation_role,
                 "payload": approval.payload_json,
+                "chain_config_id": (approval.payload_json or {}).get("chain_config_id"),
             },
         },
     )
@@ -187,6 +422,8 @@ def decide_approval_request(
 
     normalized_role = (decided_by_role or "").strip().lower()
     allowed_roles = _normalize_roles(list(approval.approver_roles_json or []))
+    if approval.status == "escalated" and approval.escalation_role:
+        allowed_roles = _normalize_roles(allowed_roles + [approval.escalation_role])
     if normalized_role not in allowed_roles:
         raise GrantApprovalError("approver role not allowed for this approval request")
 
@@ -329,11 +566,11 @@ def escalate_expired_requests(
     now: Optional[datetime] = None,
 ) -> list[GrantApprovalRequest]:
     effective_now = now or _utcnow_naive()
-    candidates = list(
+    candidate_ids = list(
         db.session.scalars(
-            select(GrantApprovalRequest).where(
+            select(GrantApprovalRequest.id).where(
                 GrantApprovalRequest.organization_id == organization_id,
-                GrantApprovalRequest.status == "pending",
+                GrantApprovalRequest.status.in_(["pending", "escalated"]),
                 GrantApprovalRequest.expires_at.is_not(None),
                 GrantApprovalRequest.expires_at <= effective_now,
             )
@@ -341,44 +578,71 @@ def escalate_expired_requests(
     )
 
     escalated: list[GrantApprovalRequest] = []
-    for approval in candidates:
-        approval.status = "escalated"
-        approval.escalated_at = effective_now
-        if not approval.escalation_role:
-            approval.escalation_role = "org_admin"
-        escalated.append(approval)
-
-    if not escalated:
-        return []
-
-    db.session.commit()
-
-    for approval in escalated:
-        audit(
-            "grant.approval.request.escalated",
-            entity_type="grant_approval_request",
-            entity_id=int(approval.id),
-            details={
-                "organization_id": int(organization_id),
-                "action_type": approval.action_type,
-                "resource_type": approval.resource_type,
-                "resource_id": int(approval.resource_id),
-                "required_approvals": int(approval.required_approvals or 1),
-                "approved_decision_count": int(
-                    db.session.scalar(
-                        select(func.count(GrantApprovalDecision.id)).where(
-                            GrantApprovalDecision.request_id == approval.id,
-                            GrantApprovalDecision.organization_id == organization_id,
-                            GrantApprovalDecision.decision == "approved",
-                        )
-                    )
-                    or 0
-                ),
-                "escalation_role": approval.escalation_role,
-                "expires_at": approval.expires_at.isoformat() if approval.expires_at else None,
-                "escalated_at": approval.escalated_at.isoformat() if approval.escalated_at else None,
-                "status": approval.status,
-            },
-        )
+    for request_id in candidate_ids:
+        approval = _get_approval_request(int(request_id), organization_id)
+        previous = approval.status
+        _expire_if_needed(approval, effective_now)
+        if previous != "escalated" and approval.status == "escalated":
+            escalated.append(approval)
 
     return escalated
+
+
+def process_escalation_sla_queue(
+    *,
+    organization_id: Optional[int] = None,
+    now: Optional[datetime] = None,
+) -> dict:
+    effective_now = now or _utcnow_naive()
+    stmt = select(GrantApprovalRequest.organization_id).where(
+        GrantApprovalRequest.status.in_(["pending", "escalated"]),
+        GrantApprovalRequest.expires_at.is_not(None),
+        GrantApprovalRequest.expires_at <= effective_now,
+    ).distinct()
+    if organization_id is not None:
+        stmt = stmt.where(GrantApprovalRequest.organization_id == organization_id)
+
+    org_ids = [int(value) for value in db.session.scalars(stmt)]
+    escalated_count = 0
+    expired_count = 0
+
+    for org_id in org_ids:
+        candidate_ids = list(
+            db.session.scalars(
+                select(GrantApprovalRequest.id).where(
+                    GrantApprovalRequest.organization_id == org_id,
+                    GrantApprovalRequest.status.in_(["pending", "escalated"]),
+                    GrantApprovalRequest.expires_at.is_not(None),
+                    GrantApprovalRequest.expires_at <= effective_now,
+                )
+            )
+        )
+
+        for request_id in candidate_ids:
+            approval = _get_approval_request(int(request_id), org_id)
+            before = approval.status
+            _expire_if_needed(approval, effective_now)
+            after = approval.status
+            if before != "escalated" and after == "escalated":
+                escalated_count += 1
+            if before != "expired" and after == "expired":
+                expired_count += 1
+
+    audit(
+        "grant.approval.sla_queue.process",
+        entity_type="grant_approval_request",
+        entity_id=0,
+        details={
+            "organization_id": int(organization_id) if organization_id is not None else None,
+            "processed_org_count": len(org_ids),
+            "escalated_count": escalated_count,
+            "expired_count": expired_count,
+            "processed_at": effective_now.isoformat(),
+        },
+    )
+
+    return {
+        "processed_org_count": len(org_ids),
+        "escalated_count": escalated_count,
+        "expired_count": expired_count,
+    }
