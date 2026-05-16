@@ -185,3 +185,48 @@ jobs:
         NGO_HOMESUITE_DB_KEY: ""
       run: |
         pytest ngo_homesuite/web/test_sprint1_features.py ngo_homesuite/db/test_utils_audit.py ngo_homesuite/db/test_connection_hardening.py -v --maxfail=10
+
+  openapi-contract:
+    name: OpenAPI Contract + Client Generation
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: Install OpenAPI tooling
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install openapi-spec-validator openapi-python-client
+
+    - name: Validate OpenAPI document
+      run: |
+        python - <<'PY'
+        from pathlib import Path
+        import yaml
+        from openapi_spec_validator import validate_spec
+
+        spec = yaml.safe_load(Path("docs/openapi.yaml").read_text(encoding="utf-8"))
+        validate_spec(spec)
+        print("OpenAPI validation passed")
+        PY
+
+    - name: Run OpenAPI contract tests
+      run: |
+        pytest ngo_homesuite/api/test_openapi_contract.py ngo_homesuite/web/test_api_docs_routes.py -v --maxfail=10
+
+    - name: Generate Python client from OpenAPI
+      run: |
+        rm -rf .openapi-client
+        openapi-python-client generate --path docs/openapi.yaml --meta none --output-path .openapi-client
+
+    - name: Upload generated client artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: openapi-python-client
+        path: .openapi-client
