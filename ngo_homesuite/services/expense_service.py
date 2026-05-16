@@ -5,7 +5,11 @@ from __future__ import annotations
 from typing import Optional
 from sqlalchemy import select
 
+from ngo_homesuite.grants.facade import GrantsFacade
 from ngo_homesuite.models.core import Expense, db
+
+
+_GRANTS = GrantsFacade()
 
 
 class ExpenseService:
@@ -64,10 +68,8 @@ class ExpenseService:
             if not (expense_category or "").strip():
                 db.session.rollback()
                 raise ValueError("expense_category is required when grant_id is provided")
-            from ngo_homesuite.services import grant_service
-
             try:
-                grant_service.allocate_expense_to_budget_line(
+                _GRANTS.allocate_expense_to_budget_line(
                     grant_id=grant_id,
                     organization_id=org_id,
                     expense_id=int(expense.id),

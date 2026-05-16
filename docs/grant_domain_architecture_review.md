@@ -84,6 +84,17 @@ Model ownership note:
 3. Add concurrency tests for conflicting approve/execute operations.
 4. Add mutation-level docstrings to facade wrappers that identify owning sub-service.
 
+## Commit C Progress (Legacy Service Retirement)
+
+- `ExpenseService` grant allocation path now calls `GrantsFacade` instead of direct `grant_service` import.
+- Canonical grant exceptions now live in `ngo_homesuite/grants/exceptions.py`.
+- `ngo_homesuite/services/grant_service.py` now imports canonical exception classes from grants domain.
+
+Remaining retirement work:
+
+- Reduce `GrantsFacade` lifecycle dependency on `ngo_homesuite/services/grant_service.py` by moving lifecycle implementation into grants domain modules.
+- Migrate grant-focused tests from direct `grant_service` imports to facade-focused imports where monkeypatch behavior permits.
+
 ## Compliance Gap Snapshot
 
 - Stronger now: configurable approval chains, escalation SLA queue processing, richer SoD checks, baseline accounting policies.

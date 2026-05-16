@@ -9,6 +9,9 @@ from typing import List, Optional
 from sqlalchemy import and_, func, or_, select
 
 from ngo_homesuite.db.utils import audit
+from ngo_homesuite.grants.exceptions import GrantAllocationError
+from ngo_homesuite.grants.exceptions import GrantNotFound
+from ngo_homesuite.grants.exceptions import InvalidGrantTransition
 from ngo_homesuite.models.core import (
     Expense,
     Grant,
@@ -31,26 +34,6 @@ if os.getenv("NGOHS_WARN_DIRECT_GRANT_SERVICE_IMPORTS", "0") == "1":
         DeprecationWarning,
         stacklevel=2,
     )
-
-
-# ---------------------------------------------------------------------------
-# Domain exceptions
-# ---------------------------------------------------------------------------
-
-class GrantNotFound(Exception):
-    """Raised when a grant cannot be found for the given org."""
-
-    def __init__(self, grant_id: int):
-        super().__init__(f"Grant {grant_id} not found.")
-        self.grant_id = grant_id
-
-
-class InvalidGrantTransition(ValueError):
-    """Raised when a requested grant status transition is not permitted."""
-
-
-class GrantAllocationError(ValueError):
-    """Raised when grant expense allocation violates budget or tenant constraints."""
 
 
 GrantApprovalError = grant_approval_service.GrantApprovalError
