@@ -38,22 +38,22 @@ class GrantsFacade:
     delete_allocation = staticmethod(_grant_lifecycle.delete_allocation)
 
     # Pre-award façade methods
-    create_opportunity = staticmethod(_grant_lifecycle.create_opportunity)
-    update_opportunity = staticmethod(_grant_lifecycle.update_opportunity)
-    list_opportunities = staticmethod(_grant_lifecycle.list_opportunities)
-    create_proposal = staticmethod(_grant_lifecycle.create_proposal)
-    submit_proposal = staticmethod(_grant_lifecycle.submit_proposal)
-    set_proposal_outcome = staticmethod(_grant_lifecycle.set_proposal_outcome)
+    create_opportunity = staticmethod(PreawardService.create_opportunity)
+    update_opportunity = staticmethod(PreawardService.update_opportunity)
+    list_opportunities = staticmethod(PreawardService.list_opportunities)
+    create_proposal = staticmethod(PreawardService.create_proposal)
+    submit_proposal = staticmethod(PreawardService.submit_proposal)
+    set_proposal_outcome = staticmethod(PreawardService.set_proposal_outcome)
     convert_opportunity_to_grant = staticmethod(_grant_lifecycle.convert_opportunity_to_grant)
-    opportunity_forecast_summary = staticmethod(_grant_lifecycle.opportunity_forecast_summary)
+    opportunity_forecast_summary = staticmethod(PreawardService.opportunity_forecast_summary)
 
     # Approval façade methods
-    create_approval_request = staticmethod(_grant_lifecycle.create_approval_request)
-    decide_approval_request = staticmethod(_grant_lifecycle.decide_approval_request)
-    list_approval_chain_configs = staticmethod(_grant_lifecycle.list_approval_chain_configs)
-    upsert_approval_chain_config = staticmethod(_grant_lifecycle.upsert_approval_chain_config)
-    disable_approval_chain_config = staticmethod(_grant_lifecycle.disable_approval_chain_config)
-    process_approval_escalation_sla_queue = staticmethod(_grant_lifecycle.process_approval_escalation_sla_queue)
+    create_approval_request = staticmethod(ApprovalService.create_approval_request)
+    decide_approval_request = staticmethod(ApprovalService.decide_approval_request)
+    list_approval_chain_configs = staticmethod(ApprovalService.list_chain_configs)
+    upsert_approval_chain_config = staticmethod(ApprovalService.upsert_chain_config)
+    disable_approval_chain_config = staticmethod(ApprovalService.disable_chain_config)
+    process_approval_escalation_sla_queue = staticmethod(ApprovalService.process_escalation_sla_queue)
     escalate_expired_approval_requests = staticmethod(_grant_lifecycle.escalate_expired_approval_requests)
 
     # Approval-gated orchestrations
