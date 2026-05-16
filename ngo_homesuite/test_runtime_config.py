@@ -12,7 +12,10 @@ def _clear_runtime_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "FLASK_ENV",
         "SECRET_KEY",
         "FLASK_SECRET_KEY",
+        "SECRET_KEY_FILE",
+        "FLASK_SECRET_KEY_FILE",
         "DATABASE_URL",
+        "DATABASE_URL_FILE",
         "NGO_HOMESUITE_DB_PATH",
         "NGO_HOMESUITE_BACKUP_DIR",
         "LOG_LEVEL",
@@ -101,7 +104,7 @@ def test_load_runtime_settings_production_requires_explicit_secret(monkeypatch: 
     monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
     monkeypatch.setattr(config, "_get_or_create_secret_key", lambda: "generated-secret")
 
-    with pytest.raises(RuntimeError, match="SECRET_KEY or FLASK_SECRET_KEY"):
+    with pytest.raises(RuntimeError, match="SECRET_KEY/FLASK_SECRET_KEY"):
         config.load_runtime_settings()
 
 
@@ -220,3 +223,55 @@ def test_load_runtime_settings_reads_mailchimp_env_values(monkeypatch: pytest.Mo
     settings = config.load_runtime_settings()
     assert settings.mailchimp_api_key == "key-us3"
     assert settings.mailchimp_list_id == "list_abc123"
+
+
+def test_load_runtime_settings_reads_secret_and_database_url_from_files(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _clear_runtime_env(monkeypatch)
+
+    secret_file = tmp_path / "secret.txt"
+    db_url_file = tmp_path / "database_url.txt"
+    secret_file.write_text("file-secret\n", encoding="utf-8")
+    db_url_file.write_text("postgresql://user:pass@localhost:5432/ngo\n", encoding="utf-8")
+
+    monkeypatch.setenv("SECRET_KEY_FILE", str(secret_file))
+    monkeypatch.setenv("DATABASE_URL_FILE", str(db_url_file))
+    monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
+
+    settings = config.load_runtime_settings()
+    assert settings.secret_key == "file-secret"
+    assert settings.database_url == "postgresql://user:pass@localhost:5432/ngo"
+    assert settings.database_backend == "postgresql"
+
+
+def test_load_runtime_settings_rejects_missing_database_url_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_runtime_env(monkeypatch)
+
+    monkeypatch.setenv("SECRET_KEY", "file-config-secret")
+    monkeypatch.setenv("DATABASE_URL_FILE", "does-not-exist.txt")
+    monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
+
+    with pytest.raises(RuntimeError, match="DATABASE_URL_FILE file does not exist"):
+        config.load_runtime_settings()
+
+
+def test_load_runtime_settings_production_allows_file_based_secrets(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _clear_runtime_env(monkeypatch)
+
+    secret_file = tmp_path / "prod-secret.txt"
+    db_url_file = tmp_path / "prod-database-url.txt"
+    secret_file.write_text("prod-file-secret\n", encoding="utf-8")
+    db_url_file.write_text("sqlite:///prod.db\n", encoding="utf-8")
+
+    monkeypatch.setenv("FLASK_ENV", "production")
+    monkeypatch.setenv("SECRET_KEY_FILE", str(secret_file))
+    monkeypatch.setenv("DATABASE_URL_FILE", str(db_url_file))
+    monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
+
+    settings = config.load_runtime_settings()
+    assert settings.flask_env == "production"
+    assert settings.secret_key == "prod-file-secret"
+    assert settings.database_url == "sqlite:///prod.db"

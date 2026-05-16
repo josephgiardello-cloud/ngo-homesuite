@@ -294,6 +294,7 @@ def create_smart_group():
 
 @v2_bp.route("/smart-groups/<int:group_id>/evaluate", methods=["POST"])
 @login_required
+@roles_required("admin", "staff")
 def evaluate_smart_group(group_id: int):
     from ngo_homesuite.services.smart_groups_service import evaluate_group
     members = evaluate_group(group_id, _org_id())

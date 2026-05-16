@@ -257,10 +257,30 @@ def _nested(data: dict[str, Any], *keys: str) -> Any:
     return current
 
 
+def _read_secret_file(path_value: str | None, *, label: str) -> str | None:
+    if not path_value:
+        return None
+    path = Path(path_value).expanduser().resolve(strict=False)
+    if not path.exists():
+        raise RuntimeError(f"Invalid runtime configuration: {label} file does not exist: {path}")
+    value = path.read_text(encoding="utf-8").strip()
+    if not value:
+        raise RuntimeError(f"Invalid runtime configuration: {label} file is empty: {path}")
+    return value
+
+
 def _get_or_create_secret_key() -> str:
     env_secret = os.environ.get("SECRET_KEY") or os.environ.get("FLASK_SECRET_KEY")
     if env_secret:
         return env_secret
+
+    file_secret = _read_secret_file(os.environ.get("SECRET_KEY_FILE"), label="SECRET_KEY_FILE")
+    if file_secret:
+        return file_secret
+
+    file_secret = _read_secret_file(os.environ.get("FLASK_SECRET_KEY_FILE"), label="FLASK_SECRET_KEY_FILE")
+    if file_secret:
+        return file_secret
 
     secret_file = Path(os.environ.get("NGO_HOMESUITE_SECRET_FILE", "data/.secret_key")).resolve()
     if secret_file.exists():
@@ -295,6 +315,9 @@ def load_runtime_settings() -> RuntimeSettings:
     )
 
     database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        database_url = _read_secret_file(os.environ.get("DATABASE_URL_FILE"), label="DATABASE_URL_FILE")
+
     if not database_url:
         if db_path == ":memory:" or str(db_path).startswith("sqlite:///"):
             database_url = str(db_path)
@@ -389,13 +412,18 @@ def load_runtime_settings() -> RuntimeSettings:
         raise RuntimeError(f"Invalid runtime configuration: {exc}") from exc
 
     if settings.flask_env == "production":
-        if not (os.environ.get("SECRET_KEY") or os.environ.get("FLASK_SECRET_KEY")):
+        if not (
+            os.environ.get("SECRET_KEY")
+            or os.environ.get("FLASK_SECRET_KEY")
+            or os.environ.get("SECRET_KEY_FILE")
+            or os.environ.get("FLASK_SECRET_KEY_FILE")
+        ):
             raise RuntimeError(
-                "Invalid runtime configuration: production requires SECRET_KEY or FLASK_SECRET_KEY to be explicitly set"
+                "Invalid runtime configuration: production requires SECRET_KEY/FLASK_SECRET_KEY or SECRET_KEY_FILE/FLASK_SECRET_KEY_FILE"
             )
-        if not os.environ.get("DATABASE_URL"):
+        if not (os.environ.get("DATABASE_URL") or os.environ.get("DATABASE_URL_FILE")):
             raise RuntimeError(
-                "Invalid runtime configuration: production requires DATABASE_URL to be explicitly set"
+                "Invalid runtime configuration: production requires DATABASE_URL or DATABASE_URL_FILE to be explicitly set"
             )
 
     return settings

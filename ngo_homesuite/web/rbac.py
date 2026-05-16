@@ -19,6 +19,7 @@ def roles_required(*roles):
                 abort(403)
             return view_func(*args, **kwargs)
 
+        wrapped.required_roles = tuple(sorted(allowed))
         return wrapped
 
     return decorator

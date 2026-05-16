@@ -20,13 +20,13 @@ Maturity scale:
 | Events management | Partial | Foundational | Data model and route scaffolding exist, full lifecycle UX still limited. |
 | Campaign management | Partial | Foundational | Campaign entities and relationships present; full end-to-end UI not complete. |
 | Grants workflows | Available | Foundational | API and workflow paths exist; real-world process depth still expanding. |
-| Memberships | Partial | Foundational | Core entities and routes exist, broader admin UX pending. |
-| Volunteers | Partial | Foundational | Basic model and references; richer workflow/testing needed. |
-| Reporting exports/charts | Available | Foundational | Useful baseline; advanced analytics and scheduled reports still roadmap items. |
+| Memberships | Partial | Operational | Role-gated membership management routes validated by route-policy and RBAC audits; admin UX polish remains. |
+| Volunteers | Partial | Operational | Role-gated volunteer accounting/workflow routes with explicit route-contract and RBAC audit coverage. |
+| Reporting exports/charts | Available | Operational | Export endpoints and chart/report paths are role-gated and now covered by route-policy and RBAC audit tests. |
 | OpenAPI docs | Available | Foundational | Starter spec and docs routes exist; endpoint coverage still expanding. |
 | AI Copilot + governance | Available | Operational | Approval-gated actions, role-aware tooling, baseline hardening in place. |
-| Multi-tenant hardening | In progress | Foundational | Key areas covered (including P2P), full query-audit pass still in progress. |
-| Production observability | Partial | Foundational | Health and metrics endpoints exist; centralized logging/monitoring stack is not fully integrated. |
+| Multi-tenant hardening | In progress | Operational | API v2 cross-tenant mutation denials plus route-level RBAC audit now enforce most high-risk mutators. |
+| Production observability | Partial | Operational | Structured request logs, Prometheus/Loki/Promtail stack artifacts, and CI validation checks are in place. |
 
 ## Notes for Maintainers
 
