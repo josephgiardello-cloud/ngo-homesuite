@@ -916,7 +916,33 @@ def send_external_anchor_email(table_name, table_hash, schema_version, created_a
         pass
 
 # --- Defensive: Only allow safe identifier usage ---
-ALLOWED_TABLES = set(["your_table1", "your_table2"])  # TODO: Populate with actual allowed table names
+DEFAULT_ALLOWED_TABLES = {
+    "audit_log",
+    "donors",
+    "donations",
+    "donation_allocations",
+    "funds",
+    "projects",
+    "expenses",
+    "staff",
+    "volunteers",
+    "beneficiaries",
+    "organizations",
+    "users",
+    "workflow_events_v2",
+    "workflow_instances_v2",
+    "workflow_definitions_v2",
+    "schema_version",
+    "baseline_log",
+}
+
+
+def get_allowed_tables() -> set[str]:
+    override = os.environ.get("INTEGRITY_ALLOWED_TABLES")
+    if not override:
+        return set(DEFAULT_ALLOWED_TABLES)
+    items = {item.strip() for item in str(override).split(",") if item.strip()}
+    return items or set(DEFAULT_ALLOWED_TABLES)
 
 # --- Utility: get_table_schema_version ---
 def get_table_schema_version(conn, table_name):
@@ -990,7 +1016,7 @@ def compute_table_hash(conn, table_name, salt=None, schema_version=None, chunk_s
     - Uses BEGIN IMMEDIATE to prevent concurrent writes during hashing. This will block other writers until the transaction is committed or rolled back, and may block for a long time if there are long-running write transactions.
     NOTE: If no PK, row order may not be stable across DBs/exports. For best results, ensure PK exists. For very large datasets, consider streaming/iterator approach instead of fetchall().
     """
-    if table_name not in ALLOWED_TABLES:
+    if table_name not in get_allowed_tables():
         raise ValueError(f"Unauthorized table: {table_name}")
     cur = conn.cursor()
     # BEGIN IMMEDIATE to prevent concurrent writes during hashing
