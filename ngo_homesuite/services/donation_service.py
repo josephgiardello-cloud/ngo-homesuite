@@ -11,13 +11,14 @@ Status lifecycle:
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
-from ngo_homesuite.models.core import Donation, DonationReceipt, Donor, db
+from ngo_homesuite.models.core import Donation, DonationReceipt, Donor, RecurringDonationPlan, db
 
 
 _VALID_TRANSITIONS: dict[str, set[str]] = {
@@ -51,7 +52,8 @@ class DonationService:
 
     def get_donation(self, donation_id: int, org_id: int) -> Donation:
         """Fetch a single donation; raises DonationNotFound if missing or wrong org."""
-        donation = Donation.query.filter_by(id=donation_id, organization_id=org_id).first()
+        stmt = select(Donation).where(Donation.id == donation_id, Donation.organization_id == org_id).limit(1)
+        donation = db.session.scalars(stmt).first()
         if donation is None:
             raise DonationNotFound(f"Donation {donation_id} not found for org {org_id}")
         return donation
@@ -72,19 +74,18 @@ class DonationService:
         Returns:
             {"items": [...], "total": int, "page": int, "per_page": int, "pages": int}
         """
-        query = Donation.query.filter_by(organization_id=org_id)
+        stmt = select(Donation).where(Donation.organization_id == org_id)
         if donor_id is not None:
-            query = query.filter_by(donor_id=donor_id)
+            stmt = stmt.where(Donation.donor_id == donor_id)
         if project_id is not None:
-            query = query.filter_by(project_id=project_id)
+            stmt = stmt.where(Donation.project_id == project_id)
         if fund_id is not None:
-            query = query.filter_by(fund_id=fund_id)
+            stmt = stmt.where(Donation.fund_id == fund_id)
         if status is not None:
-            query = query.filter_by(status=status)
+            stmt = stmt.where(Donation.status == status)
 
-        pagination = query.order_by(Donation.donation_date.desc()).paginate(
-            page=page, per_page=per_page, error_out=False
-        )
+        stmt = stmt.order_by(Donation.donation_date.desc())
+        pagination = db.paginate(stmt, page=page, per_page=per_page, error_out=False)
         return {
             "items": pagination.items,
             "total": pagination.total,
@@ -92,6 +93,174 @@ class DonationService:
             "per_page": pagination.per_page,
             "pages": pagination.pages,
         }
+
+    def list_filtered_donations(
+        self,
+        org_id: int,
+        *,
+        search: Optional[str] = None,
+        payment_method: Optional[str] = None,
+        status: Optional[str] = None,
+        min_amount: Optional[float] = None,
+        max_amount: Optional[float] = None,
+    ) -> list[Donation]:
+        stmt = select(Donation).where(Donation.organization_id == org_id)
+        if search:
+            like_term = f"%{search.strip()}%"
+            stmt = stmt.where(
+                (Donation.donor_name.ilike(like_term))
+                | (Donation.donor_email.ilike(like_term))
+                | (Donation.reference_number.ilike(like_term))
+                | (Donation.purpose.ilike(like_term))
+            )
+        if payment_method:
+            stmt = stmt.where(Donation.payment_method == payment_method)
+        if status:
+            stmt = stmt.where(Donation.status == status)
+        if min_amount is not None:
+            stmt = stmt.where(Donation.amount >= min_amount)
+        if max_amount is not None:
+            stmt = stmt.where(Donation.amount <= max_amount)
+        stmt = stmt.order_by(Donation.donation_date.desc())
+        return list(db.session.scalars(stmt))
+
+    def list_recurring_plans(self, org_id: int) -> list[RecurringDonationPlan]:
+        stmt = (
+            select(RecurringDonationPlan)
+            .where(RecurringDonationPlan.organization_id == org_id)
+            .order_by(RecurringDonationPlan.created_at.desc())
+        )
+        return list(db.session.scalars(stmt))
+
+    def create_recurring_plan(
+        self,
+        org_id: int,
+        donor_id: int,
+        *,
+        amount: float,
+        currency: str,
+        payment_method: str,
+        purpose: Optional[str],
+        frequency: str,
+        next_charge_date: date,
+        status: str = "active",
+    ) -> RecurringDonationPlan:
+        donor = db.session.scalars(
+            select(Donor).where(Donor.id == donor_id, Donor.organization_id == org_id).limit(1)
+        ).first()
+        if donor is None:
+            raise ValueError(f"Donor {donor_id} not found in org {org_id}")
+        if amount <= 0:
+            raise ValueError("Recurring amount must be positive")
+
+        plan = RecurringDonationPlan(
+            organization_id=org_id,
+            donor_id=donor.id,
+            amount=float(amount),
+            currency=(currency or "USD").upper(),
+            payment_method=payment_method,
+            purpose=purpose,
+            frequency=frequency,
+            next_charge_date=next_charge_date,
+            status=status,
+        )
+        db.session.add(plan)
+        try:
+            db.session.commit()
+        except StaleDataError as exc:
+            db.session.rollback()
+            raise RuntimeError(
+                f"Concurrent update detected while creating recurring plan for donor {donor_id}; please retry."
+            ) from exc
+        return plan
+
+    def process_due_recurring_plans(
+        self,
+        org_id: int,
+        *,
+        run_date: Optional[date] = None,
+    ) -> dict[str, int]:
+        today = run_date or date.today()
+        stmt = (
+            select(RecurringDonationPlan)
+            .where(
+                RecurringDonationPlan.organization_id == org_id,
+                RecurringDonationPlan.status == "active",
+                RecurringDonationPlan.next_charge_date <= today,
+            )
+            .order_by(RecurringDonationPlan.id.asc())
+        )
+        plans = list(db.session.scalars(stmt))
+
+        processed = 0
+        failed = 0
+
+        for plan in plans:
+            donor = db.session.scalars(
+                select(Donor).where(Donor.id == plan.donor_id, Donor.organization_id == org_id).limit(1)
+            ).first()
+            if donor is None or (plan.payment_method in ("credit_card", "bank_transfer") and not donor.email):
+                plan.status = "failed"
+                plan.fail_count = int(plan.fail_count or 0) + 1
+                plan.last_error = "Missing donor contact info for payment retry workflow."
+                plan.updated_at = _utcnow()
+                failed += 1
+                continue
+
+            donation = Donation(
+                organization_id=org_id,
+                donor_id=donor.id,
+                donor_name=donor.name,
+                donor_email=donor.email,
+                donor_phone=donor.phone,
+                amount=plan.amount,
+                currency=plan.currency,
+                payment_method=plan.payment_method,
+                purpose=plan.purpose,
+                status="received",
+                notes=f"Recurring donation charge from plan #{plan.id}",
+            )
+            db.session.add(donation)
+            db.session.flush()
+
+            # Keep recurring charges on the same lifecycle as manual/public donations.
+            donation.status = "processed"
+
+            receipt = db.session.scalars(
+                select(DonationReceipt).where(DonationReceipt.donation_id == donation.id).limit(1)
+            ).first()
+            if receipt is None:
+                receipt_number = f"RCP-{org_id}-{donation.id}-{uuid.uuid4().hex[:8].upper()}"
+                db.session.add(
+                    DonationReceipt(
+                        donation_id=donation.id,
+                        receipt_number=receipt_number,
+                        status="generated",
+                        sent_to_email=donor.email,
+                    )
+                )
+            donation.status = "receipted"
+
+            if plan.frequency == "quarterly":
+                plan.next_charge_date = plan.next_charge_date + timedelta(days=90)
+            elif plan.frequency == "yearly":
+                plan.next_charge_date = plan.next_charge_date + timedelta(days=365)
+            else:
+                plan.next_charge_date = plan.next_charge_date + timedelta(days=30)
+            plan.fail_count = 0
+            plan.last_error = None
+            plan.status = "active"
+            plan.updated_at = _utcnow()
+            processed += 1
+
+        try:
+            db.session.commit()
+        except StaleDataError as exc:
+            db.session.rollback()
+            raise RuntimeError(
+                f"Concurrent update detected while processing recurring plans for org {org_id}; please retry."
+            ) from exc
+        return {"processed": processed, "failed": failed}
 
     # ------------------------------------------------------------------
     # Write
@@ -135,7 +304,9 @@ class DonationService:
 
         # If donor_id supplied, validate it belongs to this org
         if donor_id is not None:
-            donor = Donor.query.filter_by(id=donor_id, organization_id=org_id).first()
+            donor = db.session.scalars(
+                select(Donor).where(Donor.id == donor_id, Donor.organization_id == org_id).limit(1)
+            ).first()
             if donor is None:
                 raise ValueError(f"Donor {donor_id} not found in org {org_id}")
 
@@ -284,7 +455,9 @@ class DonationService:
             )
 
         # Return existing receipt if already generated
-        existing = DonationReceipt.query.filter_by(donation_id=donation_id).first()
+        existing = db.session.scalars(
+            select(DonationReceipt).where(DonationReceipt.donation_id == donation_id).limit(1)
+        ).first()
         if existing:
             return existing
 

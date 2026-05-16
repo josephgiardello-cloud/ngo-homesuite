@@ -10,6 +10,7 @@ from wtforms import StringField, PasswordField, BooleanField, SubmitField
 from wtforms.validators import DataRequired, Email, EqualTo, ValidationError, Length
 from datetime import datetime, timezone
 from flask_wtf import FlaskForm
+from sqlalchemy import select
 from ngo_homesuite.models.core import db, User
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
@@ -44,13 +45,17 @@ class RegistrationForm(FlaskForm):
     
     def validate_username(self, field):
         """Check if username already exists."""
-        user = User.query.filter_by(username=field.data).first()
+        user = db.session.scalars(
+            select(User).where(User.username == field.data).limit(1)
+        ).first()
         if user:
             raise ValidationError('Username already taken. Please choose a different one.')
     
     def validate_email(self, field):
         """Check if email already exists."""
-        user = User.query.filter_by(email=field.data).first()
+        user = db.session.scalars(
+            select(User).where(User.email == field.data).limit(1)
+        ).first()
         if user:
             raise ValidationError('Email already registered. Please use a different one or log in.')
 
@@ -63,7 +68,9 @@ def login():
     
     form = LoginForm()
     if form.validate_on_submit():
-        user = User.query.filter_by(username=form.username.data).first()
+        user = db.session.scalars(
+            select(User).where(User.username == form.username.data).limit(1)
+        ).first()
         
         if user is None or not user.check_password(form.password.data):
             flash('Invalid username or password.', 'error')

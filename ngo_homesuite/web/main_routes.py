@@ -3,12 +3,11 @@
 import csv
 import json
 from ngo_homesuite.ai.copilot_tools import CopilotToolRegistry
-from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional as TypingOptional
 
-from flask import Blueprint, render_template, redirect, url_for, request, flash, send_file, current_app, Response, session
+from flask import Blueprint, render_template, redirect, url_for, request, flash, send_file, current_app, Response, session, abort
 from flask_login import login_required, current_user
 from flask_wtf import FlaskForm
 from wtforms import BooleanField, FloatField, SelectField, StringField, SubmitField, TextAreaField
@@ -17,12 +16,17 @@ from io import BytesIO
 from openpyxl import Workbook
 
 from ngo_homesuite.models.core import (
-    Organization, Beneficiary, Project, Donation, Donor, Fund, Expense, DonationReceipt, P2PPage, RecurringDonationPlan, Volunteer, db
+    Organization, Beneficiary, Project, Donation, Donor, Fund, Expense, DonationReceipt, P2PPage, Volunteer, db
 )
-from ngo_homesuite.services.donation_service import DonationService
+from ngo_homesuite.services.beneficiary_service import create_beneficiary, list_beneficiaries
+from ngo_homesuite.services.donation_service import DonationNotFound, DonationService
 from ngo_homesuite.services.donor_service import DonorService
-from ngo_homesuite.services.fund_service import FundService
+from ngo_homesuite.services.expense_service import ExpenseService
+from ngo_homesuite.services.fund_service import FundNotFound, FundService
+from ngo_homesuite.services.organization_service import get_first_active_organization
+from ngo_homesuite.services.project_service import ProjectNotFound, ProjectService
 from ngo_homesuite.services.reporting_service import ReportingService
+from ngo_homesuite.services.volunteer_service import create_volunteer, list_recent_volunteers
 from ngo_homesuite.domain import (
     BeneficiaryEntity,
     CampaignEntity,
@@ -176,7 +180,7 @@ def _current_org() -> TypingOptional[Organization]:
     """Pick assigned org first, then fallback to first active org for seeded demo users."""
     if current_user.organization:
         return current_user.organization
-    return Organization.query.filter_by(is_active=True).first()
+    return get_first_active_organization()
 
 
 def _build_csv_bytes(headers, rows):
@@ -279,9 +283,13 @@ def _build_domain_registry_for_org(org: Organization | None) -> DomainRegistry:
     if org is None:
         return registry
 
-    donors = Donor.query.filter_by(organization_id=org.id).all()
-    projects = Project.query.filter_by(organization_id=org.id).all()
-    beneficiaries = Beneficiary.query.filter_by(organization_id=org.id).all()
+    donor_svc = DonorService()
+    project_svc = ProjectService()
+    reporting_svc = ReportingService()
+
+    donors = donor_svc.list_all_donors(org.id)
+    projects = project_svc.list_all_projects(org.id)
+    beneficiaries = list_beneficiaries(org.id)
 
     for donor in donors:
         donor_entity = DonorEntity(
@@ -313,15 +321,8 @@ def _build_domain_registry_for_org(org: Organization | None) -> DomainRegistry:
         beneficiary_entity.transition(beneficiary_entity.lifecycle_state, actor='system', reason='beneficiary_ingested')
         registry.upsert(beneficiary_entity)
 
-    purpose_sums = (
-        db.session.query(Donation.purpose, func.coalesce(func.sum(Donation.amount), 0.0))
-        .filter(Donation.organization_id == org.id)
-        .group_by(Donation.purpose)
-        .all()
-    )
+    purpose_sums = reporting_svc.donation_purpose_totals(org.id)
     for idx, (purpose, total) in enumerate(purpose_sums, start=1):
-        if not purpose:
-            continue
         campaign = CampaignEntity(
             entity_id=f"campaign:{idx}",
             name=str(purpose),
@@ -332,13 +333,7 @@ def _build_domain_registry_for_org(org: Organization | None) -> DomainRegistry:
         campaign.transition(LifecycleState.active, actor='system', reason='derived_from_donation_purpose')
         registry.upsert(campaign)
 
-    foundation_totals = (
-        db.session.query(Donor.name, func.coalesce(func.sum(Donation.amount), 0.0))
-        .join(Donation, Donation.donor_id == Donor.id)
-        .filter(Donor.organization_id == org.id, Donor.donor_type == 'foundation')
-        .group_by(Donor.name)
-        .all()
-    )
+    foundation_totals = reporting_svc.foundation_donor_totals(org.id)
     for idx, (foundation_name, approved) in enumerate(foundation_totals, start=1):
         grant = GrantEntity(
             entity_id=f"grant:{idx}",
@@ -351,8 +346,9 @@ def _build_domain_registry_for_org(org: Organization | None) -> DomainRegistry:
         grant.transition(LifecycleState.active, actor='system', reason='derived_from_foundation_donations')
         registry.upsert(grant)
 
+    project_donation_counts = reporting_svc.project_donation_counts(org.id)
     for project in projects:
-        related_donations = Donation.query.filter_by(organization_id=org.id, project_id=project.id).count()
+        related_donations = project_donation_counts.get(project.id, 0)
         outcome = OutcomeEntity(
             entity_id=f"outcome:program:{project.id}",
             name=f"{project.name} Donor Reach",
@@ -630,7 +626,7 @@ def set_locale(lang: str):
 @main_bp.route('/give', methods=['GET', 'POST'])
 def public_give():
     """Public donation page for self-service online giving."""
-    org = Organization.query.filter_by(is_active=True).order_by(Organization.id.asc()).first()
+    org = get_first_active_organization()
     if not org:
         flash('Donation portal is not available yet. Please contact the organization.', 'error')
         return redirect(url_for('main.index'))
@@ -680,22 +676,17 @@ def public_give():
         if form.make_recurring.data:
             if not donor.email:
                 flash('Recurring donations require an email to process retries and receipts.', 'error')
-                db.session.rollback()
                 return render_template('public_donation_form.html', form=form, active_page='give')
-
-            plan = RecurringDonationPlan(
-                organization_id=org.id,
-                donor_id=donor.id,
+            _donation_svc.create_recurring_plan(
+                org.id,
+                donor.id,
                 amount=form.amount.data,
                 currency=form.currency.data,
                 payment_method=form.payment_method.data,
                 purpose=form.purpose.data or 'General Fund',
                 frequency=form.recurring_frequency.data or 'monthly',
                 next_charge_date=_next_charge_date(date.today(), form.recurring_frequency.data or 'monthly'),
-                status='active',
             )
-            db.session.add(plan)
-            db.session.commit()
 
         # Advance to 'processed' so generate_receipt() is satisfied, then issue.
         _donation_svc.update_status(donation.id, org.id, 'processed', actor_id=None)
@@ -761,18 +752,16 @@ def mobile_intake():
             if not first_name or not last_name:
                 flash('Beneficiary first and last name are required.', 'error')
             else:
-                beneficiary = Beneficiary(
-                    organization_id=org.id,
-                    first_name=first_name,
-                    last_name=last_name,
+                create_beneficiary(
+                    org.id,
+                    first_name,
+                    last_name,
                     phone=(request.form.get('phone') or '').strip() or None,
                     city=(request.form.get('city') or '').strip() or None,
                     program=(request.form.get('program') or '').strip() or None,
                     status=(request.form.get('status') or 'active').strip() or 'active',
                     notes=(request.form.get('notes') or '').strip() or None,
                 )
-                db.session.add(beneficiary)
-                db.session.commit()
                 flash('Beneficiary intake captured.', 'success')
                 return redirect(url_for('main.mobile_intake'))
         elif action == 'volunteer':
@@ -780,33 +769,20 @@ def mobile_intake():
             if not name:
                 flash('Volunteer name is required.', 'error')
             else:
-                volunteer = Volunteer(
-                    organization_id=org.id,
-                    name=name,
+                create_volunteer(
+                    org.id,
+                    name,
                     email=(request.form.get('volunteer_email') or '').strip() or None,
                     phone=(request.form.get('volunteer_phone') or '').strip() or None,
                     status=(request.form.get('volunteer_status') or 'active').strip() or 'active',
-                    hours_logged=0.0,
                 )
-                db.session.add(volunteer)
-                db.session.commit()
                 flash('Volunteer quick registration captured.', 'success')
                 return redirect(url_for('main.mobile_intake'))
         else:
             flash('Unsupported intake action.', 'error')
 
-    recent_beneficiaries = (
-        Beneficiary.query.filter_by(organization_id=org.id)
-        .order_by(Beneficiary.created_at.desc())
-        .limit(8)
-        .all()
-    )
-    recent_volunteers = (
-        Volunteer.query.filter_by(organization_id=org.id)
-        .order_by(Volunteer.created_at.desc())
-        .limit(8)
-        .all()
-    )
+    recent_beneficiaries = list_beneficiaries(org.id)[:8]
+    recent_volunteers = list_recent_volunteers(org.id, limit=8)
 
     ai_context = {
         'active_page': 'mobile_intake',
@@ -835,11 +811,7 @@ def p2p_manage():
         return redirect(url_for('main.dashboard'))
 
     form = P2PPageForm()
-    donors = (
-        Donor.query.filter_by(organization_id=org.id)
-        .order_by(Donor.name.asc())
-        .all()
-    )
+    donors = DonorService().list_all_donors(org.id)
     form.donor_id.choices = [(int(d.id), d.name) for d in donors]
 
     status_filter = (request.args.get('status') or '').strip().lower() or None
@@ -902,18 +874,9 @@ def donors_list():
     query = request.args.get('q', '').strip()
     donor_type = request.args.get('donor_type', '').strip()
 
-    donors_query = Donor.query.filter_by(organization_id=org.id) if org else Donor.query.filter_by(id=-1)
-    if query:
-        like_term = f"%{query}%"
-        donors_query = donors_query.filter(
-            (Donor.name.ilike(like_term)) |
-            (Donor.email.ilike(like_term)) |
-            (Donor.phone.ilike(like_term))
-        )
-    if donor_type:
-        donors_query = donors_query.filter_by(donor_type=donor_type)
-
-    donors = donors_query.order_by(Donor.name.asc()).all()
+    donors = []
+    if org:
+        donors = DonorService().list_all_donors(org.id, donor_type=donor_type or None, search=query or None)
     delete_form = ConfirmDeleteForm()
     ai_context = {
         'active_page': 'donors',
@@ -988,18 +951,7 @@ def donors_export(file_type: str):
 
     query = request.args.get('q', '').strip()
     donor_type = request.args.get('donor_type', '').strip()
-    donors_query = Donor.query.filter_by(organization_id=org.id)
-    if query:
-        like_term = f"%{query}%"
-        donors_query = donors_query.filter(
-            (Donor.name.ilike(like_term)) |
-            (Donor.email.ilike(like_term)) |
-            (Donor.phone.ilike(like_term))
-        )
-    if donor_type:
-        donors_query = donors_query.filter_by(donor_type=donor_type)
-
-    donors = donors_query.order_by(Donor.name.asc()).all()
+    donors = DonorService().list_all_donors(org.id, donor_type=donor_type or None, search=query or None)
     headers = ['ID', 'Name', 'Email', 'Phone', 'Type', 'Created At']
     rows = [
         [d.id, d.name, d.email or '', d.phone or '', d.donor_type, d.created_at.strftime('%Y-%m-%d %H:%M:%S') if d.created_at else '']
@@ -1032,16 +984,14 @@ def donor_create():
 
     form = DonorForm()
     if form.validate_on_submit():
-        donor = Donor(
-            organization_id=org.id,
-            name=form.name.data,
+        DonorService().create_donor(
+            org.id,
+            form.name.data,
             email=form.email.data,
             phone=form.phone.data,
             donor_type=form.donor_type.data,
             notes=form.notes.data,
         )
-        db.session.add(donor)
-        db.session.commit()
         flash('Donor created successfully.', 'success')
         return redirect(url_for('main.donors_list'))
 
@@ -1053,17 +1003,19 @@ def donor_create():
 @roles_required('admin', 'staff')
 def donor_edit(donor_id: int):
     org = _current_org()
-    donor = Donor.query.filter_by(id=donor_id, organization_id=org.id).first_or_404()
+    donor = DonorService().get_donor(donor_id, org.id)
     form = DonorForm(obj=donor)
 
     if form.validate_on_submit():
-        donor.name = form.name.data
-        donor.email = form.email.data
-        donor.phone = form.phone.data
-        donor.donor_type = form.donor_type.data
-        donor.notes = form.notes.data
-        donor.updated_at = datetime.now(timezone.utc)
-        db.session.commit()
+        DonorService().update_donor(
+            donor.id,
+            org.id,
+            name=form.name.data,
+            email=form.email.data,
+            phone=form.phone.data,
+            donor_type=form.donor_type.data,
+            notes=form.notes.data,
+        )
         flash('Donor updated successfully.', 'success')
         return redirect(url_for('main.donors_list'))
 
@@ -1080,14 +1032,11 @@ def donor_delete(donor_id: int):
         return redirect(url_for('main.donors_list'))
 
     org = _current_org()
-    donor = Donor.query.filter_by(id=donor_id, organization_id=org.id).first_or_404()
-    donation_count = Donation.query.filter_by(donor_id=donor.id, organization_id=org.id).count()
-    if donation_count > 0:
+    try:
+        DonorService().delete_donor(donor_id, org.id)
+    except ValueError:
         flash('Cannot delete donor with existing donations. Edit donor instead.', 'error')
         return redirect(url_for('main.donors_list'))
-
-    db.session.delete(donor)
-    db.session.commit()
     flash('Donor deleted successfully.', 'success')
     return redirect(url_for('main.donors_list'))
 
@@ -1102,7 +1051,7 @@ def donor_dedupe():
         flash('No organization is available.', 'error')
         return redirect(url_for('main.donors_list'))
 
-    donors = Donor.query.filter_by(organization_id=org.id).order_by(Donor.created_at.asc(), Donor.id.asc()).all()
+    donors = DonorService().list_all_donors(org.id)
     seen_email = {}
     seen_name_phone = {}
     candidates = []
@@ -1152,24 +1101,11 @@ def donor_merge():
         flash('Invalid merge request.', 'error')
         return redirect(url_for('main.donor_dedupe'))
 
-    primary = Donor.query.filter_by(id=primary_id, organization_id=org.id).first_or_404()
-    duplicate = Donor.query.filter_by(id=duplicate_id, organization_id=org.id).first_or_404()
-
-    Donation.query.filter_by(organization_id=org.id, donor_id=duplicate.id).update(
-        {
-            Donation.donor_id: primary.id,
-            Donation.donor_name: primary.name,
-            Donation.donor_email: primary.email,
-            Donation.donor_phone: primary.phone,
-        },
-        synchronize_session=False,
-    )
-
-    if duplicate.notes and duplicate.notes not in (primary.notes or ''):
-        primary.notes = ((primary.notes or '').strip() + '\n' + f"[Merged from donor #{duplicate.id}] {duplicate.notes}").strip()
-
-    db.session.delete(duplicate)
-    db.session.commit()
+    try:
+        DonorService().merge_donors(org.id, primary_id, duplicate_id)
+    except ValueError:
+        flash('Invalid merge request.', 'error')
+        return redirect(url_for('main.donor_dedupe'))
     flash('Duplicate donor merged successfully.', 'success')
     return redirect(url_for('main.donors_list'))
 
@@ -1183,9 +1119,14 @@ def donation_create():
         flash('No organization is available. Please seed data first.', 'error')
         return redirect(url_for('main.dashboard'))
 
-    donor_options = [(0, 'Select a donor')] + [(d.id, d.name) for d in Donor.query.filter_by(organization_id=org.id).order_by(Donor.name.asc()).all()]
-    project_options = [(0, 'General / None')] + [(p.id, p.name) for p in Project.query.filter_by(organization_id=org.id).order_by(Project.name.asc()).all()]
-    fund_options = [(0, 'General / None')] + [(f.id, f.name) for f in Fund.query.filter_by(organization_id=org.id, is_active=True).order_by(Fund.name.asc()).all()]
+    donor_service = DonorService()
+    donation_service = DonationService()
+    donor_options = [(0, 'Select a donor')] + [(d.id, d.name) for d in donor_service.list_all_donors(org.id)]
+    project_options = [(0, 'General / None')] + [(p.id, p.name) for p in ProjectService().list_all_projects(org.id)]
+    fund_options = [(0, 'General / None')] + [
+        (f.id, f.name)
+        for f in FundService().list_funds(org.id, active_only=True, page=1, per_page=500)['items']
+    ]
 
     form = DonationForm()
     form.donor_id.choices = donor_options
@@ -1193,30 +1134,32 @@ def donation_create():
     form.fund_id.choices = fund_options
 
     if form.validate_on_submit():
-        donor = Donor.query.filter_by(id=form.donor_id.data, organization_id=org.id).first()
+        try:
+            donor = donor_service.get_donor(form.donor_id.data, org.id)
+        except Exception:
+            donor = None
         if donor is None:
             flash('Please select a valid donor.', 'error')
             return render_template('donation_form.html', form=form, active_page='donations')
 
-        donation = Donation(
-            organization_id=org.id,
-            donor_id=donor.id,
+        donation = donation_service.create_donation(
+            org_id=org.id,
             donor_name=donor.name,
-            donor_email=donor.email,
-            donor_phone=donor.phone,
             amount=form.amount.data,
             currency=form.currency.data,
-            payment_method=form.payment_method.data,
-            purpose=form.purpose.data,
-            reference_number=form.reference_number.data or None,
-            notes=form.notes.data,
+            donor_email=donor.email,
+            donor_phone=donor.phone,
+            donor_id=donor.id,
             project_id=form.project_id.data or None,
             fund_id=form.fund_id.data or None,
+            payment_method=form.payment_method.data,
+            reference_number=form.reference_number.data or None,
+            purpose=form.purpose.data,
+            notes=form.notes.data,
+            status='received',
         )
-        db.session.add(donation)
-        db.session.commit()
+        donation_service.update_status(donation.id, org.id, 'processed', actor_id=getattr(current_user, 'id', None))
         _issue_receipt_for_donation(donation, recipient_email=donor.email)
-        db.session.commit()
         flash('Donation recorded successfully and receipt generated.', 'success')
         return redirect(url_for('main.dashboard'))
 
@@ -1233,37 +1176,39 @@ def recurring_donations():
         flash('No organization is available.', 'error')
         return redirect(url_for('main.dashboard'))
 
+    donor_service = DonorService()
+    donation_service = DonationService()
     donor_options = [(0, 'Select a donor')] + [
         (d.id, f"{d.name} ({d.email or 'no email'})")
-        for d in Donor.query.filter_by(organization_id=org.id).order_by(Donor.name.asc()).all()
+        for d in donor_service.list_all_donors(org.id)
     ]
 
     form = RecurringDonationForm()
     form.donor_id.choices = donor_options
 
     if form.validate_on_submit():
-        donor = Donor.query.filter_by(id=form.donor_id.data, organization_id=org.id).first()
+        try:
+            donor = donor_service.get_donor(form.donor_id.data, org.id)
+        except Exception:
+            donor = None
         if donor is None:
             flash('Please select a valid donor.', 'error')
             return render_template('recurring_donations.html', form=form, plans=[], active_page='donations')
 
-        plan = RecurringDonationPlan(
-            organization_id=org.id,
-            donor_id=donor.id,
+        donation_service.create_recurring_plan(
+            org.id,
+            donor.id,
             amount=form.amount.data,
             currency=form.currency.data,
             payment_method=form.payment_method.data,
             purpose=form.purpose.data,
             frequency=form.frequency.data,
             next_charge_date=_next_charge_date(date.today(), form.frequency.data),
-            status='active',
         )
-        db.session.add(plan)
-        db.session.commit()
         flash('Recurring donation plan created.', 'success')
         return redirect(url_for('main.recurring_donations'))
 
-    plans = RecurringDonationPlan.query.filter_by(organization_id=org.id).order_by(RecurringDonationPlan.created_at.desc()).all()
+    plans = donation_service.list_recurring_plans(org.id)
     return render_template('recurring_donations.html', form=form, plans=plans, active_page='donations')
 
 
@@ -1277,50 +1222,9 @@ def process_recurring_donations():
         flash('No organization is available.', 'error')
         return redirect(url_for('main.dashboard'))
 
-    today = date.today()
-    plans = RecurringDonationPlan.query.filter(
-        RecurringDonationPlan.organization_id == org.id,
-        RecurringDonationPlan.status == 'active',
-        RecurringDonationPlan.next_charge_date <= today,
-    ).all()
-
-    processed = 0
-    failed = 0
-    for plan in plans:
-        donor = Donor.query.filter_by(id=plan.donor_id, organization_id=org.id).first()
-        if donor is None or (plan.payment_method in ('credit_card', 'bank_transfer') and not donor.email):
-            plan.status = 'failed'
-            plan.fail_count = int(plan.fail_count or 0) + 1
-            plan.last_error = 'Missing donor contact info for payment retry workflow.'
-            plan.updated_at = datetime.now(timezone.utc)
-            failed += 1
-            continue
-
-        donation = Donation(
-            organization_id=org.id,
-            donor_id=donor.id,
-            donor_name=donor.name,
-            donor_email=donor.email,
-            donor_phone=donor.phone,
-            amount=plan.amount,
-            currency=plan.currency,
-            payment_method=plan.payment_method,
-            purpose=plan.purpose,
-            status='received',
-            notes=f'Recurring donation charge from plan #{plan.id}',
-        )
-        db.session.add(donation)
-        db.session.flush()
-        _issue_receipt_for_donation(donation, recipient_email=donor.email)
-
-        plan.next_charge_date = _next_charge_date(plan.next_charge_date, plan.frequency)
-        plan.fail_count = 0
-        plan.last_error = None
-        plan.status = 'active'
-        plan.updated_at = datetime.now(timezone.utc)
-        processed += 1
-
-    db.session.commit()
+    result = DonationService().process_due_recurring_plans(org.id, run_date=date.today())
+    processed = result.get('processed', 0)
+    failed = result.get('failed', 0)
     flash(f'Recurring processing complete: {processed} processed, {failed} failed.', 'info')
     return redirect(url_for('main.recurring_donations'))
 
@@ -1335,25 +1239,16 @@ def donations_list():
     min_amount = _parse_float(request.args.get('min_amount', ''))
     max_amount = _parse_float(request.args.get('max_amount', ''))
 
-    donations_query = Donation.query.filter_by(organization_id=org.id) if org else Donation.query.filter_by(id=-1)
-    if query:
-        like_term = f"%{query}%"
-        donations_query = donations_query.filter(
-            (Donation.donor_name.ilike(like_term)) |
-            (Donation.donor_email.ilike(like_term)) |
-            (Donation.reference_number.ilike(like_term)) |
-            (Donation.purpose.ilike(like_term))
+    donations = []
+    if org:
+        donations = DonationService().list_filtered_donations(
+            org.id,
+            search=query or None,
+            payment_method=payment_method or None,
+            status=status or None,
+            min_amount=min_amount,
+            max_amount=max_amount,
         )
-    if payment_method:
-        donations_query = donations_query.filter_by(payment_method=payment_method)
-    if status:
-        donations_query = donations_query.filter_by(status=status)
-    if min_amount is not None:
-        donations_query = donations_query.filter(Donation.amount >= min_amount)
-    if max_amount is not None:
-        donations_query = donations_query.filter(Donation.amount <= max_amount)
-
-    donations = donations_query.order_by(Donation.donation_date.desc()).all()
     ai_context = {
         'active_page': 'donations',
         'organization': org.name if org else None,
@@ -1387,25 +1282,14 @@ def donations_export(file_type: str):
     min_amount = _parse_float(request.args.get('min_amount', ''))
     max_amount = _parse_float(request.args.get('max_amount', ''))
 
-    donations_query = Donation.query.filter_by(organization_id=org.id)
-    if query:
-        like_term = f"%{query}%"
-        donations_query = donations_query.filter(
-            (Donation.donor_name.ilike(like_term)) |
-            (Donation.donor_email.ilike(like_term)) |
-            (Donation.reference_number.ilike(like_term)) |
-            (Donation.purpose.ilike(like_term))
-        )
-    if payment_method:
-        donations_query = donations_query.filter_by(payment_method=payment_method)
-    if status:
-        donations_query = donations_query.filter_by(status=status)
-    if min_amount is not None:
-        donations_query = donations_query.filter(Donation.amount >= min_amount)
-    if max_amount is not None:
-        donations_query = donations_query.filter(Donation.amount <= max_amount)
-
-    donations = donations_query.order_by(Donation.donation_date.desc()).all()
+    donations = DonationService().list_filtered_donations(
+        org.id,
+        search=query or None,
+        payment_method=payment_method or None,
+        status=status or None,
+        min_amount=min_amount,
+        max_amount=max_amount,
+    )
     headers = ['ID', 'Date', 'Donor', 'Email', 'Amount', 'Currency', 'Status', 'Payment Method', 'Purpose', 'Reference']
     rows = [
         [
@@ -1455,7 +1339,10 @@ def donations_export(file_type: str):
 @login_required
 def donation_receipt(donation_id: int):
     org = _current_org()
-    donation = Donation.query.filter_by(id=donation_id, organization_id=org.id).first_or_404()
+    try:
+        donation = DonationService().get_donation(donation_id, org.id)
+    except DonationNotFound:
+        abort(404)
     donor = donation.donor
 
     donation_payload = {
@@ -1486,19 +1373,14 @@ def expenses_list():
     min_amount = _parse_float(request.args.get('min_amount', ''))
     max_amount = _parse_float(request.args.get('max_amount', ''))
 
-    expenses_query = Expense.query.filter_by(organization_id=org.id) if org else Expense.query.filter_by(id=-1)
-    if query:
-        like_term = f"%{query}%"
-        expenses_query = expenses_query.filter(
-            (Expense.payee.ilike(like_term)) |
-            (Expense.description.ilike(like_term))
+    expenses = []
+    if org:
+        expenses = ExpenseService().list_filtered_expenses(
+            org.id,
+            search=query or None,
+            min_amount=min_amount,
+            max_amount=max_amount,
         )
-    if min_amount is not None:
-        expenses_query = expenses_query.filter(Expense.amount >= min_amount)
-    if max_amount is not None:
-        expenses_query = expenses_query.filter(Expense.amount <= max_amount)
-
-    expenses = expenses_query.order_by(Expense.paid_at.desc()).all()
     ai_context = {
         'active_page': 'expenses',
         'organization': org.name if org else None,
@@ -1525,16 +1407,19 @@ def expense_create():
         flash('No organization is available. Please seed data first.', 'error')
         return redirect(url_for('main.dashboard'))
 
-    project_options = [(0, 'General / None')] + [(p.id, p.name) for p in Project.query.filter_by(organization_id=org.id).order_by(Project.name.asc()).all()]
-    fund_options = [(0, 'General / None')] + [(f.id, f.name) for f in Fund.query.filter_by(organization_id=org.id, is_active=True).order_by(Fund.name.asc()).all()]
+    project_options = [(0, 'General / None')] + [(p.id, p.name) for p in ProjectService().list_all_projects(org.id)]
+    fund_options = [(0, 'General / None')] + [
+        (f.id, f.name)
+        for f in FundService().list_all_funds(org.id, active_only=True)
+    ]
 
     form = ExpenseForm()
     form.project_id.choices = project_options
     form.fund_id.choices = fund_options
 
     if form.validate_on_submit():
-        expense = Expense(
-            organization_id=org.id,
+        ExpenseService().create_expense(
+            org.id,
             project_id=form.project_id.data or None,
             fund_id=form.fund_id.data or None,
             amount=form.amount.data,
@@ -1542,8 +1427,6 @@ def expense_create():
             payee=form.payee.data,
             description=form.description.data,
         )
-        db.session.add(expense)
-        db.session.commit()
         flash('Expense recorded successfully.', 'success')
         return redirect(url_for('main.expenses_list'))
 
@@ -1562,16 +1445,12 @@ def expenses_export(file_type: str):
     min_amount = _parse_float(request.args.get('min_amount', ''))
     max_amount = _parse_float(request.args.get('max_amount', ''))
 
-    expenses_query = Expense.query.filter_by(organization_id=org.id)
-    if query:
-        like_term = f"%{query}%"
-        expenses_query = expenses_query.filter((Expense.payee.ilike(like_term)) | (Expense.description.ilike(like_term)))
-    if min_amount is not None:
-        expenses_query = expenses_query.filter(Expense.amount >= min_amount)
-    if max_amount is not None:
-        expenses_query = expenses_query.filter(Expense.amount <= max_amount)
-
-    expenses = expenses_query.order_by(Expense.paid_at.desc()).all()
+    expenses = ExpenseService().list_filtered_expenses(
+        org.id,
+        search=query or None,
+        min_amount=min_amount,
+        max_amount=max_amount,
+    )
     headers = ['ID', 'Date', 'Payee', 'Amount', 'Currency', 'Project', 'Fund', 'Description']
     rows = [
         [
@@ -1622,18 +1501,9 @@ def projects_dashboard():
     query = request.args.get('q', '').strip()
     status = request.args.get('status', '').strip()
 
-    projects_query = Project.query.filter_by(organization_id=org.id) if org else Project.query.filter_by(id=-1)
-    if query:
-        like_term = f"%{query}%"
-        projects_query = projects_query.filter(
-            (Project.name.ilike(like_term)) |
-            (Project.program.ilike(like_term)) |
-            (Project.description.ilike(like_term))
-        )
-    if status:
-        projects_query = projects_query.filter_by(status=status)
-
-    projects = projects_query.order_by(Project.name.asc()).all()
+    projects = []
+    if org:
+        projects = ProjectService().list_all_projects(org.id, search=query or None, status=status or None)
     ai_context = {
         'active_page': 'projects',
         'organization': org.name if org else None,
@@ -1659,18 +1529,7 @@ def projects_export(file_type: str):
 
     query = request.args.get('q', '').strip()
     status = request.args.get('status', '').strip()
-    projects_query = Project.query.filter_by(organization_id=org.id)
-    if query:
-        like_term = f"%{query}%"
-        projects_query = projects_query.filter(
-            (Project.name.ilike(like_term)) |
-            (Project.program.ilike(like_term)) |
-            (Project.description.ilike(like_term))
-        )
-    if status:
-        projects_query = projects_query.filter_by(status=status)
-
-    projects = projects_query.order_by(Project.name.asc()).all()
+    projects = ProjectService().list_all_projects(org.id, search=query or None, status=status or None)
     headers = ['ID', 'Name', 'Program', 'Status', 'Currency', 'Budget', 'Spent']
     rows = [[p.id, p.name, p.program or '', p.status, p.currency, p.budget, p.spent] for p in projects]
 
@@ -1700,8 +1559,8 @@ def project_create():
 
     form = ProjectForm()
     if form.validate_on_submit():
-        project = Project(
-            organization_id=org.id,
+        ProjectService().create_project(
+            org.id,
             name=form.name.data,
             description=form.description.data,
             program=form.program.data,
@@ -1710,8 +1569,6 @@ def project_create():
             currency=form.currency.data,
             status=form.status.data,
         )
-        db.session.add(project)
-        db.session.commit()
         flash('Project created successfully.', 'success')
         return redirect(url_for('main.projects_dashboard'))
 
@@ -1723,18 +1580,23 @@ def project_create():
 @roles_required('admin', 'staff')
 def project_edit(project_id: int):
     org = _current_org()
-    project = Project.query.filter_by(id=project_id, organization_id=org.id).first_or_404()
+    try:
+        project = ProjectService().get_project(project_id, org.id)
+    except ProjectNotFound:
+        abort(404)
     form = ProjectForm(obj=project)
     if form.validate_on_submit():
-        project.name = form.name.data
-        project.description = form.description.data
-        project.program = form.program.data
-        project.budget = form.budget.data
-        project.spent = form.spent.data
-        project.currency = form.currency.data
-        project.status = form.status.data
-        project.updated_at = datetime.now(timezone.utc)
-        db.session.commit()
+        ProjectService().update_project(
+            project.id,
+            org.id,
+            name=form.name.data,
+            description=form.description.data,
+            program=form.program.data,
+            budget=form.budget.data,
+            spent=form.spent.data,
+            currency=form.currency.data,
+            status=form.status.data,
+        )
         flash('Project updated successfully.', 'success')
         return redirect(url_for('main.projects_dashboard'))
 
@@ -1748,16 +1610,9 @@ def funds_list():
     query = request.args.get('q', '').strip()
     status = request.args.get('status', '').strip()
 
-    funds_query = Fund.query.filter_by(organization_id=org.id) if org else Fund.query.filter_by(id=-1)
-    if query:
-        like_term = f"%{query}%"
-        funds_query = funds_query.filter((Fund.name.ilike(like_term)) | (Fund.description.ilike(like_term)))
-    if status == 'active':
-        funds_query = funds_query.filter_by(is_active=True)
-    elif status == 'inactive':
-        funds_query = funds_query.filter_by(is_active=False)
-
-    funds = funds_query.order_by(Fund.name.asc()).all()
+    funds = []
+    if org:
+        funds = FundService().list_all_funds(org.id, search=query or None, status=status or None)
     ai_context = {
         'active_page': 'funds',
         'organization': org.name if org else None,
@@ -1784,16 +1639,7 @@ def funds_export(file_type: str):
     query = request.args.get('q', '').strip()
     status = request.args.get('status', '').strip()
 
-    funds_query = Fund.query.filter_by(organization_id=org.id)
-    if query:
-        like_term = f"%{query}%"
-        funds_query = funds_query.filter((Fund.name.ilike(like_term)) | (Fund.description.ilike(like_term)))
-    if status == 'active':
-        funds_query = funds_query.filter_by(is_active=True)
-    elif status == 'inactive':
-        funds_query = funds_query.filter_by(is_active=False)
-
-    funds = funds_query.order_by(Fund.name.asc()).all()
+    funds = FundService().list_all_funds(org.id, search=query or None, status=status or None)
     headers = ['ID', 'Name', 'Description', 'Status', 'Updated At']
     rows = [
         [f.id, f.name, f.description or '', 'active' if f.is_active else 'inactive', f.updated_at.strftime('%Y-%m-%d %H:%M:%S') if f.updated_at else '']
@@ -1826,14 +1672,13 @@ def fund_create():
 
     form = FundForm()
     if form.validate_on_submit():
-        fund = Fund(
-            organization_id=org.id,
-            name=form.name.data,
+        FundService().create_fund(
+            org.id,
+            form.name.data,
             description=form.description.data,
             is_active=form.is_active.data == 'true',
+            actor_id=getattr(current_user, 'id', None),
         )
-        db.session.add(fund)
-        db.session.commit()
         flash('Fund created successfully.', 'success')
         return redirect(url_for('main.funds_list'))
 
@@ -1845,17 +1690,23 @@ def fund_create():
 @roles_required('admin', 'staff')
 def fund_edit(fund_id: int):
     org = _current_org()
-    fund = Fund.query.filter_by(id=fund_id, organization_id=org.id).first_or_404()
+    try:
+        fund = FundService().get_fund(fund_id, org.id)
+    except FundNotFound:
+        abort(404)
     form = FundForm(obj=fund)
     if request.method == 'GET':
         form.is_active.data = 'true' if fund.is_active else 'false'
 
     if form.validate_on_submit():
-        fund.name = form.name.data
-        fund.description = form.description.data
-        fund.is_active = form.is_active.data == 'true'
-        fund.updated_at = datetime.now(timezone.utc)
-        db.session.commit()
+        FundService().update_fund(
+            fund.id,
+            org.id,
+            actor_id=getattr(current_user, 'id', None),
+            name=form.name.data,
+            description=form.description.data,
+            is_active=form.is_active.data == 'true',
+        )
         flash('Fund updated successfully.', 'success')
         return redirect(url_for('main.funds_list'))
 
@@ -1866,54 +1717,34 @@ def fund_edit(fund_id: int):
 @login_required
 def reports_page():
     org = _current_org()
-    total_donations = db.session.query(func.sum(Donation.amount)).filter_by(organization_id=org.id).scalar() or 0 if org else 0
-    total_expenses = db.session.query(func.sum(Expense.amount)).filter_by(organization_id=org.id).scalar() or 0 if org else 0
-    net_total = total_donations - total_expenses
-
-    monthly_donations = defaultdict(float)
-    monthly_expenses = defaultdict(float)
-    labels = []
-
-    if org:
-        donations = Donation.query.filter_by(organization_id=org.id).all()
-        expenses = Expense.query.filter_by(organization_id=org.id).all()
-
-        for donation in donations:
-            if donation.donation_date:
-                key = donation.donation_date.strftime('%Y-%m')
-                monthly_donations[key] += float(donation.amount or 0)
-        for expense in expenses:
-            if expense.paid_at:
-                key = expense.paid_at.strftime('%Y-%m')
-                monthly_expenses[key] += float(expense.amount or 0)
-
-        labels = sorted(set(list(monthly_donations.keys()) + list(monthly_expenses.keys())))
-
-    chart_data = {
-        'labels': labels,
-        'donations': [round(monthly_donations[label], 2) for label in labels],
-        'expenses': [round(monthly_expenses[label], 2) for label in labels],
-        'net': [round(monthly_donations[label] - monthly_expenses[label], 2) for label in labels],
-        'totals': {
-            'donations': round(total_donations, 2),
-            'expenses': round(total_expenses, 2),
-            'net': round(net_total, 2),
+    overview = {
+        'total_donations': 0.0,
+        'total_expenses': 0.0,
+        'net_total': 0.0,
+        'chart_data': {
+            'labels': [],
+            'donations': [],
+            'expenses': [],
+            'net': [],
+            'totals': {'donations': 0.0, 'expenses': 0.0, 'net': 0.0},
         },
     }
+    if org:
+        overview = ReportingService().financial_overview(org.id)
 
     return render_template(
         'reports.html',
-        total_donations=total_donations,
-        total_expenses=total_expenses,
-        net_total=net_total,
-        chart_data=chart_data,
+        total_donations=overview['total_donations'],
+        total_expenses=overview['total_expenses'],
+        net_total=overview['net_total'],
+        chart_data=overview['chart_data'],
         active_page='reports',
         ai_context={
             'active_page': 'reports',
             'organization': org.name if org else None,
-            'total_donations': total_donations,
-            'total_expenses': total_expenses,
-            'net_balance': net_total,
+            'total_donations': overview['total_donations'],
+            'total_expenses': overview['total_expenses'],
+            'net_balance': overview['net_total'],
         },
     )
 

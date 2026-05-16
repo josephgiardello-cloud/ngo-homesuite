@@ -10,6 +10,7 @@ from typing import Any, Dict
 from flask import Blueprint, Response, current_app, jsonify, request, stream_with_context
 from flask_login import current_user, login_required
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+from sqlalchemy import delete, select
 
 from ngo_homesuite.ai.apex_client import OllamaClient, OllamaClientError
 from ngo_homesuite.ai.copilot_service import HomeSuiteCopilot
@@ -208,7 +209,9 @@ def _get_or_create_conversation(session_id: str, model: str, tenant_id: str) -> 
     user_id = getattr(current_user, "id", None)
     organization_id = getattr(current_user, "organization_id", None)
 
-    conv = AIConversation.query.filter_by(session_id=session_id).first()
+    conv = db.session.scalars(
+        select(AIConversation).where(AIConversation.session_id == session_id).limit(1)
+    ).first()
     if conv is not None:
         # Prevent cross-tenant or cross-user conversation reuse if a session id is ever replayed.
         if conv.organization_id != organization_id or conv.user_id != user_id:
@@ -246,19 +249,18 @@ def _persist_exchange(session_id: str, model: str, tenant_id: str,
         ))
         max_messages = int(current_app.config.get("COPILOT_CONVERSATION_MAX_MESSAGES", 200))
         if max_messages > 0:
-            message_ids = [
-                row[0]
-                for row in (
-                    AIMessage.query
-                    .with_entities(AIMessage.id)
-                    .filter_by(conversation_id=conv.id)
+            message_ids = list(
+                db.session.scalars(
+                    select(AIMessage.id)
+                    .where(AIMessage.conversation_id == conv.id)
                     .order_by(AIMessage.id.desc())
                     .offset(max_messages)
-                    .all()
                 )
-            ]
+            )
             if message_ids:
-                AIMessage.query.filter(AIMessage.id.in_(message_ids)).delete(synchronize_session=False)
+                db.session.connection().exec_driver_sql(
+                    str(delete(AIMessage).where(AIMessage.id.in_(message_ids)).compile(compile_kwargs={"literal_binds": True}))
+                )
         db.session.commit()
     except Exception as exc:  # pragma: no cover
         db.session.rollback()

@@ -27,6 +27,7 @@ import logging
 import os
 from typing import Any, Optional
 
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from ngo_homesuite.models.core import Donation, db
@@ -233,9 +234,11 @@ class PaymentService:
             raise WebhookProcessingError("Cannot determine reference_number from Stripe session.")
 
         # Check for existing donation (idempotency)
-        existing = Donation.query.filter_by(
-            reference_number=reference_number,
-            organization_id=org_id,
+        existing = db.session.scalars(
+            select(Donation).where(
+                Donation.reference_number == reference_number,
+                Donation.organization_id == org_id,
+            ).limit(1)
         ).first()
         if existing:
             logger.info(
@@ -290,8 +293,11 @@ class PaymentService:
         except IntegrityError:
             # Race condition: another worker already inserted with same reference_number
             db.session.rollback()
-            donation = Donation.query.filter_by(
-                reference_number=reference_number, organization_id=org_id
+            donation = db.session.scalars(
+                select(Donation).where(
+                    Donation.reference_number == reference_number,
+                    Donation.organization_id == org_id,
+                ).limit(1)
             ).first()
             if donation is None:
                 raise WebhookProcessingError(

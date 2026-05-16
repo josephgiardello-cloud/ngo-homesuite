@@ -491,6 +491,6 @@ class TestAdminRoutes:
 
         # Verify removed from org
         with app.app_context():
-            u = User.query.get(removable_id)
+            u = db.session.get(User, removable_id)
             assert u.organization_id is None
             assert u.is_active is False

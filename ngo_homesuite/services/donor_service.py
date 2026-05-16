@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from typing import Optional
 
-from ngo_homesuite.models.core import Donor, db
+from sqlalchemy import func, or_, select
+
+from ngo_homesuite.models.core import Donation, Donor, db
 
 
 _VALID_DONOR_TYPES = {"individual", "corporate", "foundation", "anonymous"}
@@ -25,7 +27,8 @@ class DonorService:
 
     def get_donor(self, donor_id: int, org_id: int) -> Donor:
         """Fetch a single donor; raises DonorNotFound if missing or wrong org."""
-        donor = Donor.query.filter_by(id=donor_id, organization_id=org_id).first()
+        stmt = select(Donor).where(Donor.id == donor_id, Donor.organization_id == org_id).limit(1)
+        donor = db.session.scalars(stmt).first()
         if donor is None:
             raise DonorNotFound(f"Donor {donor_id} not found for org {org_id}")
         return donor
@@ -34,9 +37,11 @@ class DonorService:
         """Return the first donor in this org matching the email, or None."""
         if not email or not email.strip():
             return None
-        return Donor.query.filter_by(
-            organization_id=org_id, email=email.strip().lower()
-        ).first()
+        stmt = select(Donor).where(
+            Donor.organization_id == org_id,
+            Donor.email == email.strip().lower(),
+        ).limit(1)
+        return db.session.scalars(stmt).first()
 
     def list_donors(
         self,
@@ -46,23 +51,20 @@ class DonorService:
         search: Optional[str] = None,
         page: int = 1,
         per_page: int = 50,
-    ) -> dict:
+    ) -> dict[str, object]:
         """Return a paginated list of donors for the organisation.
 
         Returns:
             {"items": [...], "total": int, "page": int, "per_page": int, "pages": int}
         """
-        query = Donor.query.filter_by(organization_id=org_id)
+        stmt = select(Donor).where(Donor.organization_id == org_id)
         if donor_type:
-            query = query.filter_by(donor_type=donor_type)
+            stmt = stmt.where(Donor.donor_type == donor_type)
         if search:
             term = f"%{search.strip()}%"
-            query = query.filter(
-                db.or_(Donor.name.ilike(term), Donor.email.ilike(term))
-            )
-        pagination = query.order_by(Donor.name.asc()).paginate(
-            page=page, per_page=per_page, error_out=False
-        )
+            stmt = stmt.where(or_(Donor.name.ilike(term), Donor.email.ilike(term)))
+        stmt = stmt.order_by(Donor.name.asc())
+        pagination = db.paginate(stmt, page=page, per_page=per_page, error_out=False)
         return {
             "items": pagination.items,
             "total": pagination.total,
@@ -70,6 +72,22 @@ class DonorService:
             "per_page": pagination.per_page,
             "pages": pagination.pages,
         }
+
+    def list_all_donors(
+        self,
+        org_id: int,
+        *,
+        donor_type: Optional[str] = None,
+        search: Optional[str] = None,
+    ) -> list[Donor]:
+        stmt = select(Donor).where(Donor.organization_id == org_id)
+        if donor_type:
+            stmt = stmt.where(Donor.donor_type == donor_type)
+        if search:
+            term = f"%{search.strip()}%"
+            stmt = stmt.where(or_(Donor.name.ilike(term), Donor.email.ilike(term), Donor.phone.ilike(term)))
+        stmt = stmt.order_by(Donor.name.asc(), Donor.id.asc())
+        return list(db.session.scalars(stmt))
 
     # ------------------------------------------------------------------
     # Write
@@ -177,13 +195,47 @@ class DonorService:
         return donor
 
     def delete_donor(self, donor_id: int, org_id: int, actor_id: Optional[int] = None) -> None:
-        """Soft-delete is the right pattern — hard deletes break donation history.
+        donor = self.get_donor(donor_id, org_id)
+        donation_count = db.session.scalar(
+            select(func.count(Donation.id)).where(
+                Donation.donor_id == donor.id,
+                Donation.organization_id == org_id,
+            )
+        ) or 0
+        if donation_count > 0:
+            raise ValueError(
+                f"Cannot delete donor {donor_id} with existing donations. Edit donor instead."
+            )
+        db.session.delete(donor)
+        db.session.commit()
 
-        This method intentionally raises; callers should instead set a
-        ``is_active=False`` flag if soft-delete is added to the Donor model,
-        or simply leave inactive donors in place.
-        """
-        raise NotImplementedError(
-            "Hard-deleting donors is not permitted because donation history references "
-            "donor records.  Mark the donor inactive instead."
+    def merge_donors(self, org_id: int, primary_id: int, duplicate_id: int) -> tuple[Donor, Donor]:
+        if primary_id == duplicate_id:
+            raise ValueError("primary_id and duplicate_id must be different")
+
+        primary = self.get_donor(primary_id, org_id)
+        duplicate = self.get_donor(duplicate_id, org_id)
+
+        dup_donations = list(
+            db.session.scalars(
+                select(Donation).where(
+                    Donation.organization_id == org_id,
+                    Donation.donor_id == duplicate.id,
+                )
+            )
         )
+        for donation in dup_donations:
+            donation.donor_id = primary.id
+            donation.donor_name = primary.name
+            donation.donor_email = primary.email
+            donation.donor_phone = primary.phone
+
+        # Persist FK rewrites before deleting the duplicate donor record.
+        db.session.flush()
+
+        if duplicate.notes and duplicate.notes not in (primary.notes or ""):
+            primary.notes = ((primary.notes or "").strip() + "\n" + f"[Merged from donor #{duplicate.id}] {duplicate.notes}").strip()
+
+        db.session.delete(duplicate)
+        db.session.commit()
+        return primary, duplicate

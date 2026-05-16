@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-from sqlalchemy import func
+from sqlalchemy import func, select
+from werkzeug.exceptions import NotFound
 
 from ngo_homesuite.models.core import Beneficiary, db
 
@@ -41,7 +42,9 @@ def create_beneficiary(
 
 
 def get_beneficiary(beneficiary_id: int, organization_id: int) -> Optional[Beneficiary]:
-    return Beneficiary.query.filter_by(id=beneficiary_id, organization_id=organization_id).first()
+    return db.session.scalars(
+        select(Beneficiary).where(Beneficiary.id == beneficiary_id, Beneficiary.organization_id == organization_id).limit(1)
+    ).first()
 
 
 def list_beneficiaries(
@@ -50,16 +53,21 @@ def list_beneficiaries(
     program: Optional[str] = None,
     status: Optional[str] = None,
 ) -> List[Beneficiary]:
-    q = Beneficiary.query.filter_by(organization_id=organization_id)
+    stmt = select(Beneficiary).where(Beneficiary.organization_id == organization_id)
     if program:
-        q = q.filter_by(program=program)
+        stmt = stmt.where(Beneficiary.program == program)
     if status:
-        q = q.filter_by(status=status)
-    return q.order_by(Beneficiary.created_at.desc()).all()
+        stmt = stmt.where(Beneficiary.status == status)
+    stmt = stmt.order_by(Beneficiary.created_at.desc())
+    return list(db.session.scalars(stmt))
 
 
 def update_beneficiary(beneficiary_id: int, organization_id: int, **fields) -> Beneficiary:
-    beneficiary = Beneficiary.query.filter_by(id=beneficiary_id, organization_id=organization_id).first_or_404()
+    beneficiary = db.session.scalars(
+        select(Beneficiary).where(Beneficiary.id == beneficiary_id, Beneficiary.organization_id == organization_id).limit(1)
+    ).first()
+    if beneficiary is None:
+        raise NotFound()
     allowed = {
         "first_name", "last_name", "email", "phone", "country", "city", "address", "program", "status", "notes"
     }
@@ -71,19 +79,20 @@ def update_beneficiary(beneficiary_id: int, organization_id: int, **fields) -> B
 
 
 def delete_beneficiary(beneficiary_id: int, organization_id: int) -> None:
-    beneficiary = Beneficiary.query.filter_by(id=beneficiary_id, organization_id=organization_id).first_or_404()
+    beneficiary = db.session.scalars(
+        select(Beneficiary).where(Beneficiary.id == beneficiary_id, Beneficiary.organization_id == organization_id).limit(1)
+    ).first()
+    if beneficiary is None:
+        raise NotFound()
     db.session.delete(beneficiary)
     db.session.commit()
 
 
 def beneficiary_program_summary(organization_id: int) -> Dict[str, int]:
-    rows = (
-        db.session.query(
+    rows = db.session.connection().exec_driver_sql(
+        str(select(
             func.coalesce(Beneficiary.program, "Unassigned").label("program"),
             func.count(Beneficiary.id).label("count"),
-        )
-        .filter(Beneficiary.organization_id == organization_id)
-        .group_by(func.coalesce(Beneficiary.program, "Unassigned"))
-        .all()
-    )
+        ).where(Beneficiary.organization_id == organization_id).group_by(func.coalesce(Beneficiary.program, "Unassigned")).compile(compile_kwargs={"literal_binds": True}))
+    ).all()
     return {row.program: int(row.count) for row in rows}

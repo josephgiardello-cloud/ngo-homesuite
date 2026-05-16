@@ -52,7 +52,10 @@ def list_grants():
 def create_grant():
     from ngo_homesuite.services.grant_service import create_grant as svc_create
     data = _json_or_400(required=["title", "funder_name"])
-    grant = svc_create(_org_id(), **data)
+    try:
+        grant = svc_create(_org_id(), **data)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     return jsonify(_grant_dict(grant)), 201
 
 
@@ -72,12 +75,15 @@ def get_grant(grant_id: int):
 def advance_grant(grant_id: int):
     from ngo_homesuite.services.grant_service import advance_grant_status
     data = _json_or_400(required=["new_status"])
-    grant = advance_grant_status(
-        grant_id,
-        _org_id(),
-        new_status=data["new_status"],
-        **{k: v for k, v in data.items() if k != "new_status"},
-    )
+    try:
+        grant = advance_grant_status(
+            grant_id,
+            _org_id(),
+            new_status=data["new_status"],
+            **{k: v for k, v in data.items() if k != "new_status"},
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     return jsonify(_grant_dict(grant))
 
 
@@ -92,7 +98,10 @@ def add_disbursement(grant_id: int):
         payload["received_date"] = _parse_iso_date(str(payload["received_date"]))
     except ValueError:
         return jsonify({"error": "received_date must be ISO format YYYY-MM-DD"}), 400
-    disb = svc_add(grant_id, _org_id(), **payload)
+    try:
+        disb = svc_add(grant_id, _org_id(), **payload)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     return jsonify({"id": disb.id, "amount": float(disb.amount), "received_date": str(disb.received_date)}), 201
 
 

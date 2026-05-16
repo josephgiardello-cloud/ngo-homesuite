@@ -4,6 +4,8 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 import logging
 
+from sqlalchemy import select
+
 from ngo_homesuite.db.audit_log import log_event
 from ngo_homesuite.models.core import Donation, DonationReceipt, db
 
@@ -29,7 +31,9 @@ def run_donation_receipt_followup_workflow(
     organization_id: int,
     db_path: str = 'ngo_homesuite.db',
 ) -> dict:
-    donation = Donation.query.filter_by(id=donation_id, organization_id=organization_id).first()
+    donation = db.session.scalars(
+        select(Donation).where(Donation.id == donation_id, Donation.organization_id == organization_id).limit(1)
+    ).first()
     if donation is None:
         return {
             "ok": False,
@@ -37,7 +41,9 @@ def run_donation_receipt_followup_workflow(
             "error": f"Donation {donation_id} not found.",
         }
 
-    receipt = DonationReceipt.query.filter_by(donation_id=donation.id).first()
+    receipt = db.session.scalars(
+        select(DonationReceipt).where(DonationReceipt.donation_id == donation.id).limit(1)
+    ).first()
     created_receipt = False
     if receipt is None:
         receipt = DonationReceipt(

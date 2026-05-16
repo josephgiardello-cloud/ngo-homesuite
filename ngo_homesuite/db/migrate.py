@@ -180,7 +180,6 @@ def plan_migrations(db_path: str | None = None, migrations_dir: Path | None = No
     conn.row_factory = sqlite3.Row
     try:
         try:
-            conn.execute("PRAGMA busy_timeout = 30000")
             applied = _load_applied_hashes(conn)
             applied_versions = sorted(applied.keys())
             pending: list[PlannedMigration] = []
@@ -292,7 +291,6 @@ def auto_migrate(db_path: str | None = None) -> None:
     conn = sqlite3.connect(resolved_db_path, detect_types=sqlite3.PARSE_DECLTYPES, timeout=timeout_s)
     conn.row_factory = sqlite3.Row
     try:
-        conn.execute("PRAGMA busy_timeout = 30000")
         conn.execute("PRAGMA foreign_keys = ON")
         _ensure_schema_version_table(conn)
         for mf in migration_files:
@@ -302,14 +300,16 @@ def auto_migrate(db_path: str | None = None) -> None:
                 hash_val = hashlib.sha256(f.read()).hexdigest()
             sql = mf.read_text(encoding='utf-8')
             try:
-                if version == 12:
+                if version in {12, 13}:
+                    required_tables = {"donations", "funds"} if version == 12 else {"recurring_donation_plans"}
+                    names_csv = ", ".join(f"'{name}'" for name in sorted(required_tables))
                     existing_tables = {
                         str(row[0])
                         for row in conn.execute(
-                            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('donations', 'funds')"
+                            f"SELECT name FROM sqlite_master WHERE type='table' AND name IN ({names_csv})"
                         ).fetchall()
                     }
-                    if existing_tables != {"donations", "funds"}:
+                    if existing_tables != required_tables:
                         now_utc = datetime.now(UTC).isoformat().replace('+00:00', 'Z')
                         _insert_schema_version_row(conn, version=version, hash_value=hash_val, applied_at_utc=now_utc)
                         try:
@@ -323,11 +323,11 @@ def auto_migrate(db_path: str | None = None) -> None:
                         _emit_migration_event(
                             step="apply",
                             status="ok",
-                            message="Skipped migration until core tables are created by bootstrap",
+                            message="Skipped migration until required tables are created by bootstrap",
                             version=version,
                             file=mf.name,
                         )
-                        print(f"Skipped migration {version} ({mf.name}) until core tables are created by bootstrap.")
+                        print(f"Skipped migration {version} ({mf.name}) until required tables are created by bootstrap.")
                         continue
                 conn.executescript(sql)
             except Exception as exc:

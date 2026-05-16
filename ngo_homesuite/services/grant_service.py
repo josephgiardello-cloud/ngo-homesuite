@@ -4,9 +4,29 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional
 
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_, select
+from werkzeug.exceptions import NotFound
 
 from ngo_homesuite.models.core import Grant, GrantDisbursement, db
+
+
+_VALID_GRANT_STATUSES = {"prospect", "in_progress", "submitted", "awarded", "declined", "closed", "reporting"}
+_VALID_TRANSITIONS = {
+    "prospect": {"in_progress", "submitted", "awarded", "declined", "closed"},
+    "in_progress": {"submitted", "awarded", "declined", "closed"},
+    "submitted": {"awarded", "reporting", "declined", "closed"},
+    "awarded": {"reporting", "closed"},
+    "reporting": {"closed"},
+    "declined": set(),
+    "closed": set(),
+}
+
+
+def _validate_currency(code: str) -> str:
+    clean = (code or "USD").strip().upper()
+    if len(clean) != 3:
+        raise ValueError("currency must be a 3-letter ISO code")
+    return clean
 
 
 def _today() -> date:
@@ -33,16 +53,23 @@ def create_grant(
     requirements: Optional[str] = None,
     notes: Optional[str] = None,
 ) -> Grant:
+    if not (funder_name or "").strip():
+        raise ValueError("funder_name is required")
+    if not (title or "").strip():
+        raise ValueError("title is required")
+    if amount_requested is not None and float(amount_requested) < 0:
+        raise ValueError("amount_requested cannot be negative")
+
     grant = Grant(
         organization_id=organization_id,
-        funder_name=funder_name,
+        funder_name=funder_name.strip(),
         funder_type=funder_type,
         funder_contact=funder_contact,
         funder_email=funder_email,
-        title=title,
+        title=title.strip(),
         description=description,
         amount_requested=amount_requested,
-        currency=currency,
+        currency=_validate_currency(currency),
         application_deadline=application_deadline,
         project_id=project_id,
         requirements=requirements,
@@ -55,7 +82,9 @@ def create_grant(
 
 
 def get_grant(grant_id: int, organization_id: int) -> Optional[Grant]:
-    return Grant.query.filter_by(id=grant_id, organization_id=organization_id).first()
+    return db.session.scalars(
+        select(Grant).where(Grant.id == grant_id, Grant.organization_id == organization_id).limit(1)
+    ).first()
 
 
 def list_grants(
@@ -63,22 +92,33 @@ def list_grants(
     status: Optional[str] = None,
     upcoming_days: Optional[int] = None,
 ) -> List[Grant]:
-    q = Grant.query.filter_by(organization_id=organization_id)
+    stmt = select(Grant).where(Grant.organization_id == organization_id)
     if status:
-        q = q.filter_by(status=status)
+        stmt = stmt.where(Grant.status == status)
     if upcoming_days is not None:
         cutoff = _today() + timedelta(days=upcoming_days)
-        q = q.filter(Grant.application_deadline <= cutoff, Grant.application_deadline >= _today())
-    return q.order_by(Grant.application_deadline.asc().nullslast(), Grant.created_at.desc()).all()
+        stmt = stmt.where(Grant.application_deadline <= cutoff, Grant.application_deadline >= _today())
+    stmt = stmt.order_by(Grant.application_deadline.asc().nullslast(), Grant.created_at.desc())
+    return list(db.session.scalars(stmt))
 
 
 def advance_grant_status(grant_id: int, organization_id: int, new_status: str, **kwargs) -> Grant:
-    valid_statuses = {"prospect", "in_progress", "submitted", "awarded", "declined", "closed", "reporting"}
-    if new_status not in valid_statuses:
-        raise ValueError(f"Invalid status '{new_status}'. Must be one of: {valid_statuses}")
-    grant = Grant.query.filter_by(id=grant_id, organization_id=organization_id).first_or_404()
+    if new_status not in _VALID_GRANT_STATUSES:
+        raise ValueError(f"Invalid status '{new_status}'. Must be one of: {_VALID_GRANT_STATUSES}")
+    grant = db.session.scalars(
+        select(Grant).where(Grant.id == grant_id, Grant.organization_id == organization_id).limit(1)
+    ).first()
+    if grant is None:
+        raise NotFound()
+    allowed = _VALID_TRANSITIONS.get(grant.status, set())
+    if new_status not in allowed:
+        raise ValueError(
+            f"Cannot transition grant {grant_id} from '{grant.status}' to '{new_status}'. Allowed: {sorted(allowed)}"
+        )
     grant.status = new_status
     if new_status == "awarded" and kwargs.get("amount_awarded"):
+        if float(kwargs["amount_awarded"]) < 0:
+            raise ValueError("amount_awarded cannot be negative")
         grant.amount_awarded = kwargs["amount_awarded"]
         grant.award_date = kwargs.get("award_date", _today())
     if new_status == "submitted":
@@ -88,7 +128,11 @@ def advance_grant_status(grant_id: int, organization_id: int, new_status: str, *
 
 
 def update_grant(grant_id: int, organization_id: int, **fields) -> Grant:
-    grant = Grant.query.filter_by(id=grant_id, organization_id=organization_id).first_or_404()
+    grant = db.session.scalars(
+        select(Grant).where(Grant.id == grant_id, Grant.organization_id == organization_id).limit(1)
+    ).first()
+    if grant is None:
+        raise NotFound()
     allowed = {
         "funder_name", "funder_type", "funder_contact", "funder_email",
         "title", "description", "amount_requested", "amount_awarded",
@@ -98,13 +142,21 @@ def update_grant(grant_id: int, organization_id: int, **fields) -> Grant:
     }
     for k, v in fields.items():
         if k in allowed:
+            if k in {"amount_requested", "amount_awarded"} and v is not None and float(v) < 0:
+                raise ValueError(f"{k} cannot be negative")
+            if k == "currency":
+                v = _validate_currency(str(v))
             setattr(grant, k, v)
     db.session.commit()
     return grant
 
 
 def delete_grant(grant_id: int, organization_id: int) -> None:
-    grant = Grant.query.filter_by(id=grant_id, organization_id=organization_id).first_or_404()
+    grant = db.session.scalars(
+        select(Grant).where(Grant.id == grant_id, Grant.organization_id == organization_id).limit(1)
+    ).first()
+    if grant is None:
+        raise NotFound()
     db.session.delete(grant)
     db.session.commit()
 
@@ -123,12 +175,18 @@ def add_disbursement(
     reference: Optional[str] = None,
     notes: Optional[str] = None,
 ) -> GrantDisbursement:
-    grant = Grant.query.filter_by(id=grant_id, organization_id=organization_id).first_or_404()
+    if amount <= 0:
+        raise ValueError("disbursement amount must be positive")
+    grant = db.session.scalars(
+        select(Grant).where(Grant.id == grant_id, Grant.organization_id == organization_id).limit(1)
+    ).first()
+    if grant is None:
+        raise NotFound()
     disbursement = GrantDisbursement(
         grant_id=grant.id,
         organization_id=organization_id,
         amount=amount,
-        currency=currency,
+        currency=_validate_currency(currency),
         received_date=received_date,
         reference=reference,
         notes=notes,
@@ -139,9 +197,11 @@ def add_disbursement(
 
 
 def get_disbursements(grant_id: int, organization_id: int) -> List[GrantDisbursement]:
-    return GrantDisbursement.query.filter_by(
-        grant_id=grant_id, organization_id=organization_id
-    ).order_by(GrantDisbursement.received_date.asc()).all()
+    stmt = select(GrantDisbursement).where(
+        GrantDisbursement.grant_id == grant_id,
+        GrantDisbursement.organization_id == organization_id,
+    ).order_by(GrantDisbursement.received_date.asc())
+    return list(db.session.scalars(stmt))
 
 
 # ---------------------------------------------------------------------------
@@ -150,24 +210,21 @@ def get_disbursements(grant_id: int, organization_id: int) -> List[GrantDisburse
 
 def grant_pipeline_summary(organization_id: int) -> dict:
     """Return counts and totals by status for the pipeline overview."""
-    rows = (
-        db.session.query(
+    rows = db.session.connection().exec_driver_sql(
+        str(select(
             Grant.status,
             func.count(Grant.id).label("count"),
             func.coalesce(func.sum(Grant.amount_requested), 0).label("total_requested"),
             func.coalesce(func.sum(Grant.amount_awarded), 0).label("total_awarded"),
-        )
-        .filter_by(organization_id=organization_id)
-        .group_by(Grant.status)
-        .all()
-    )
+        ).where(Grant.organization_id == organization_id).group_by(Grant.status).compile(compile_kwargs={"literal_binds": True}))
+    ).all()
     return {
-        r.status: {
-            "count": r.count,
-            "total_requested": float(r.total_requested),
-            "total_awarded": float(r.total_awarded),
+        status: {
+            "count": count,
+            "total_requested": float(total_requested),
+            "total_awarded": float(total_awarded),
         }
-        for r in rows
+        for status, count, total_requested, total_awarded in rows
     }
 
 
@@ -175,27 +232,21 @@ def grants_due_soon(organization_id: int, within_days: int = 30) -> List[Grant]:
     """Grants whose deadline or report due date falls within `within_days`."""
     cutoff = _today() + timedelta(days=within_days)
     today = _today()
-    return (
-        Grant.query.filter(
-            Grant.organization_id == organization_id,
-            Grant.status.in_(["prospect", "in_progress", "awarded", "reporting"]),
-            db.or_(
-                db.and_(Grant.application_deadline >= today, Grant.application_deadline <= cutoff),
-                db.and_(Grant.report_due_date >= today, Grant.report_due_date <= cutoff),
-            ),
-        )
-        .order_by(Grant.application_deadline.asc())
-        .all()
-    )
+    stmt = select(Grant).where(
+        Grant.organization_id == organization_id,
+        Grant.status.in_(["prospect", "in_progress", "awarded", "reporting"]),
+        or_(
+            and_(Grant.application_deadline >= today, Grant.application_deadline <= cutoff),
+            and_(Grant.report_due_date >= today, Grant.report_due_date <= cutoff),
+        ),
+    ).order_by(Grant.application_deadline.asc())
+    return list(db.session.scalars(stmt))
 
 
 def total_disbursed(organization_id: int, grant_id: Optional[int] = None) -> float:
-    q = GrantDisbursement.query.filter_by(organization_id=organization_id)
-    if grant_id is not None:
-        q = q.filter_by(grant_id=grant_id)
-    result = db.session.query(func.coalesce(func.sum(GrantDisbursement.amount), 0)).filter(
-        GrantDisbursement.organization_id == organization_id
+    stmt = select(func.coalesce(func.sum(GrantDisbursement.amount), 0)).where(
+        GrantDisbursement.organization_id == organization_id,
     )
     if grant_id is not None:
-        result = result.filter(GrantDisbursement.grant_id == grant_id)
-    return float(result.scalar())
+        stmt = stmt.where(GrantDisbursement.grant_id == grant_id)
+    return float(db.session.scalar(stmt) or 0)

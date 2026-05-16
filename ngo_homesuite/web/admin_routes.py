@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from flask import Blueprint, jsonify, request
 from flask_login import current_user, login_required
+from sqlalchemy import func, select
 
 from ngo_homesuite.web.rbac import roles_required
 
@@ -26,9 +27,10 @@ def _org_id() -> int:
 @roles_required("admin")
 def list_org_users_route():
     """List all users in the current org."""
-    from ngo_homesuite.models.core import User
+    from ngo_homesuite.models.core import User, db
 
-    users = User.query.filter_by(organization_id=_org_id()).order_by(User.created_at.asc()).all()
+    stmt = select(User).where(User.organization_id == _org_id()).order_by(User.created_at.asc())
+    users = list(db.session.scalars(stmt))
     return jsonify([
         {
             "id": u.id,
@@ -49,9 +51,10 @@ def list_org_users_route():
 @login_required
 @roles_required("admin")
 def get_org_user_route(user_id: int):
-    from ngo_homesuite.models.core import User
+    from ngo_homesuite.models.core import User, db
 
-    user = User.query.filter_by(id=user_id, organization_id=_org_id()).first()
+    stmt = select(User).where(User.id == user_id, User.organization_id == _org_id()).limit(1)
+    user = db.session.scalars(stmt).first()
     if user is None:
         return jsonify({"error": "not found"}), 404
     return jsonify({
@@ -89,7 +92,8 @@ def update_user_role_route(user_id: int):
     if new_role not in ALLOWED_ROLES:
         return jsonify({"error": f"role must be one of {sorted(ALLOWED_ROLES)}"}), 400
 
-    user = User.query.filter_by(id=user_id, organization_id=_org_id()).first()
+    stmt = select(User).where(User.id == user_id, User.organization_id == _org_id()).limit(1)
+    user = db.session.scalars(stmt).first()
     if user is None:
         return jsonify({"error": "not found"}), 404
 
@@ -115,7 +119,8 @@ def update_user_status_route(user_id: int):
     if "is_active" not in data:
         return jsonify({"error": "is_active is required"}), 400
 
-    user = User.query.filter_by(id=user_id, organization_id=_org_id()).first()
+    stmt = select(User).where(User.id == user_id, User.organization_id == _org_id()).limit(1)
+    user = db.session.scalars(stmt).first()
     if user is None:
         return jsonify({"error": "not found"}), 404
 
@@ -137,7 +142,8 @@ def remove_org_user_route(user_id: int):
     if user_id == current_user.id:
         return jsonify({"error": "Cannot remove yourself"}), 400
 
-    user = User.query.filter_by(id=user_id, organization_id=_org_id()).first()
+    stmt = select(User).where(User.id == user_id, User.organization_id == _org_id()).limit(1)
+    user = db.session.scalars(stmt).first()
     if user is None:
         return jsonify({"error": "not found"}), 404
 
@@ -155,9 +161,9 @@ def remove_org_user_route(user_id: int):
 @login_required
 @roles_required("admin")
 def get_org_route():
-    from ngo_homesuite.models.core import Organization
+    from ngo_homesuite.models.core import Organization, db
 
-    org = Organization.query.get(_org_id())
+    org = db.session.get(Organization, _org_id())
     if org is None:
         return jsonify({"error": "not found"}), 404
     return jsonify({
@@ -180,7 +186,7 @@ def update_org_route():
     from ngo_homesuite.models.core import Organization, db
 
     data = request.get_json(silent=True) or {}
-    org = Organization.query.get(_org_id())
+    org = db.session.get(Organization, _org_id())
     if org is None:
         return jsonify({"error": "not found"}), 404
 
@@ -201,16 +207,11 @@ def update_org_route():
 @roles_required("admin")
 def list_roles_route():
     """Return role definitions and user counts per role in this org."""
-    from ngo_homesuite.models.core import User
-    from sqlalchemy import func
-    from ngo_homesuite.models.core import db
+    from ngo_homesuite.models.core import User, db
 
-    rows = (
-        db.session.query(User.role, func.count(User.id))
-        .filter(User.organization_id == _org_id(), User.is_active == True)
-        .group_by(User.role)
-        .all()
-    )
+    rows = db.session.connection().exec_driver_sql(
+        str(select(User.role, func.count(User.id)).where(User.organization_id == _org_id(), User.is_active == True).group_by(User.role).compile(compile_kwargs={"literal_binds": True}))
+    ).all()
     counts = {role: count for role, count in rows}
     return jsonify({
         "roles": [

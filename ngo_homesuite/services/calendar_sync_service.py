@@ -4,7 +4,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
 
-from ngo_homesuite.models.core import Task
+from sqlalchemy import select
+
+from ngo_homesuite.models.core import Task, db
 
 
 class CalendarProvider(Protocol):
@@ -31,14 +33,16 @@ def sync_task_deadlines(
     *,
     statuses: tuple[str, ...] = ("open", "in_progress"),
 ) -> dict[str, int]:
-    tasks = (
-        Task.query.filter(
-            Task.organization_id == organization_id,
-            Task.status.in_(list(statuses)),
-            Task.due_date.isnot(None),
+    tasks = list(
+        db.session.scalars(
+            select(Task)
+            .where(
+                Task.organization_id == organization_id,
+                Task.status.in_(list(statuses)),
+                Task.due_date.is_not(None),
+            )
+            .order_by(Task.due_date.asc())
         )
-        .order_by(Task.due_date.asc())
-        .all()
     )
 
     synced = 0

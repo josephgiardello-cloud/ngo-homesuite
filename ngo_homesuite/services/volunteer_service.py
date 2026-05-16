@@ -4,6 +4,9 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy import func, select
+from werkzeug.exceptions import NotFound
+
 from ngo_homesuite.models.core import (
     TrainingCourse,
     Volunteer,
@@ -17,17 +20,104 @@ from ngo_homesuite.models.core import (
 # Volunteer CRUD
 # ---------------------------------------------------------------------------
 
+
+def _get_volunteer_or_404(volunteer_id: int, organization_id: int) -> Volunteer:
+    volunteer = db.session.scalars(
+        select(Volunteer).where(
+            Volunteer.id == volunteer_id,
+            Volunteer.organization_id == organization_id,
+        ).limit(1)
+    ).first()
+    if volunteer is None:
+        raise NotFound()
+    return volunteer
+
+
+def _get_shift_or_404(shift_id: int, organization_id: int) -> VolunteerShift:
+    shift = db.session.scalars(
+        select(VolunteerShift).where(
+            VolunteerShift.id == shift_id,
+            VolunteerShift.organization_id == organization_id,
+        ).limit(1)
+    ).first()
+    if shift is None:
+        raise NotFound()
+    return shift
+
+
+def _get_course_or_404(course_id: int, organization_id: int) -> TrainingCourse:
+    course = db.session.scalars(
+        select(TrainingCourse).where(
+            TrainingCourse.id == course_id,
+            TrainingCourse.organization_id == organization_id,
+        ).limit(1)
+    ).first()
+    if course is None:
+        raise NotFound()
+    return course
+
+
+def _get_training_or_404(training_id: int, organization_id: int) -> VolunteerTraining:
+    training = db.session.scalars(
+        select(VolunteerTraining).where(
+            VolunteerTraining.id == training_id,
+            VolunteerTraining.organization_id == organization_id,
+        ).limit(1)
+    ).first()
+    if training is None:
+        raise NotFound()
+    return training
+
 def get_volunteer(volunteer_id: int, organization_id: int) -> Optional[Volunteer]:
-    return Volunteer.query.filter_by(
-        id=volunteer_id, organization_id=organization_id
+    return db.session.scalars(
+        select(Volunteer).where(
+            Volunteer.id == volunteer_id,
+            Volunteer.organization_id == organization_id,
+        ).limit(1)
     ).first()
 
 
 def list_volunteers(organization_id: int, *, status: Optional[str] = None) -> List[Volunteer]:
-    q = Volunteer.query.filter_by(organization_id=organization_id)
+    stmt = select(Volunteer).where(Volunteer.organization_id == organization_id)
     if status:
-        q = q.filter_by(status=status)
-    return q.order_by(Volunteer.name.asc()).all()
+        stmt = stmt.where(Volunteer.status == status)
+    stmt = stmt.order_by(Volunteer.name.asc())
+    return list(db.session.scalars(stmt))
+
+
+def list_recent_volunteers(organization_id: int, *, limit: int = 8) -> List[Volunteer]:
+    stmt = (
+        select(Volunteer)
+        .where(Volunteer.organization_id == organization_id)
+        .order_by(Volunteer.created_at.desc())
+        .limit(limit)
+    )
+    return list(db.session.scalars(stmt))
+
+
+def create_volunteer(
+    organization_id: int,
+    name: str,
+    *,
+    email: Optional[str] = None,
+    phone: Optional[str] = None,
+    status: str = 'active',
+) -> Volunteer:
+    clean_name = (name or '').strip()
+    if not clean_name:
+        raise ValueError('Volunteer name is required')
+
+    volunteer = Volunteer(
+        organization_id=organization_id,
+        name=clean_name,
+        email=(email or '').strip() or None,
+        phone=(phone or '').strip() or None,
+        status=(status or 'active').strip() or 'active',
+        hours_logged=0.0,
+    )
+    db.session.add(volunteer)
+    db.session.commit()
+    return volunteer
 
 
 # ---------------------------------------------------------------------------
@@ -53,9 +143,7 @@ def create_shift(
         shift_date = _date.fromisoformat(shift_date)
 
     # Guard cross-tenant
-    vol = Volunteer.query.filter_by(
-        id=volunteer_id, organization_id=organization_id
-    ).first_or_404()
+    vol = _get_volunteer_or_404(volunteer_id, organization_id)
 
     shift = VolunteerShift(
         organization_id=organization_id,
@@ -82,14 +170,22 @@ def list_shifts(
     project_id: Optional[int] = None,
     status: Optional[str] = None,
 ) -> List[VolunteerShift]:
-    q = VolunteerShift.query.filter_by(organization_id=organization_id)
+    stmt = select(VolunteerShift).where(VolunteerShift.organization_id == organization_id)
     if volunteer_id:
-        q = q.filter_by(volunteer_id=volunteer_id)
+        stmt = stmt.where(VolunteerShift.volunteer_id == volunteer_id)
     if project_id:
-        q = q.filter_by(project_id=project_id)
+        stmt = stmt.where(VolunteerShift.project_id == project_id)
     if status:
-        q = q.filter_by(status=status)
-    return q.order_by(VolunteerShift.shift_date.asc()).all()
+        stmt = stmt.where(VolunteerShift.status == status)
+    stmt = stmt.order_by(VolunteerShift.shift_date.asc())
+    return list(db.session.scalars(stmt))
+
+
+def get_shift(shift_id: int, organization_id: int) -> Optional[VolunteerShift]:
+    shift = db.session.get(VolunteerShift, shift_id)
+    if shift is None or shift.organization_id != organization_id:
+        return None
+    return shift
 
 
 def update_shift(
@@ -97,9 +193,7 @@ def update_shift(
     organization_id: int,
     **fields: Any,
 ) -> VolunteerShift:
-    shift = VolunteerShift.query.filter_by(
-        id=shift_id, organization_id=organization_id
-    ).first_or_404()
+    shift = _get_shift_or_404(shift_id, organization_id)
     allowed = {
         'title', 'shift_date', 'start_time', 'end_time', 'hours',
         'location', 'status', 'notes', 'project_id',
@@ -120,15 +214,13 @@ def complete_shift(
     hours: float,
 ) -> VolunteerShift:
     """Mark a shift as completed and update the volunteer's cumulative hours."""
-    shift = VolunteerShift.query.filter_by(
-        id=shift_id, organization_id=organization_id
-    ).first_or_404()
+    shift = _get_shift_or_404(shift_id, organization_id)
     shift.status = 'completed'
     shift.hours = hours
     db.session.commit()
 
     # Update volunteer hours total
-    vol = Volunteer.query.get(shift.volunteer_id)
+    vol = db.session.get(Volunteer, shift.volunteer_id)
     if vol:
         vol.hours_logged = (vol.hours_logged or 0.0) + hours
         db.session.commit()
@@ -141,25 +233,20 @@ def volunteer_hours_summary(
     volunteer_id: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """Return per-volunteer hours totals from completed shifts."""
-    from sqlalchemy import func
-    q = (
-        db.session.query(
-            Volunteer.id,
-            Volunteer.name,
-            Volunteer.email,
-            func.coalesce(func.sum(VolunteerShift.hours), 0.0).label('shift_hours'),
-            func.count(VolunteerShift.id).label('shift_count'),
-        )
-        .outerjoin(
-            VolunteerShift,
-            (VolunteerShift.volunteer_id == Volunteer.id)
-            & (VolunteerShift.status == 'completed'),
-        )
-        .filter(Volunteer.organization_id == organization_id)
-    )
+    stmt = select(
+        Volunteer.id,
+        Volunteer.name,
+        Volunteer.email,
+        func.coalesce(func.sum(VolunteerShift.hours), 0.0).label('shift_hours'),
+        func.count(VolunteerShift.id).label('shift_count'),
+    ).outerjoin(
+        VolunteerShift,
+        (VolunteerShift.volunteer_id == Volunteer.id)
+        & (VolunteerShift.status == 'completed'),
+    ).where(Volunteer.organization_id == organization_id)
     if volunteer_id:
-        q = q.filter(Volunteer.id == volunteer_id)
-    rows = q.group_by(Volunteer.id).order_by(Volunteer.name.asc()).all()
+        stmt = stmt.where(Volunteer.id == volunteer_id)
+    rows = db.session.connection().exec_driver_sql(str(stmt.group_by(Volunteer.id).order_by(Volunteer.name.asc()).compile(compile_kwargs={"literal_binds": True}))).all()
     return [
         {
             'volunteer_id': r.id,
@@ -208,12 +295,13 @@ def list_training_courses(
     category: Optional[str] = None,
     is_required: Optional[bool] = None,
 ) -> List[TrainingCourse]:
-    q = TrainingCourse.query.filter_by(organization_id=organization_id)
+    stmt = select(TrainingCourse).where(TrainingCourse.organization_id == organization_id)
     if category:
-        q = q.filter_by(category=category)
+        stmt = stmt.where(TrainingCourse.category == category)
     if is_required is not None:
-        q = q.filter_by(is_required=is_required)
-    return q.order_by(TrainingCourse.name.asc()).all()
+        stmt = stmt.where(TrainingCourse.is_required == is_required)
+    stmt = stmt.order_by(TrainingCourse.name.asc())
+    return list(db.session.scalars(stmt))
 
 
 def update_training_course(
@@ -221,9 +309,7 @@ def update_training_course(
     organization_id: int,
     **fields: Any,
 ) -> TrainingCourse:
-    course = TrainingCourse.query.filter_by(
-        id=course_id, organization_id=organization_id
-    ).first_or_404()
+    course = _get_course_or_404(course_id, organization_id)
     allowed = {
         'name', 'description', 'category', 'duration_hours',
         'is_required', 'expires_after_days',
@@ -236,9 +322,7 @@ def update_training_course(
 
 
 def delete_training_course(course_id: int, organization_id: int) -> None:
-    course = TrainingCourse.query.filter_by(
-        id=course_id, organization_id=organization_id
-    ).first_or_404()
+    course = _get_course_or_404(course_id, organization_id)
     db.session.delete(course)
     db.session.commit()
 
@@ -256,19 +340,17 @@ def assign_training(
 ) -> VolunteerTraining:
     """Assign a training course to a volunteer (idempotent on pending)."""
     # Guard cross-tenant
-    Volunteer.query.filter_by(
-        id=volunteer_id, organization_id=organization_id
-    ).first_or_404()
-    TrainingCourse.query.filter_by(
-        id=course_id, organization_id=organization_id
-    ).first_or_404()
+    _get_volunteer_or_404(volunteer_id, organization_id)
+    _get_course_or_404(course_id, organization_id)
 
     # Idempotent: if pending already exists, return it
-    existing = VolunteerTraining.query.filter_by(
-        volunteer_id=volunteer_id,
-        course_id=course_id,
-        organization_id=organization_id,
-        status='pending',
+    existing = db.session.scalars(
+        select(VolunteerTraining).where(
+            VolunteerTraining.volunteer_id == volunteer_id,
+            VolunteerTraining.course_id == course_id,
+            VolunteerTraining.organization_id == organization_id,
+            VolunteerTraining.status == 'pending',
+        ).limit(1)
     ).first()
     if existing:
         return existing
@@ -292,9 +374,7 @@ def complete_training(
     score: Optional[float] = None,
     notes: Optional[str] = None,
 ) -> VolunteerTraining:
-    training = VolunteerTraining.query.filter_by(
-        id=training_id, organization_id=organization_id
-    ).first_or_404()
+    training = _get_training_or_404(training_id, organization_id)
     training.status = 'completed'
     training.completed_at = datetime.now(UTC).replace(tzinfo=None)
     if score is not None:
@@ -303,7 +383,7 @@ def complete_training(
         training.notes = notes
 
     # Compute expiry date if course has expires_after_days
-    course = TrainingCourse.query.get(training.course_id)
+    course = db.session.get(TrainingCourse, training.course_id)
     if course and course.expires_after_days:
         training.expires_at = training.completed_at + timedelta(days=course.expires_after_days)
 
@@ -318,32 +398,43 @@ def list_volunteer_trainings(
     course_id: Optional[int] = None,
     status: Optional[str] = None,
 ) -> List[VolunteerTraining]:
-    q = VolunteerTraining.query.filter_by(organization_id=organization_id)
+    stmt = select(VolunteerTraining).where(VolunteerTraining.organization_id == organization_id)
     if volunteer_id:
-        q = q.filter_by(volunteer_id=volunteer_id)
+        stmt = stmt.where(VolunteerTraining.volunteer_id == volunteer_id)
     if course_id:
-        q = q.filter_by(course_id=course_id)
+        stmt = stmt.where(VolunteerTraining.course_id == course_id)
     if status:
-        q = q.filter_by(status=status)
-    return q.order_by(VolunteerTraining.assigned_at.desc()).all()
+        stmt = stmt.where(VolunteerTraining.status == status)
+    stmt = stmt.order_by(VolunteerTraining.assigned_at.desc())
+    return list(db.session.scalars(stmt))
 
 
 def training_compliance_report(organization_id: int) -> Dict[str, Any]:
     """Return compliance summary: how many volunteers have completed each required course."""
-    required_courses = TrainingCourse.query.filter_by(
-        organization_id=organization_id, is_required=True
-    ).all()
-    total_volunteers = Volunteer.query.filter_by(
-        organization_id=organization_id, status='active'
-    ).count()
+    required_courses = list(
+        db.session.scalars(
+            select(TrainingCourse).where(
+                TrainingCourse.organization_id == organization_id,
+                TrainingCourse.is_required == True,
+            )
+        )
+    )
+    total_volunteers = db.session.scalar(
+        select(func.count(Volunteer.id)).where(
+            Volunteer.organization_id == organization_id,
+            Volunteer.status == 'active',
+        )
+    ) or 0
 
     report = []
     for course in required_courses:
-        completed = VolunteerTraining.query.filter_by(
-            organization_id=organization_id,
-            course_id=course.id,
-            status='completed',
-        ).count()
+        completed = db.session.scalar(
+            select(func.count(VolunteerTraining.id)).where(
+                VolunteerTraining.organization_id == organization_id,
+                VolunteerTraining.course_id == course.id,
+                VolunteerTraining.status == 'completed',
+            )
+        ) or 0
         report.append({
             'course_id': course.id,
             'course_name': course.name,

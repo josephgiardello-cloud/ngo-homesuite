@@ -82,8 +82,10 @@ def list_shifts_route():
 @volunteer_bp.get('/volunteers/shifts/<int:shift_id>')
 @login_required
 def get_shift_route(shift_id: int):
-    from ngo_homesuite.models.core import VolunteerShift
-    shift = VolunteerShift.query.filter_by(id=shift_id, organization_id=_org_id()).first_or_404()
+    from ngo_homesuite.services.volunteer_service import get_shift
+    shift = get_shift(shift_id, _org_id())
+    if shift is None:
+        return jsonify({'error': 'not found'}), 404
     return jsonify(_shift_dict(shift))
 
 

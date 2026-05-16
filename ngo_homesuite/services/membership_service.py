@@ -4,7 +4,8 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional
 
-from sqlalchemy import func
+from sqlalchemy import func, select
+from werkzeug.exceptions import NotFound
 
 from ngo_homesuite.models.core import MembershipRecord, MembershipTier, db
 
@@ -40,18 +41,31 @@ def create_tier(
 
 
 def list_tiers(organization_id: int, active_only: bool = True) -> List[MembershipTier]:
-    q = MembershipTier.query.filter_by(organization_id=organization_id)
+    stmt = select(MembershipTier).where(MembershipTier.organization_id == organization_id)
     if active_only:
-        q = q.filter_by(is_active=True)
-    return q.order_by(MembershipTier.price.asc()).all()
+        stmt = stmt.where(MembershipTier.is_active == True)
+    stmt = stmt.order_by(MembershipTier.price.asc())
+    return list(db.session.scalars(stmt))
 
 
 def get_tier(tier_id: int, organization_id: int) -> Optional[MembershipTier]:
-    return MembershipTier.query.filter_by(id=tier_id, organization_id=organization_id).first()
+    return db.session.scalars(
+        select(MembershipTier).where(
+            MembershipTier.id == tier_id,
+            MembershipTier.organization_id == organization_id,
+        ).limit(1)
+    ).first()
 
 
 def update_tier(tier_id: int, organization_id: int, **fields) -> MembershipTier:
-    tier = MembershipTier.query.filter_by(id=tier_id, organization_id=organization_id).first_or_404()
+    tier = db.session.scalars(
+        select(MembershipTier).where(
+            MembershipTier.id == tier_id,
+            MembershipTier.organization_id == organization_id,
+        ).limit(1)
+    ).first()
+    if tier is None:
+        raise NotFound()
     for k, v in fields.items():
         if hasattr(tier, k):
             setattr(tier, k, v)
@@ -87,14 +101,25 @@ def enroll_member(
     payment_reference: Optional[str] = None,
     notes: Optional[str] = None,
 ) -> MembershipRecord:
-    tier = MembershipTier.query.filter_by(id=tier_id, organization_id=organization_id).first_or_404()
+    tier = db.session.scalars(
+        select(MembershipTier).where(
+            MembershipTier.id == tier_id,
+            MembershipTier.organization_id == organization_id,
+        ).limit(1)
+    ).first()
+    if tier is None:
+        raise NotFound()
     start = start_date or _today()
     end = _compute_end_date(start, tier.interval)
 
     # Lapse any existing active record for this donor in this org
-    existing = MembershipRecord.query.filter_by(
-        organization_id=organization_id, donor_id=donor_id, status="active"
-    ).all()
+    existing = list(db.session.scalars(
+        select(MembershipRecord).where(
+            MembershipRecord.organization_id == organization_id,
+            MembershipRecord.donor_id == donor_id,
+            MembershipRecord.status == "active",
+        )
+    ))
     for old in existing:
         old.status = "lapsed"
 
@@ -115,7 +140,14 @@ def enroll_member(
 
 
 def renew_membership(record_id: int, organization_id: int, *, payment_reference: Optional[str] = None) -> MembershipRecord:
-    record = MembershipRecord.query.filter_by(id=record_id, organization_id=organization_id).first_or_404()
+    record = db.session.scalars(
+        select(MembershipRecord).where(
+            MembershipRecord.id == record_id,
+            MembershipRecord.organization_id == organization_id,
+        ).limit(1)
+    ).first()
+    if record is None:
+        raise NotFound()
     tier = record.tier
     new_start = record.end_date or _today()
     new_end = _compute_end_date(new_start, tier.interval)
@@ -130,7 +162,14 @@ def renew_membership(record_id: int, organization_id: int, *, payment_reference:
 
 
 def cancel_membership(record_id: int, organization_id: int) -> MembershipRecord:
-    record = MembershipRecord.query.filter_by(id=record_id, organization_id=organization_id).first_or_404()
+    record = db.session.scalars(
+        select(MembershipRecord).where(
+            MembershipRecord.id == record_id,
+            MembershipRecord.organization_id == organization_id,
+        ).limit(1)
+    ).first()
+    if record is None:
+        raise NotFound()
     record.status = "cancelled"
     db.session.commit()
     return record
@@ -138,13 +177,12 @@ def cancel_membership(record_id: int, organization_id: int) -> MembershipRecord:
 
 def get_member_record(donor_id: int, organization_id: int) -> Optional[MembershipRecord]:
     """Return the most recent active membership record for a donor."""
-    return (
-        MembershipRecord.query.filter_by(
-            donor_id=donor_id, organization_id=organization_id, status="active"
-        )
-        .order_by(MembershipRecord.start_date.desc())
-        .first()
-    )
+    stmt = select(MembershipRecord).where(
+        MembershipRecord.donor_id == donor_id,
+        MembershipRecord.organization_id == organization_id,
+        MembershipRecord.status == "active",
+    ).order_by(MembershipRecord.start_date.desc()).limit(1)
+    return db.session.scalars(stmt).first()
 
 
 def list_members(
@@ -152,38 +190,38 @@ def list_members(
     status: Optional[str] = None,
     tier_id: Optional[int] = None,
 ) -> List[MembershipRecord]:
-    q = MembershipRecord.query.filter_by(organization_id=organization_id)
+    stmt = select(MembershipRecord).where(MembershipRecord.organization_id == organization_id)
     if status:
-        q = q.filter_by(status=status)
+        stmt = stmt.where(MembershipRecord.status == status)
     if tier_id is not None:
-        q = q.filter_by(tier_id=tier_id)
-    return q.order_by(MembershipRecord.start_date.desc()).all()
+        stmt = stmt.where(MembershipRecord.tier_id == tier_id)
+    stmt = stmt.order_by(MembershipRecord.start_date.desc())
+    return list(db.session.scalars(stmt))
 
 
 def expiring_soon(organization_id: int, within_days: int = 30) -> List[MembershipRecord]:
     """Active members whose membership expires within `within_days`."""
     cutoff = _today() + timedelta(days=within_days)
     today = _today()
-    return (
-        MembershipRecord.query.filter(
-            MembershipRecord.organization_id == organization_id,
-            MembershipRecord.status == "active",
-            MembershipRecord.end_date >= today,
-            MembershipRecord.end_date <= cutoff,
-        )
-        .order_by(MembershipRecord.end_date.asc())
-        .all()
-    )
+    stmt = select(MembershipRecord).where(
+        MembershipRecord.organization_id == organization_id,
+        MembershipRecord.status == "active",
+        MembershipRecord.end_date >= today,
+        MembershipRecord.end_date <= cutoff,
+    ).order_by(MembershipRecord.end_date.asc())
+    return list(db.session.scalars(stmt))
 
 
 def lapse_expired_memberships(organization_id: int) -> int:
     """Mark past-due active memberships as lapsed. Returns count updated."""
     today = _today()
-    records = MembershipRecord.query.filter(
-        MembershipRecord.organization_id == organization_id,
-        MembershipRecord.status == "active",
-        MembershipRecord.end_date < today,
-    ).all()
+    records = list(db.session.scalars(
+        select(MembershipRecord).where(
+            MembershipRecord.organization_id == organization_id,
+            MembershipRecord.status == "active",
+            MembershipRecord.end_date < today,
+        )
+    ))
     for r in records:
         r.status = "lapsed"
     db.session.commit()
@@ -191,13 +229,10 @@ def lapse_expired_memberships(organization_id: int) -> int:
 
 
 def membership_summary(organization_id: int) -> dict:
-    rows = (
-        db.session.query(
+    rows = db.session.connection().exec_driver_sql(
+        str(select(
             MembershipRecord.status,
             func.count(MembershipRecord.id).label("count"),
-        )
-        .filter_by(organization_id=organization_id)
-        .group_by(MembershipRecord.status)
-        .all()
-    )
-    return {r.status: r.count for r in rows}
+        ).where(MembershipRecord.organization_id == organization_id).group_by(MembershipRecord.status).compile(compile_kwargs={"literal_binds": True}))
+    ).all()
+    return {status: count for status, count in rows}

@@ -31,7 +31,8 @@ import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import func
+from sqlalchemy import func, select
+from werkzeug.exceptions import NotFound
 
 from ngo_homesuite.models.core import (
     Donation,
@@ -79,7 +80,14 @@ def update_group(
     group_id: int, organization_id: int, *, name: Optional[str] = None,
     rules: Optional[List[Dict[str, Any]]] = None, description: Optional[str] = None,
 ) -> SmartGroup:
-    group = SmartGroup.query.filter_by(id=group_id, organization_id=organization_id).first_or_404()
+    group = db.session.scalars(
+        select(SmartGroup).where(
+            SmartGroup.id == group_id,
+            SmartGroup.organization_id == organization_id,
+        ).limit(1)
+    ).first()
+    if group is None:
+        raise NotFound()
     if name:
         group.name = name
     if description is not None:
@@ -92,13 +100,24 @@ def update_group(
 
 
 def delete_group(group_id: int, organization_id: int) -> None:
-    group = SmartGroup.query.filter_by(id=group_id, organization_id=organization_id).first_or_404()
+    group = db.session.scalars(
+        select(SmartGroup).where(
+            SmartGroup.id == group_id,
+            SmartGroup.organization_id == organization_id,
+        ).limit(1)
+    ).first()
+    if group is None:
+        raise NotFound()
     db.session.delete(group)
     db.session.commit()
 
 
 def list_groups(organization_id: int) -> List[SmartGroup]:
-    return SmartGroup.query.filter_by(organization_id=organization_id, is_active=True).all()
+    stmt = select(SmartGroup).where(
+        SmartGroup.organization_id == organization_id,
+        SmartGroup.is_active == True,
+    )
+    return list(db.session.scalars(stmt))
 
 
 # ---------------------------------------------------------------------------
@@ -175,39 +194,49 @@ def _build_donor_facts(
 
 def evaluate_group(group_id: int, organization_id: int) -> List[Dict[str, Any]]:
     """Return list of matching donor dicts and update last_count."""
-    group = SmartGroup.query.filter_by(id=group_id, organization_id=organization_id).first_or_404()
+    group = db.session.scalars(
+        select(SmartGroup).where(
+            SmartGroup.id == group_id,
+            SmartGroup.organization_id == organization_id,
+        ).limit(1)
+    ).first()
+    if group is None:
+        raise NotFound()
     rules = group.rules_json if isinstance(group.rules_json, list) else json.loads(group.rules_json)
 
-    donors = Donor.query.filter_by(organization_id=organization_id).all()
+    donors = list(db.session.scalars(select(Donor).where(Donor.organization_id == organization_id)))
 
     # Build lookup maps (one DB round-trip each)
-    score_records = DonorEngagementScore.query.filter_by(organization_id=organization_id).all()
+    score_records = list(db.session.scalars(
+        select(DonorEngagementScore).where(DonorEngagementScore.organization_id == organization_id)
+    ))
     score_map = {s.donor_id: s for s in score_records}
 
-    mem_records = MembershipRecord.query.filter(
-        MembershipRecord.organization_id == organization_id,
-        MembershipRecord.status == "active",
-    ).all()
+    mem_records = list(db.session.scalars(
+        select(MembershipRecord).where(
+            MembershipRecord.organization_id == organization_id,
+            MembershipRecord.status == "active",
+        )
+    ))
     membership_map = {m.donor_id: m.status for m in mem_records}
 
-    giving_rows = (
-        db.session.query(
-            Donation.donor_id,
-            func.sum(Donation.amount).label("total"),
-            func.count(Donation.id).label("count"),
-            func.max(Donation.donation_date).label("last_gift"),
+    donations = list(
+        db.session.scalars(
+            select(Donation).where(
+                Donation.organization_id == organization_id,
+                Donation.donor_id.isnot(None),
+            )
         )
-        .filter(
-            Donation.organization_id == organization_id,
-            Donation.donor_id.isnot(None),
-        )
-        .group_by(Donation.donor_id)
-        .all()
     )
-    giving_map = {
-        r.donor_id: {"total": r.total, "count": r.count, "last_gift": r.last_gift}
-        for r in giving_rows
-    }
+    giving_map: dict[int, dict[str, Any]] = {}
+    for donation in donations:
+        if donation.donor_id is None:
+            continue
+        bucket = giving_map.setdefault(donation.donor_id, {"total": 0.0, "count": 0, "last_gift": None})
+        bucket["total"] += float(donation.amount or 0)
+        bucket["count"] += 1
+        if bucket["last_gift"] is None or (donation.donation_date is not None and donation.donation_date > bucket["last_gift"]):
+            bucket["last_gift"] = donation.donation_date
 
     results = []
     for donor in donors:

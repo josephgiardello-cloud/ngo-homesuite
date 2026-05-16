@@ -9,6 +9,9 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
+from sqlalchemy import select
+from werkzeug.exceptions import NotFound
+
 from ngo_homesuite.models.core import Donation, Grant, Task, db
 
 logger = logging.getLogger(__name__)
@@ -57,7 +60,9 @@ def create_task(
 
 
 def get_task(task_id: int, organization_id: int) -> Optional[Task]:
-    return Task.query.filter_by(id=task_id, organization_id=organization_id).first()
+    return db.session.scalars(
+        select(Task).where(Task.id == task_id, Task.organization_id == organization_id).limit(1)
+    ).first()
 
 
 def list_tasks(
@@ -70,24 +75,29 @@ def list_tasks(
     priority: Optional[str] = None,
     overdue_only: bool = False,
 ) -> List[Task]:
-    q = Task.query.filter_by(organization_id=organization_id)
+    stmt = select(Task).where(Task.organization_id == organization_id)
     if donor_id is not None:
-        q = q.filter_by(donor_id=donor_id)
+        stmt = stmt.where(Task.donor_id == donor_id)
     if grant_id is not None:
-        q = q.filter_by(grant_id=grant_id)
+        stmt = stmt.where(Task.grant_id == grant_id)
     if assigned_to_id is not None:
-        q = q.filter_by(assigned_to_id=assigned_to_id)
+        stmt = stmt.where(Task.assigned_to_id == assigned_to_id)
     if status:
-        q = q.filter_by(status=status)
+        stmt = stmt.where(Task.status == status)
     if priority:
-        q = q.filter_by(priority=priority)
+        stmt = stmt.where(Task.priority == priority)
     if overdue_only:
-        q = q.filter(Task.due_date <= _utcnow(), Task.status.in_(["open", "in_progress"]))
-    return q.order_by(Task.due_date.asc().nullslast(), Task.created_at.desc()).all()
+        stmt = stmt.where(Task.due_date <= _utcnow(), Task.status.in_(["open", "in_progress"]))
+    stmt = stmt.order_by(Task.due_date.asc().nullslast(), Task.created_at.desc())
+    return list(db.session.scalars(stmt))
 
 
 def complete_task(task_id: int, organization_id: int, *, notes: Optional[str] = None) -> Task:
-    task = Task.query.filter_by(id=task_id, organization_id=organization_id).first_or_404()
+    task = db.session.scalars(
+        select(Task).where(Task.id == task_id, Task.organization_id == organization_id).limit(1)
+    ).first()
+    if task is None:
+        raise NotFound()
     task.status = "done"
     task.completed_at = _utcnow()
     if notes:
@@ -97,7 +107,11 @@ def complete_task(task_id: int, organization_id: int, *, notes: Optional[str] = 
 
 
 def update_task(task_id: int, organization_id: int, **fields) -> Task:
-    task = Task.query.filter_by(id=task_id, organization_id=organization_id).first_or_404()
+    task = db.session.scalars(
+        select(Task).where(Task.id == task_id, Task.organization_id == organization_id).limit(1)
+    ).first()
+    if task is None:
+        raise NotFound()
     allowed = {
         "title", "description", "task_type", "priority", "status",
         "due_date", "assigned_to_id", "notes",
@@ -112,7 +126,11 @@ def update_task(task_id: int, organization_id: int, **fields) -> Task:
 
 
 def delete_task(task_id: int, organization_id: int) -> None:
-    task = Task.query.filter_by(id=task_id, organization_id=organization_id).first_or_404()
+    task = db.session.scalars(
+        select(Task).where(Task.id == task_id, Task.organization_id == organization_id).limit(1)
+    ).first()
+    if task is None:
+        raise NotFound()
     db.session.delete(task)
     db.session.commit()
 
@@ -128,7 +146,9 @@ def auto_tasks_for_major_donation(
     assigned_to_id: Optional[int] = None,
 ) -> List[Task]:
     """When a major gift is recorded, create follow-up tasks automatically."""
-    donation = Donation.query.filter_by(id=donation_id, organization_id=organization_id).first()
+    donation = db.session.scalars(
+        select(Donation).where(Donation.id == donation_id, Donation.organization_id == organization_id).limit(1)
+    ).first()
     if not donation or donation.amount < major_gift_threshold:
         return []
 
@@ -171,7 +191,9 @@ def auto_tasks_for_grant_deadline(
     assigned_to_id: Optional[int] = None,
 ) -> List[Task]:
     """Create reminder tasks before a grant deadline."""
-    grant = Grant.query.filter_by(id=grant_id, organization_id=organization_id).first()
+    grant = db.session.scalars(
+        select(Grant).where(Grant.id == grant_id, Grant.organization_id == organization_id).limit(1)
+    ).first()
     if not grant or not grant.application_deadline:
         return []
 

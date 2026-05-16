@@ -18,7 +18,8 @@ import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Dict, Optional
 
-from sqlalchemy import func
+from sqlalchemy import func, select
+from werkzeug.exceptions import NotFound
 
 from ngo_homesuite.models.core import (
     Donation,
@@ -46,10 +47,11 @@ def _utcnow() -> datetime:
 
 def _recency_score(org_id: int, donor_id: int) -> float:
     """Score based on days since last donation (25 = gave within 30 days, 0 = never gave)."""
-    last = (
-        db.session.query(func.max(Donation.donation_date))
-        .filter(Donation.organization_id == org_id, Donation.donor_id == donor_id)
-        .scalar()
+    last = db.session.scalar(
+        select(func.max(Donation.donation_date)).where(
+            Donation.organization_id == org_id,
+            Donation.donor_id == donor_id,
+        )
     )
     if not last:
         return 0.0
@@ -71,16 +73,13 @@ def _recency_score(org_id: int, donor_id: int) -> float:
 def _frequency_score(org_id: int, donor_id: int) -> float:
     """Score based on # of gifts in rolling 3-year window (25 = 10+ gifts)."""
     cutoff = _today() - timedelta(days=3 * 365)
-    count = (
-        db.session.query(func.count(Donation.id))
-        .filter(
+    count = db.session.scalar(
+        select(func.count(Donation.id)).where(
             Donation.organization_id == org_id,
             Donation.donor_id == donor_id,
             Donation.donation_date >= datetime.combine(cutoff, datetime.min.time()),
         )
-        .scalar()
-        or 0
-    )
+    ) or 0
     if count >= 10:
         return 25.0
     if count >= 7:
@@ -96,10 +95,11 @@ def _frequency_score(org_id: int, donor_id: int) -> float:
 
 def _monetary_score(org_id: int, donor_id: int, org_median: float) -> float:
     """Score based on lifetime giving vs org median (25 = 5× median)."""
-    total = (
-        db.session.query(func.coalesce(func.sum(Donation.amount), 0.0))
-        .filter(Donation.organization_id == org_id, Donation.donor_id == donor_id)
-        .scalar()
+    total = db.session.scalar(
+        select(func.coalesce(func.sum(Donation.amount), 0.0)).where(
+            Donation.organization_id == org_id,
+            Donation.donor_id == donor_id,
+        )
     )
     total = float(total or 0)
     if org_median <= 0:
@@ -123,27 +123,35 @@ def _engagement_score(org_id: int, donor_id: int) -> float:
     score = 0.0
 
     # Active membership
-    active_membership = MembershipRecord.query.filter_by(
-        organization_id=org_id, donor_id=donor_id, status="active"
+    active_membership = db.session.scalars(
+        select(MembershipRecord).where(
+            MembershipRecord.organization_id == org_id,
+            MembershipRecord.donor_id == donor_id,
+            MembershipRecord.status == "active",
+        ).limit(1)
     ).first()
     if active_membership:
         score += 10.0
 
     # Open/in-progress tasks linked to this donor
-    open_tasks = Task.query.filter(
-        Task.organization_id == org_id,
-        Task.donor_id == donor_id,
-        Task.status.in_(["open", "in_progress"]),
-    ).count()
+    open_tasks = db.session.scalar(
+        select(func.count(Task.id)).where(
+            Task.organization_id == org_id,
+            Task.donor_id == donor_id,
+            Task.status.in_(["open", "in_progress"]),
+        )
+    ) or 0
     score += min(open_tasks * 2.5, 7.5)
 
     # Recent email/task completions (signal of active relationship)
-    completed_tasks = Task.query.filter(
-        Task.organization_id == org_id,
-        Task.donor_id == donor_id,
-        Task.status == "done",
-        Task.completed_at >= datetime.combine(_today() - timedelta(days=180), datetime.min.time()),
-    ).count()
+    completed_tasks = db.session.scalar(
+        select(func.count(Task.id)).where(
+            Task.organization_id == org_id,
+            Task.donor_id == donor_id,
+            Task.status == "done",
+            Task.completed_at >= datetime.combine(_today() - timedelta(days=180), datetime.min.time()),
+        )
+    ) or 0
     score += min(completed_tasks * 1.25, 7.5)
 
     return min(score, 25.0)
@@ -151,12 +159,12 @@ def _engagement_score(org_id: int, donor_id: int) -> float:
 
 def _org_median_giving(org_id: int) -> float:
     """Approximate org-level median lifetime giving per donor."""
-    totals = (
-        db.session.query(func.coalesce(func.sum(Donation.amount), 0.0))
-        .filter(Donation.organization_id == org_id, Donation.donor_id.isnot(None))
-        .group_by(Donation.donor_id)
-        .all()
-    )
+    totals = db.session.connection().exec_driver_sql(
+        str(select(func.coalesce(func.sum(Donation.amount), 0.0)).where(
+            Donation.organization_id == org_id,
+            Donation.donor_id.isnot(None),
+        ).group_by(Donation.donor_id).compile(compile_kwargs={"literal_binds": True}))
+    ).all()
     if not totals:
         return 0.0
     vals = sorted(float(r[0]) for r in totals)
@@ -212,8 +220,11 @@ def compute_score(org_id: int, donor_id: int) -> DonorEngagementScore:
     segment, priority = _classify(total, r, f)
     explanation = _build_explanation(r, f, m, e, total)
 
-    existing = DonorEngagementScore.query.filter_by(
-        organization_id=org_id, donor_id=donor_id
+    existing = db.session.scalars(
+        select(DonorEngagementScore).where(
+            DonorEngagementScore.organization_id == org_id,
+            DonorEngagementScore.donor_id == donor_id,
+        ).limit(1)
     ).first()
     if existing:
         existing.score = total
@@ -247,7 +258,7 @@ def compute_score(org_id: int, donor_id: int) -> DonorEngagementScore:
 
 def batch_recompute(org_id: int) -> Dict[str, int]:
     """Recompute scores for all donors in an org. Returns counts."""
-    donors = Donor.query.filter_by(organization_id=org_id).all()
+    donors = list(db.session.scalars(select(Donor).where(Donor.organization_id == org_id)))
     updated = 0
     errors = 0
     for donor in donors:
@@ -261,26 +272,26 @@ def batch_recompute(org_id: int) -> Dict[str, int]:
 
 
 def get_score(org_id: int, donor_id: int) -> Optional[DonorEngagementScore]:
-    return DonorEngagementScore.query.filter_by(
-        organization_id=org_id, donor_id=donor_id
+    return db.session.scalars(
+        select(DonorEngagementScore).where(
+            DonorEngagementScore.organization_id == org_id,
+            DonorEngagementScore.donor_id == donor_id,
+        ).limit(1)
     ).first()
 
 
 def top_donors_by_score(org_id: int, limit: int = 20, segment: Optional[str] = None):
-    q = DonorEngagementScore.query.filter_by(organization_id=org_id)
+    stmt = select(DonorEngagementScore).where(DonorEngagementScore.organization_id == org_id)
     if segment:
-        q = q.filter_by(segment=segment)
-    return q.order_by(DonorEngagementScore.score.desc()).limit(limit).all()
+        stmt = stmt.where(DonorEngagementScore.segment == segment)
+    stmt = stmt.order_by(DonorEngagementScore.score.desc()).limit(limit)
+    return list(db.session.scalars(stmt))
 
 
 def high_priority_lapsed(org_id: int, limit: int = 50):
     """At-risk and lapsed donors sorted by score desc (most valuable to reactivate first)."""
-    return (
-        DonorEngagementScore.query.filter(
-            DonorEngagementScore.organization_id == org_id,
-            DonorEngagementScore.segment.in_(["at_risk", "lapsed"]),
-        )
-        .order_by(DonorEngagementScore.score.desc())
-        .limit(limit)
-        .all()
-    )
+    stmt = select(DonorEngagementScore).where(
+        DonorEngagementScore.organization_id == org_id,
+        DonorEngagementScore.segment.in_(["at_risk", "lapsed"]),
+    ).order_by(DonorEngagementScore.score.desc()).limit(limit)
+    return list(db.session.scalars(stmt))

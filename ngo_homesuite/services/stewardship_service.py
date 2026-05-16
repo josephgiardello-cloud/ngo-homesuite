@@ -9,6 +9,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
+from sqlalchemy import select
+
 from ngo_homesuite.models.core import (
     Donor,
     StewardshipEnrollment,
@@ -34,15 +36,24 @@ def enroll_donor(
     journey_id: int,
 ) -> Optional[StewardshipEnrollment]:
     """Enroll a donor in a journey.  No-ops if already enrolled and active."""
-    journey = StewardshipJourney.query.filter_by(
-        id=journey_id, organization_id=organization_id, is_active=True
+    journey = db.session.scalars(
+        select(StewardshipJourney).where(
+            StewardshipJourney.id == journey_id,
+            StewardshipJourney.organization_id == organization_id,
+            StewardshipJourney.is_active == True,
+        ).limit(1)
     ).first()
     if not journey:
         logger.warning("Journey %s not found or inactive", journey_id)
         return None
 
-    existing = StewardshipEnrollment.query.filter_by(
-        journey_id=journey_id, donor_id=donor_id, organization_id=organization_id, status="active"
+    existing = db.session.scalars(
+        select(StewardshipEnrollment).where(
+            StewardshipEnrollment.journey_id == journey_id,
+            StewardshipEnrollment.donor_id == donor_id,
+            StewardshipEnrollment.organization_id == organization_id,
+            StewardshipEnrollment.status == "active",
+        ).limit(1)
     ).first()
     if existing:
         return existing  # already enrolled
@@ -63,8 +74,11 @@ def enroll_donor(
 
 
 def cancel_enrollment(enrollment_id: int, organization_id: int) -> None:
-    enr = StewardshipEnrollment.query.filter_by(
-        id=enrollment_id, organization_id=organization_id
+    enr = db.session.scalars(
+        select(StewardshipEnrollment).where(
+            StewardshipEnrollment.id == enrollment_id,
+            StewardshipEnrollment.organization_id == organization_id,
+        ).limit(1)
     ).first()
     if enr:
         enr.status = "cancelled"
@@ -85,10 +99,12 @@ TRIGGER_MAP = {
 def _new_donors(org_id: int) -> List[int]:
     from datetime import timedelta
     cutoff = _utcnow() - timedelta(days=7)
-    rows = Donor.query.filter(
-        Donor.organization_id == org_id,
-        Donor.created_at >= cutoff,
-    ).all()
+    rows = list(db.session.scalars(
+        select(Donor).where(
+            Donor.organization_id == org_id,
+            Donor.created_at >= cutoff,
+        )
+    ))
     return [d.id for d in rows]
 
 
@@ -102,30 +118,37 @@ def _lapsed_members(org_id: int) -> List[int]:
     from ngo_homesuite.models.core import MembershipRecord
     from datetime import timezone
     today = datetime.now(timezone.utc).date()
-    rows = MembershipRecord.query.filter(
-        MembershipRecord.organization_id == org_id,
-        MembershipRecord.status == "lapsed",
-        MembershipRecord.end_date < today,
-    ).all()
+    rows = list(db.session.scalars(
+        select(MembershipRecord).where(
+            MembershipRecord.organization_id == org_id,
+            MembershipRecord.status == "lapsed",
+            MembershipRecord.end_date < today,
+        )
+    ))
     return [r.donor_id for r in rows]
 
 
 def run_auto_enrollments(organization_id: int) -> dict:
     """Find all active journeys with triggers and enroll matching donors."""
-    journeys = StewardshipJourney.query.filter_by(
-        organization_id=organization_id, is_active=True
-    ).all()
+    journeys = list(db.session.scalars(
+        select(StewardshipJourney).where(
+            StewardshipJourney.organization_id == organization_id,
+            StewardshipJourney.is_active == True,
+        )
+    ))
     enrolled = 0
     for journey in journeys:
         if journey.trigger not in TRIGGER_MAP:
             continue
         donor_ids = TRIGGER_MAP[journey.trigger](organization_id)
         for did in donor_ids:
-            existing = StewardshipEnrollment.query.filter_by(
-                journey_id=journey.id,
-                donor_id=did,
-                organization_id=organization_id,
-                status="active",
+            existing = db.session.scalars(
+                select(StewardshipEnrollment).where(
+                    StewardshipEnrollment.journey_id == journey.id,
+                    StewardshipEnrollment.donor_id == did,
+                    StewardshipEnrollment.organization_id == organization_id,
+                    StewardshipEnrollment.status == "active",
+                ).limit(1)
             ).first()
             result = enroll_donor(organization_id, did, journey.id)
             if result and existing is None:
@@ -140,11 +163,13 @@ def run_auto_enrollments(organization_id: int) -> dict:
 def process_due_steps(organization_id: int) -> dict:
     """Execute all due enrollment steps for an org. Call from scheduler."""
     now = _utcnow()
-    due = StewardshipEnrollment.query.filter(
-        StewardshipEnrollment.organization_id == organization_id,
-        StewardshipEnrollment.status == "active",
-        StewardshipEnrollment.next_step_due <= now,
-    ).all()
+    due = list(db.session.scalars(
+        select(StewardshipEnrollment).where(
+            StewardshipEnrollment.organization_id == organization_id,
+            StewardshipEnrollment.status == "active",
+            StewardshipEnrollment.next_step_due <= now,
+        )
+    ))
 
     sent_email = 0
     sent_sms = 0
@@ -177,7 +202,12 @@ def _execute_step(enrollment: StewardshipEnrollment) -> dict:
         return outcome
 
     step = steps[enrollment.current_step]
-    donor = Donor.query.filter_by(id=enrollment.donor_id, organization_id=enrollment.organization_id).first()
+    donor = db.session.scalars(
+        select(Donor).where(
+            Donor.id == enrollment.donor_id,
+            Donor.organization_id == enrollment.organization_id,
+        ).limit(1)
+    ).first()
     if not donor:
         enrollment.status = "cancelled"
         return outcome

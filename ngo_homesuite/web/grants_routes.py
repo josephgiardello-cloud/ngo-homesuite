@@ -50,7 +50,10 @@ def create_grant_route():
     if not data.get("title") or not data.get("funder_name"):
         return jsonify({"error": "title and funder_name are required"}), 400
 
-    grant = create_grant(_org_id(), **data)
+    try:
+        grant = create_grant(_org_id(), **data)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     return jsonify({"id": grant.id, "title": grant.title, "status": grant.status}), 201
 
 
@@ -65,7 +68,10 @@ def advance_grant_route(grant_id: int):
     if not new_status:
         return jsonify({"error": "new_status is required"}), 400
 
-    grant = advance_grant_status(grant_id, _org_id(), new_status=new_status, **{k: v for k, v in data.items() if k != "new_status"})
+    try:
+        grant = advance_grant_status(grant_id, _org_id(), new_status=new_status, **{k: v for k, v in data.items() if k != "new_status"})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     return jsonify({"id": grant.id, "status": grant.status})
 
 
@@ -85,7 +91,10 @@ def disburse_grant_route(grant_id: int):
     except ValueError:
         return jsonify({"error": "received_date must be ISO format YYYY-MM-DD"}), 400
 
-    disb = add_disbursement(grant_id, _org_id(), **payload)
+    try:
+        disb = add_disbursement(grant_id, _org_id(), **payload)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     return jsonify({"id": disb.id, "amount": disb.amount}), 201
 
 

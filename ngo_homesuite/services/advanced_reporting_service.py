@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import func, text
+from sqlalchemy import func, select, text
 
 from ngo_homesuite.models.core import (
     Donation,
@@ -42,60 +42,39 @@ def get_lybunt_donors(organization_id: int, reference_year: Optional[int] = None
     last_year = year - 1
 
     # Donors who donated in last_year
-    gave_last_year = (
-        db.session.query(Donation.donor_id)
-        .filter(
-            Donation.organization_id == organization_id,
-            Donation.donor_id.isnot(None),
-            func.strftime("%Y", Donation.donation_date) == str(last_year),
-        )
-        .distinct()
-        .subquery()
-    )
+    gave_last_year = select(Donation.donor_id).where(
+        Donation.organization_id == organization_id,
+        Donation.donor_id.isnot(None),
+        func.strftime("%Y", Donation.donation_date) == str(last_year),
+    ).distinct().subquery()
 
     # Donors who donated in reference_year (this year)
-    gave_this_year = (
-        db.session.query(Donation.donor_id)
-        .filter(
-            Donation.organization_id == organization_id,
-            Donation.donor_id.isnot(None),
-            func.strftime("%Y", Donation.donation_date) == str(year),
-        )
-        .distinct()
-        .subquery()
-    )
+    gave_this_year = select(Donation.donor_id).where(
+        Donation.organization_id == organization_id,
+        Donation.donor_id.isnot(None),
+        func.strftime("%Y", Donation.donation_date) == str(year),
+    ).distinct().subquery()
 
     # LYBUNT = gave last year AND NOT gave this year
-    lybunt_ids = (
-        db.session.query(gave_last_year.c.donor_id)
-        .filter(gave_last_year.c.donor_id.notin_(db.session.query(gave_this_year.c.donor_id)))
-        .subquery()
-    )
+    lybunt_ids = select(gave_last_year.c.donor_id).where(
+        gave_last_year.c.donor_id.notin_(select(gave_this_year.c.donor_id))
+    ).subquery()
 
     # Aggregate last-year gifts per donor
-    agg = (
-        db.session.query(
-            Donation.donor_id,
-            func.sum(Donation.amount).label("last_year_total"),
-            func.max(Donation.donation_date).label("last_gift_date"),
-            func.count(Donation.id).label("gift_count"),
-        )
-        .filter(
-            Donation.organization_id == organization_id,
-            Donation.donor_id.in_(db.session.query(lybunt_ids.c.donor_id)),
-            func.strftime("%Y", Donation.donation_date) == str(last_year),
-        )
-        .group_by(Donation.donor_id)
-        .subquery()
-    )
+    agg = select(
+        Donation.donor_id,
+        func.sum(Donation.amount).label("last_year_total"),
+        func.max(Donation.donation_date).label("last_gift_date"),
+        func.count(Donation.id).label("gift_count"),
+    ).where(
+        Donation.organization_id == organization_id,
+        Donation.donor_id.in_(select(lybunt_ids.c.donor_id)),
+        func.strftime("%Y", Donation.donation_date) == str(last_year),
+    ).group_by(Donation.donor_id).subquery()
 
-    rows = (
-        db.session.query(Donor, agg)
-        .join(agg, Donor.id == agg.c.donor_id)
-        .filter(Donor.organization_id == organization_id)
-        .order_by(agg.c.last_year_total.desc())
-        .all()
-    )
+    rows = db.session.connection().exec_driver_sql(
+        str(select(Donor, agg).join(agg, Donor.id == agg.c.donor_id).where(Donor.organization_id == organization_id).order_by(agg.c.last_year_total.desc()).compile(compile_kwargs={"literal_binds": True}))
+    ).all()
 
     return [
         {
@@ -117,57 +96,36 @@ def get_sybunt_donors(organization_id: int, reference_year: Optional[int] = None
     year = reference_year or _today().year
 
     # Donors who gave in any year before reference_year
-    gave_some_year = (
-        db.session.query(Donation.donor_id)
-        .filter(
-            Donation.organization_id == organization_id,
-            Donation.donor_id.isnot(None),
-            func.strftime("%Y", Donation.donation_date) < str(year),
-        )
-        .distinct()
-        .subquery()
-    )
+    gave_some_year = select(Donation.donor_id).where(
+        Donation.organization_id == organization_id,
+        Donation.donor_id.isnot(None),
+        func.strftime("%Y", Donation.donation_date) < str(year),
+    ).distinct().subquery()
 
     # Donors who donated in reference_year
-    gave_this_year = (
-        db.session.query(Donation.donor_id)
-        .filter(
-            Donation.organization_id == organization_id,
-            Donation.donor_id.isnot(None),
-            func.strftime("%Y", Donation.donation_date) == str(year),
-        )
-        .distinct()
-        .subquery()
-    )
+    gave_this_year = select(Donation.donor_id).where(
+        Donation.organization_id == organization_id,
+        Donation.donor_id.isnot(None),
+        func.strftime("%Y", Donation.donation_date) == str(year),
+    ).distinct().subquery()
 
-    sybunt_ids = (
-        db.session.query(gave_some_year.c.donor_id)
-        .filter(gave_some_year.c.donor_id.notin_(db.session.query(gave_this_year.c.donor_id)))
-        .subquery()
-    )
+    sybunt_ids = select(gave_some_year.c.donor_id).where(
+        gave_some_year.c.donor_id.notin_(select(gave_this_year.c.donor_id))
+    ).subquery()
 
-    agg = (
-        db.session.query(
-            Donation.donor_id,
-            func.sum(Donation.amount).label("lifetime_total"),
-            func.max(Donation.donation_date).label("last_gift_date"),
-            func.count(Donation.id).label("gift_count"),
-        )
-        .filter(
-            Donation.organization_id == organization_id,
-            Donation.donor_id.in_(db.session.query(sybunt_ids.c.donor_id)),
-        )
-        .group_by(Donation.donor_id)
-        .subquery()
-    )
+    agg = select(
+        Donation.donor_id,
+        func.sum(Donation.amount).label("lifetime_total"),
+        func.max(Donation.donation_date).label("last_gift_date"),
+        func.count(Donation.id).label("gift_count"),
+    ).where(
+        Donation.organization_id == organization_id,
+        Donation.donor_id.in_(select(sybunt_ids.c.donor_id)),
+    ).group_by(Donation.donor_id).subquery()
 
-    rows = (
-        db.session.query(Donor, agg)
-        .join(agg, Donor.id == agg.c.donor_id)
-        .filter(Donor.organization_id == organization_id)
-        .order_by(agg.c.last_gift_date.desc())
-        .all()
-    )
+    rows = db.session.connection().exec_driver_sql(
+        str(select(Donor, agg).join(agg, Donor.id == agg.c.donor_id).where(Donor.organization_id == organization_id).order_by(agg.c.last_gift_date.desc()).compile(compile_kwargs={"literal_binds": True}))
+    ).all()
 
     return [
         {
@@ -190,13 +148,17 @@ def get_sybunt_donors(organization_id: int, reference_year: Optional[int] = None
 
 def get_supporter_timeline(organization_id: int, donor_id: int) -> Dict[str, Any]:
     """Aggregate all touchpoints for a donor into a chronological timeline."""
-    donor = Donor.query.filter_by(id=donor_id, organization_id=organization_id).first_or_404()
+    donor = db.session.scalars(
+        select(Donor).where(Donor.id == donor_id, Donor.organization_id == organization_id).limit(1)
+    ).first()
+    if donor is None:
+        raise NotFound()
     events: List[Dict[str, Any]] = []
 
     # Donations
-    donations = Donation.query.filter_by(
-        organization_id=organization_id, donor_id=donor_id
-    ).order_by(Donation.donation_date.asc()).all()
+    donations = list(db.session.scalars(
+        select(Donation).where(Donation.organization_id == organization_id, Donation.donor_id == donor_id).order_by(Donation.donation_date.asc())
+    ))
     for d in donations:
         events.append(
             {
@@ -215,9 +177,9 @@ def get_supporter_timeline(organization_id: int, donor_id: int) -> Dict[str, Any
         )
 
     # Memberships
-    memberships = MembershipRecord.query.filter_by(
-        organization_id=organization_id, donor_id=donor_id
-    ).order_by(MembershipRecord.start_date.asc()).all()
+    memberships = list(db.session.scalars(
+        select(MembershipRecord).where(MembershipRecord.organization_id == organization_id, MembershipRecord.donor_id == donor_id).order_by(MembershipRecord.start_date.asc())
+    ))
     for m in memberships:
         events.append(
             {
@@ -284,17 +246,13 @@ def donor_retention_rate(organization_id: int, year: Optional[int] = None) -> Di
     prior_year = current_year - 1
 
     def _donor_ids_for_year(y: int):
-        return {
-            row[0]
-            for row in db.session.query(Donation.donor_id)
-            .filter(
+        return set(db.session.scalars(
+            select(Donation.donor_id).where(
                 Donation.organization_id == organization_id,
                 Donation.donor_id.isnot(None),
                 func.strftime("%Y", Donation.donation_date) == str(y),
-            )
-            .distinct()
-            .all()
-        }
+            ).distinct()
+        ).all())
 
     prior = _donor_ids_for_year(prior_year)
     current = _donor_ids_for_year(current_year)
@@ -316,18 +274,14 @@ def donor_retention_rate(organization_id: int, year: Optional[int] = None) -> Di
 
 def giving_summary_by_year(organization_id: int) -> List[Dict[str, Any]]:
     """Year-by-year donation totals and donor counts."""
-    rows = (
-        db.session.query(
+    rows = db.session.connection().exec_driver_sql(
+        str(select(
             func.strftime("%Y", Donation.donation_date).label("year"),
             func.count(Donation.id).label("gift_count"),
             func.count(func.distinct(Donation.donor_id)).label("donor_count"),
             func.sum(Donation.amount).label("total"),
-        )
-        .filter(Donation.organization_id == organization_id)
-        .group_by(func.strftime("%Y", Donation.donation_date))
-        .order_by(text("year ASC"))
-        .all()
-    )
+        ).where(Donation.organization_id == organization_id).group_by(func.strftime("%Y", Donation.donation_date)).order_by(text("year ASC")).compile(compile_kwargs={"literal_binds": True}))
+    ).all()
     return [
         {
             "year": r.year,
@@ -359,39 +313,35 @@ def funder_report(
     end = end_date or today
 
     # Donations attributed to funder (by donor name match)
-    donation_rows = (
-        Donation.query.filter(
+    donation_rows = list(db.session.scalars(
+        select(Donation).where(
             Donation.organization_id == organization_id,
             Donation.donation_date >= datetime(start.year, start.month, start.day),
             Donation.donation_date <= datetime(end.year, end.month, end.day, 23, 59, 59),
             Donation.donor_name.ilike(f"%{funder_name}%"),
         )
-        .all()
-    )
+    ))
     total_donated = sum(d.amount for d in donation_rows)
 
     # Grants from this funder
-    grant_rows = (
-        Grant.query.filter(
+    grant_rows = list(db.session.scalars(
+        select(Grant).where(
             Grant.organization_id == organization_id,
             Grant.funder_name.ilike(f"%{funder_name}%"),
         )
-        .all()
-    )
+    ))
     total_granted = sum(g.amount_awarded or 0.0 for g in grant_rows)
     total_requested = sum(g.amount_requested or 0.0 for g in grant_rows)
 
     # Disbursements within date range
-    disbursement_rows = (
-        GrantDisbursement.query.join(Grant)
-        .filter(
+    disbursement_rows = list(db.session.scalars(
+        select(GrantDisbursement).join(Grant).where(
             Grant.organization_id == organization_id,
             Grant.funder_name.ilike(f"%{funder_name}%"),
             GrantDisbursement.received_date >= start,
             GrantDisbursement.received_date <= end,
         )
-        .all()
-    )
+    ))
     total_disbursed = sum(d.amount for d in disbursement_rows)
 
     return {
@@ -471,15 +421,17 @@ def create_scheduled_report(
 
 
 def list_scheduled_reports(organization_id: int) -> List[ScheduledReport]:
-    return (
-        ScheduledReport.query.filter_by(organization_id=organization_id)
-        .order_by(ScheduledReport.created_at.desc())
-        .all()
-    )
+    return list(db.session.scalars(
+        select(ScheduledReport).where(ScheduledReport.organization_id == organization_id).order_by(ScheduledReport.created_at.desc())
+    ))
 
 
 def update_scheduled_report(report_id: int, organization_id: int, **fields) -> ScheduledReport:
-    report = ScheduledReport.query.filter_by(id=report_id, organization_id=organization_id).first_or_404()
+    report = db.session.scalars(
+        select(ScheduledReport).where(ScheduledReport.id == report_id, ScheduledReport.organization_id == organization_id).limit(1)
+    ).first()
+    if report is None:
+        raise NotFound()
     allowed = {"name", "report_type", "frequency", "delivery_email", "parameters", "is_active"}
     for key, value in fields.items():
         if key in allowed:
@@ -489,7 +441,11 @@ def update_scheduled_report(report_id: int, organization_id: int, **fields) -> S
 
 
 def delete_scheduled_report(report_id: int, organization_id: int) -> None:
-    report = ScheduledReport.query.filter_by(id=report_id, organization_id=organization_id).first_or_404()
+    report = db.session.scalars(
+        select(ScheduledReport).where(ScheduledReport.id == report_id, ScheduledReport.organization_id == organization_id).limit(1)
+    ).first()
+    if report is None:
+        raise NotFound()
     db.session.delete(report)
     db.session.commit()
 

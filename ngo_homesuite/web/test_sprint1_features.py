@@ -13,6 +13,7 @@ from ngo_homesuite.models.core import (
     Expense,
     Organization,
     P2PPage,
+    Project,
     RecurringDonationPlan,
     db,
 )
@@ -284,6 +285,60 @@ def test_process_recurring_marks_failure_without_email(client, app):
         assert refreshed.last_error
 
 
+def test_process_recurring_creates_donation_and_receipt(client, app):
+    _login_admin(client)
+
+    with app.app_context():
+        org = Organization.query.filter_by(is_active=True).first()
+        donor = Donor(
+            organization_id=org.id,
+            name="Recurring Success",
+            email="recurring.success@example.org",
+            donor_type="individual",
+        )
+        db.session.add(donor)
+        db.session.flush()
+
+        plan = RecurringDonationPlan(
+            organization_id=org.id,
+            donor_id=donor.id,
+            amount=27.0,
+            currency="USD",
+            frequency="monthly",
+            payment_method="credit_card",
+            purpose="Recurring Success Campaign",
+            next_charge_date=date.today(),
+            status="active",
+        )
+        db.session.add(plan)
+        db.session.commit()
+        plan_id = plan.id
+
+    rv = client.post("/donations/recurring/process", follow_redirects=True)
+    assert rv.status_code == 200
+
+    with app.app_context():
+        refreshed = db.session.get(RecurringDonationPlan, plan_id)
+        assert refreshed.status == "active"
+        assert refreshed.fail_count == 0
+        assert refreshed.last_error is None
+
+        donation = (
+            Donation.query.filter_by(
+                organization_id=refreshed.organization_id,
+                donor_id=refreshed.donor_id,
+                purpose="Recurring Success Campaign",
+            )
+            .order_by(Donation.id.desc())
+            .first()
+        )
+        assert donation is not None
+        assert donation.status == "receipted"
+
+        receipt = DonationReceipt.query.filter_by(donation_id=donation.id).first()
+        assert receipt is not None
+
+
 def test_donor_detail_page_shows_profile_metrics(client, app):
     _login_admin(client)
 
@@ -395,3 +450,89 @@ def test_expenses_export_iif_returns_payload(client, app):
     body = rv.get_data(as_text=True)
     assert "!TRNS" in body
     assert "CHECK" in body
+
+
+def test_projects_page_and_exports_render(client, app):
+    _login_admin(client)
+
+    with app.app_context():
+        org = Organization.query.filter_by(is_active=True).first()
+        project = Project(
+            organization_id=org.id,
+            name="Project Service Migration",
+            description="Project route service test",
+            program="Core Programs",
+            budget=1000.0,
+            spent=250.0,
+            currency="USD",
+            status="active",
+        )
+        db.session.add(project)
+        db.session.commit()
+
+    rv = client.get("/projects")
+    assert rv.status_code == 200
+    assert "Project Service Migration" in rv.get_data(as_text=True)
+
+    csv_rv = client.get("/projects/export/csv")
+    assert csv_rv.status_code == 200
+    assert csv_rv.mimetype == "text/csv"
+
+    xlsx_rv = client.get("/projects/export/xlsx")
+    assert xlsx_rv.status_code == 200
+    assert xlsx_rv.mimetype == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def test_project_create_and_edit_flow(client, app):
+    _login_admin(client)
+
+    create_rv = client.post(
+        "/projects/new",
+        data={
+            "name": "Created Via Route",
+            "description": "Created in test",
+            "program": "Ops",
+            "budget": "500",
+            "spent": "50",
+            "currency": "USD",
+            "status": "planned",
+        },
+        follow_redirects=True,
+    )
+    assert create_rv.status_code == 200
+
+    with app.app_context():
+        org = Organization.query.filter_by(is_active=True).first()
+        project = Project.query.filter_by(organization_id=org.id, name="Created Via Route").first()
+        assert project is not None
+        project_id = project.id
+
+    edit_rv = client.post(
+        f"/projects/{project_id}/edit",
+        data={
+            "name": "Created Via Route",
+            "description": "Updated in test",
+            "program": "Ops",
+            "budget": "600",
+            "spent": "100",
+            "currency": "USD",
+            "status": "active",
+        },
+        follow_redirects=True,
+    )
+    assert edit_rv.status_code == 200
+
+    with app.app_context():
+        refreshed = db.session.get(Project, project_id)
+        assert refreshed.description == "Updated in test"
+        assert float(refreshed.budget) == 600.0
+        assert refreshed.status == "active"
+
+
+def test_reports_page_renders_with_financial_totals(client, app):
+    _login_admin(client)
+
+    rv = client.get("/reports")
+    assert rv.status_code == 200
+    body = rv.get_data(as_text=True)
+    assert "Reports" in body

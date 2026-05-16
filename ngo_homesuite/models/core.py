@@ -255,6 +255,7 @@ class RecurringDonationPlan(db.Model):
     status = db.Column(db.String(20), default='active', nullable=False)  # active, paused, failed, cancelled
     fail_count = db.Column(db.Integer, default=0, nullable=False)
     last_error = db.Column(db.Text, nullable=True)
+    version_id = db.Column(db.Integer, nullable=False, default=0)
     created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
     updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
 
@@ -262,6 +263,10 @@ class RecurringDonationPlan(db.Model):
 
     def __repr__(self):
         return f'<RecurringDonationPlan donor={self.donor_id} {self.frequency} {self.amount} {self.currency}>'
+
+    __mapper_args__ = {
+        'version_id_col': version_id,
+    }
 
 
 class DonationReceipt(db.Model):

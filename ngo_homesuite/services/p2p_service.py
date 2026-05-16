@@ -10,7 +10,8 @@ import re
 import unicodedata
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import and_, func
+from sqlalchemy import select
+from werkzeug.exceptions import NotFound
 
 from ngo_homesuite.models.core import Donation, Donor, P2PPage, P2PPageDonation, db
 
@@ -29,10 +30,20 @@ def _slugify(text: str) -> str:
 
 def _unique_slug(base: str) -> str:
     slug = _slugify(base)
-    if not P2PPage.query.filter_by(public_slug=slug).first():
+    existing = db.session.scalars(select(P2PPage).where(P2PPage.public_slug == slug).limit(1)).first()
+    if existing is None:
         return slug
     import secrets
     return f"{slug}-{secrets.token_urlsafe(4)}"
+
+
+def _get_page_or_404(page_id: int, organization_id: int) -> P2PPage:
+    page = db.session.scalars(
+        select(P2PPage).where(P2PPage.id == page_id, P2PPage.organization_id == organization_id).limit(1)
+    ).first()
+    if page is None:
+        raise NotFound()
+    return page
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +60,9 @@ def create_page(
     campaign_slug: Optional[str] = None,
     slug: Optional[str] = None,
 ) -> P2PPage:
-    donor = Donor.query.filter_by(id=donor_id, organization_id=organization_id).first()
+    donor = db.session.scalars(
+        select(Donor).where(Donor.id == donor_id, Donor.organization_id == organization_id).limit(1)
+    ).first()
     if donor is None:
         raise ValueError("invalid resource reference")
 
@@ -86,7 +99,7 @@ def create_page(
 
 
 def publish_page(page_id: int, organization_id: int) -> P2PPage:
-    page = P2PPage.query.filter_by(id=page_id, organization_id=organization_id).first_or_404()
+    page = _get_page_or_404(page_id, organization_id)
     page.status = "active"
     db.session.commit()
     try:
@@ -104,7 +117,7 @@ def publish_page(page_id: int, organization_id: int) -> P2PPage:
 
 
 def close_page(page_id: int, organization_id: int) -> P2PPage:
-    page = P2PPage.query.filter_by(id=page_id, organization_id=organization_id).first_or_404()
+    page = _get_page_or_404(page_id, organization_id)
     page.status = "closed"
     db.session.commit()
     try:
@@ -129,7 +142,7 @@ def update_page(
     story: Optional[str] = None,
     goal_amount: Optional[float] = None,
 ) -> P2PPage:
-    page = P2PPage.query.filter_by(id=page_id, organization_id=organization_id).first_or_404()
+    page = _get_page_or_404(page_id, organization_id)
     if title is not None:
         page.title = title
     if story is not None:
@@ -141,11 +154,13 @@ def update_page(
 
 
 def get_page(page_id: int, organization_id: int) -> Optional[P2PPage]:
-    return P2PPage.query.filter_by(id=page_id, organization_id=organization_id).first()
+    return db.session.scalars(
+        select(P2PPage).where(P2PPage.id == page_id, P2PPage.organization_id == organization_id).limit(1)
+    ).first()
 
 
 def get_page_by_slug(slug: str) -> Optional[P2PPage]:
-    return P2PPage.query.filter_by(public_slug=slug).first()
+    return db.session.scalars(select(P2PPage).where(P2PPage.public_slug == slug).limit(1)).first()
 
 
 def list_pages(
@@ -155,14 +170,15 @@ def list_pages(
     status: Optional[str] = None,
     campaign_slug: Optional[str] = None,
 ) -> List[P2PPage]:
-    q = P2PPage.query.filter_by(organization_id=organization_id)
+    stmt = select(P2PPage).where(P2PPage.organization_id == organization_id)
     if donor_id is not None:
-        q = q.filter_by(donor_id=donor_id)
+        stmt = stmt.where(P2PPage.donor_id == donor_id)
     if status:
-        q = q.filter_by(status=status)
+        stmt = stmt.where(P2PPage.status == status)
     if campaign_slug:
-        q = q.filter_by(campaign_slug=campaign_slug)
-    return q.order_by(P2PPage.created_at.desc()).all()
+        stmt = stmt.where(P2PPage.campaign_slug == campaign_slug)
+    stmt = stmt.order_by(P2PPage.created_at.desc())
+    return list(db.session.scalars(stmt))
 
 
 # ---------------------------------------------------------------------------
@@ -171,12 +187,18 @@ def list_pages(
 
 def link_donation(page_id: int, organization_id: int, donation_id: int) -> P2PPageDonation:
     """Associate an existing donation record with a P2P page."""
-    P2PPage.query.filter_by(id=page_id, organization_id=organization_id).first_or_404()
-    donation = Donation.query.filter_by(id=donation_id, organization_id=organization_id).first()
+    _get_page_or_404(page_id, organization_id)
+    donation = db.session.scalars(
+        select(Donation).where(Donation.id == donation_id, Donation.organization_id == organization_id).limit(1)
+    ).first()
     if donation is None:
         raise ValueError("invalid resource reference")
 
-    existing = P2PPageDonation.query.filter_by(page_id=page_id, donation_id=donation_id).first()
+    existing = db.session.scalars(
+        select(P2PPageDonation)
+        .where(P2PPageDonation.page_id == page_id, P2PPageDonation.donation_id == donation_id)
+        .limit(1)
+    ).first()
     if existing:
         return existing
     link = P2PPageDonation(page_id=page_id, donation_id=donation_id)
@@ -200,12 +222,18 @@ def link_donation(page_id: int, organization_id: int, donation_id: int) -> P2PPa
 
 
 def unlink_donation(page_id: int, organization_id: int, donation_id: int) -> None:
-    P2PPage.query.filter_by(id=page_id, organization_id=organization_id).first_or_404()
-    donation = Donation.query.filter_by(id=donation_id, organization_id=organization_id).first()
+    _get_page_or_404(page_id, organization_id)
+    donation = db.session.scalars(
+        select(Donation).where(Donation.id == donation_id, Donation.organization_id == organization_id).limit(1)
+    ).first()
     if donation is None:
         raise ValueError("invalid resource reference")
 
-    link = P2PPageDonation.query.filter_by(page_id=page_id, donation_id=donation_id).first()
+    link = db.session.scalars(
+        select(P2PPageDonation)
+        .where(P2PPageDonation.page_id == page_id, P2PPageDonation.donation_id == donation_id)
+        .limit(1)
+    ).first()
     if link:
         db.session.delete(link)
         db.session.commit()
@@ -217,16 +245,20 @@ def unlink_donation(page_id: int, organization_id: int, donation_id: int) -> Non
 
 def get_progress(page_id: int, organization_id: int) -> Dict[str, Any]:
     """Return current raised amount, donor count, and percentage of goal."""
-    page = P2PPage.query.filter_by(id=page_id, organization_id=organization_id).first_or_404()
+    page = _get_page_or_404(page_id, organization_id)
 
-    links = P2PPageDonation.query.filter_by(page_id=page_id).all()
+    links = list(db.session.scalars(select(P2PPageDonation).where(P2PPageDonation.page_id == page_id)))
     donation_ids = [lnk.donation_id for lnk in links]
 
     if donation_ids:
-        donations = Donation.query.filter(
-            Donation.id.in_(donation_ids),
-            Donation.organization_id == organization_id,
-        ).all()
+        donations = list(
+            db.session.scalars(
+                select(Donation).where(
+                    Donation.id.in_(donation_ids),
+                    Donation.organization_id == organization_id,
+                )
+            )
+        )
         total_raised = sum(d.amount for d in donations if d.amount)
         donor_ids = {d.donor_id for d in donations if d.donor_id}
     else:
@@ -259,39 +291,48 @@ def leaderboard(
     safe_limit = max(1, min(int(limit), 100))
     safe_offset = max(0, int(offset))
 
-    q = (
-        db.session.query(
-            P2PPage.id.label("page_id"),
-            P2PPage.title.label("title"),
-            P2PPage.public_slug.label("slug"),
-            func.coalesce(func.sum(Donation.amount), 0.0).label("raised"),
-        )
-        .outerjoin(P2PPageDonation, P2PPageDonation.page_id == P2PPage.id)
-        .outerjoin(
-            Donation,
-            and_(
-                Donation.id == P2PPageDonation.donation_id,
-                Donation.organization_id == organization_id,
-            ),
-        )
-        .filter(P2PPage.organization_id == organization_id, P2PPage.status == "active")
-    )
+    stmt = select(P2PPage).where(P2PPage.organization_id == organization_id, P2PPage.status == "active")
     if campaign_slug:
-        q = q.filter(P2PPage.campaign_slug == campaign_slug)
+        stmt = stmt.where(P2PPage.campaign_slug == campaign_slug)
+    pages = list(db.session.scalars(stmt))
+    if not pages:
+        return []
 
-    rows = (
-        q.group_by(P2PPage.id, P2PPage.title, P2PPage.public_slug)
-        .order_by(func.coalesce(func.sum(Donation.amount), 0.0).desc(), P2PPage.id.asc())
-        .offset(safe_offset)
-        .limit(safe_limit)
-        .all()
+    page_ids = [int(p.id) for p in pages if p.id is not None]
+    links = list(db.session.scalars(select(P2PPageDonation).where(P2PPageDonation.page_id.in_(page_ids))))
+    donation_ids = [int(link.donation_id) for link in links if link.donation_id is not None]
+    donations_by_id: dict[int, Donation] = {}
+    if donation_ids:
+        donations = list(
+            db.session.scalars(
+                select(Donation).where(
+                    Donation.id.in_(donation_ids),
+                    Donation.organization_id == organization_id,
+                )
+            )
+        )
+        donations_by_id = {int(d.id): d for d in donations if d.id is not None}
+
+    raised_by_page: dict[int, float] = {int(p.id): 0.0 for p in pages if p.id is not None}
+    for link in links:
+        if link.page_id is None or link.donation_id is None:
+            continue
+        donation = donations_by_id.get(int(link.donation_id))
+        if donation is None:
+            continue
+        raised_by_page[int(link.page_id)] += float(donation.amount or 0.0)
+
+    ranked_pages = sorted(
+        [p for p in pages if p.id is not None],
+        key=lambda p: (-raised_by_page.get(int(p.id), 0.0), int(p.id)),
     )
+    sliced = ranked_pages[safe_offset:safe_offset + safe_limit]
     return [
         {
-            "page_id": int(r.page_id),
-            "title": str(r.title),
-            "slug": str(r.slug),
-            "raised": float(r.raised or 0.0),
+            "page_id": int(page.id),
+            "title": str(page.title),
+            "slug": str(page.public_slug),
+            "raised": float(raised_by_page.get(int(page.id), 0.0)),
         }
-        for r in rows
+        for page in sliced
     ]

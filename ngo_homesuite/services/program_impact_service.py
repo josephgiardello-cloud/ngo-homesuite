@@ -12,6 +12,9 @@ from datetime import date, datetime, timezone
 from email.message import EmailMessage
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy import func, select
+from werkzeug.exceptions import NotFound
+
 from ngo_homesuite.models.core import (
     Beneficiary,
     BeneficiaryAppointment,
@@ -29,6 +32,27 @@ from ngo_homesuite.models.core import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _get_case_or_404(case_id: int, organization_id: int) -> ProgramCase:
+    case = db.session.scalars(
+        select(ProgramCase).where(ProgramCase.id == case_id, ProgramCase.organization_id == organization_id).limit(1)
+    ).first()
+    if case is None:
+        raise NotFound()
+    return case
+
+
+def _get_beneficiary_or_404(beneficiary_id: int, organization_id: int) -> Beneficiary:
+    beneficiary = db.session.scalars(
+        select(Beneficiary).where(
+            Beneficiary.id == beneficiary_id,
+            Beneficiary.organization_id == organization_id,
+        ).limit(1)
+    ).first()
+    if beneficiary is None:
+        raise NotFound()
+    return beneficiary
 
 
 def _utcnow() -> datetime:
@@ -116,7 +140,9 @@ def create_case(
 
 
 def get_case(case_id: int, organization_id: int) -> Optional[ProgramCase]:
-    return ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first()
+    return db.session.scalars(
+        select(ProgramCase).where(ProgramCase.id == case_id, ProgramCase.organization_id == organization_id).limit(1)
+    ).first()
 
 
 def list_cases(
@@ -127,16 +153,17 @@ def list_cases(
     donor_id: Optional[int] = None,
     project_id: Optional[int] = None,
 ) -> List[ProgramCase]:
-    q = ProgramCase.query.filter_by(organization_id=organization_id)
+    stmt = select(ProgramCase).where(ProgramCase.organization_id == organization_id)
     if status:
-        q = q.filter_by(status=status)
+        stmt = stmt.where(ProgramCase.status == status)
     if case_type:
-        q = q.filter_by(case_type=case_type)
+        stmt = stmt.where(ProgramCase.case_type == case_type)
     if donor_id:
-        q = q.filter_by(donor_id=donor_id)
+        stmt = stmt.where(ProgramCase.donor_id == donor_id)
     if project_id:
-        q = q.filter_by(project_id=project_id)
-    return q.order_by(ProgramCase.created_at.desc()).all()
+        stmt = stmt.where(ProgramCase.project_id == project_id)
+    stmt = stmt.order_by(ProgramCase.created_at.desc())
+    return list(db.session.scalars(stmt))
 
 
 def update_case_status(
@@ -148,7 +175,7 @@ def update_case_status(
     notes: Optional[str] = None,
     actor_id: Optional[int] = None,
 ) -> ProgramCase:
-    case = ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    case = _get_case_or_404(case_id, organization_id)
     old_status = case.status
     case.status = new_status
     if outcome_value is not None:
@@ -174,7 +201,7 @@ def update_case_details(
     organization_id: int,
     **fields,
 ) -> ProgramCase:
-    case = ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    case = _get_case_or_404(case_id, organization_id)
     allowed = {
         "title",
         "case_type",
@@ -229,7 +256,7 @@ def add_note(
     activity_type: str = "note",
     actor_id: Optional[int] = None,
 ) -> CaseActivity:
-    ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    _get_case_or_404(case_id, organization_id)
     activity = _log_activity(
         case_id,
         organization_id,
@@ -256,7 +283,7 @@ def update_beneficiary_intake(
     status: Optional[str] = None,
     notes: Optional[str] = None,
 ) -> Beneficiary:
-    beneficiary = Beneficiary.query.filter_by(id=beneficiary_id, organization_id=organization_id).first_or_404()
+    beneficiary = _get_beneficiary_or_404(beneficiary_id, organization_id)
     fields = {
         "first_name": first_name,
         "last_name": last_name,
@@ -288,7 +315,7 @@ def log_service_delivery(
     metadata: Optional[dict[str, Any]] = None,
     staff_user_id: Optional[int] = None,
 ) -> BeneficiaryServiceLog:
-    case = ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    case = _get_case_or_404(case_id, organization_id)
     log = BeneficiaryServiceLog(
         organization_id=organization_id,
         case_id=case.id,
@@ -314,13 +341,16 @@ def log_service_delivery(
 
 
 def list_service_logs(case_id: int, organization_id: int) -> List[BeneficiaryServiceLog]:
-    ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
-    return (
-        BeneficiaryServiceLog.query
-        .filter_by(case_id=case_id, organization_id=organization_id)
+    _get_case_or_404(case_id, organization_id)
+    stmt = (
+        select(BeneficiaryServiceLog)
+        .where(
+            BeneficiaryServiceLog.case_id == case_id,
+            BeneficiaryServiceLog.organization_id == organization_id,
+        )
         .order_by(BeneficiaryServiceLog.service_date.asc())
-        .all()
     )
+    return list(db.session.scalars(stmt))
 
 
 def record_outcome_metric(
@@ -334,7 +364,7 @@ def record_outcome_metric(
     target_value: Optional[float] = None,
     note: Optional[str] = None,
 ) -> CaseOutcomeMetric:
-    case = ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    case = _get_case_or_404(case_id, organization_id)
     metric = CaseOutcomeMetric(
         organization_id=organization_id,
         case_id=case.id,
@@ -365,19 +395,27 @@ def record_outcome_metric(
 
 
 def case_progress(case_id: int, organization_id: int) -> Dict[str, Any]:
-    case = ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    case = _get_case_or_404(case_id, organization_id)
     logs = list_service_logs(case_id, organization_id)
-    metrics = (
-        CaseOutcomeMetric.query
-        .filter_by(case_id=case_id, organization_id=organization_id)
-        .order_by(CaseOutcomeMetric.recorded_at.asc())
-        .all()
+    metrics = list(
+        db.session.scalars(
+            select(CaseOutcomeMetric)
+            .where(
+                CaseOutcomeMetric.case_id == case_id,
+                CaseOutcomeMetric.organization_id == organization_id,
+            )
+            .order_by(CaseOutcomeMetric.recorded_at.asc())
+        )
     )
-    activities = (
-        CaseActivity.query
-        .filter_by(case_id=case_id, organization_id=organization_id)
-        .order_by(CaseActivity.created_at.asc())
-        .all()
+    activities = list(
+        db.session.scalars(
+            select(CaseActivity)
+            .where(
+                CaseActivity.case_id == case_id,
+                CaseActivity.organization_id == organization_id,
+            )
+            .order_by(CaseActivity.created_at.asc())
+        )
     )
 
     return {
@@ -408,7 +446,7 @@ def case_progress(case_id: int, organization_id: int) -> Dict[str, Any]:
 
 
 def delete_case(case_id: int, organization_id: int) -> None:
-    case = ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    case = _get_case_or_404(case_id, organization_id)
     db.session.delete(case)
     db.session.commit()
 
@@ -420,10 +458,15 @@ def _recompute_case_progress(case: ProgramCase) -> None:
         return
 
     latest = (
-        CaseOutcomeMetric.query
-        .filter_by(case_id=case.id, organization_id=case.organization_id)
-        .order_by(CaseOutcomeMetric.recorded_at.desc())
-        .first()
+        db.session.scalars(
+            select(CaseOutcomeMetric)
+            .where(
+                CaseOutcomeMetric.case_id == case.id,
+                CaseOutcomeMetric.organization_id == case.organization_id,
+            )
+            .order_by(CaseOutcomeMetric.recorded_at.desc())
+            .limit(1)
+        ).first()
     )
     if latest and latest.target_value and latest.target_value > 0:
         pct = (float(latest.current_value) / float(latest.target_value)) * 100.0
@@ -463,10 +506,10 @@ def _log_activity(
 
 def impact_report(organization_id: int, *, case_type: Optional[str] = None) -> Dict[str, Any]:
     """Aggregate outcome metrics across all cases, optionally filtered by case_type."""
-    q = ProgramCase.query.filter_by(organization_id=organization_id)
+    stmt = select(ProgramCase).where(ProgramCase.organization_id == organization_id)
     if case_type:
-        q = q.filter_by(case_type=case_type)
-    cases = q.all()
+        stmt = stmt.where(ProgramCase.case_type == case_type)
+    cases = list(db.session.scalars(stmt))
 
     by_status: Dict[str, int] = {}
     outcomes: List[Dict[str, Any]] = []
@@ -495,13 +538,10 @@ def impact_report(organization_id: int, *, case_type: Optional[str] = None) -> D
 
 def list_case_types(organization_id: int) -> List[str]:
     """Return distinct case_type values used by this org."""
-    rows = (
-        db.session.query(ProgramCase.case_type)
-        .filter(ProgramCase.organization_id == organization_id)
-        .distinct()
-        .all()
-    )
-    return sorted(r[0] for r in rows if r[0])
+    rows = db.session.scalars(
+        select(ProgramCase.case_type).where(ProgramCase.organization_id == organization_id).distinct()
+    ).all()
+    return sorted(str(r) for r in rows if r)
 
 
 # ---------------------------------------------------------------------------
@@ -525,7 +565,7 @@ def create_assessment(
     notes: Optional[str] = None,
     assessor_id: Optional[int] = None,
 ) -> BeneficiaryAssessment:
-    case = ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    case = _get_case_or_404(case_id, organization_id)
 
     domain_scores = [s for s in [
         housing_score, food_security_score, health_score,
@@ -560,12 +600,16 @@ def create_assessment(
 
 
 def list_assessments(case_id: int, organization_id: int) -> List[BeneficiaryAssessment]:
-    ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
-    return (
-        BeneficiaryAssessment.query.filter_by(case_id=case_id)
+    _get_case_or_404(case_id, organization_id)
+    stmt = (
+        select(BeneficiaryAssessment)
+        .where(
+            BeneficiaryAssessment.case_id == case_id,
+            BeneficiaryAssessment.organization_id == organization_id,
+        )
         .order_by(BeneficiaryAssessment.assessment_date.desc())
-        .all()
     )
+    return list(db.session.scalars(stmt))
 
 
 # ---------------------------------------------------------------------------
@@ -586,7 +630,7 @@ def create_referral(
     notes: Optional[str] = None,
     referred_by_id: Optional[int] = None,
 ) -> BeneficiaryReferral:
-    case = ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    case = _get_case_or_404(case_id, organization_id)
     referral = BeneficiaryReferral(
         case_id=case.id,
         organization_id=organization_id,
@@ -608,12 +652,16 @@ def create_referral(
 
 
 def list_referrals(case_id: int, organization_id: int) -> List[BeneficiaryReferral]:
-    ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
-    return (
-        BeneficiaryReferral.query.filter_by(case_id=case_id)
+    _get_case_or_404(case_id, organization_id)
+    stmt = (
+        select(BeneficiaryReferral)
+        .where(
+            BeneficiaryReferral.case_id == case_id,
+            BeneficiaryReferral.organization_id == organization_id,
+        )
         .order_by(BeneficiaryReferral.referral_date.desc())
-        .all()
     )
+    return list(db.session.scalars(stmt))
 
 
 def update_referral_status(
@@ -625,11 +673,16 @@ def update_referral_status(
     outcome_date: Optional[Any] = None,
     outcome_notes: Optional[str] = None,
 ) -> BeneficiaryReferral:
-    referral = BeneficiaryReferral.query.filter_by(
-        id=referral_id, case_id=case_id
-    ).first_or_404()
+    referral = db.session.scalars(
+        select(BeneficiaryReferral).where(
+            BeneficiaryReferral.id == referral_id,
+            BeneficiaryReferral.case_id == case_id,
+        ).limit(1)
+    ).first()
+    if referral is None:
+        raise NotFound()
     # Cross-tenant guard
-    case = ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    case = _get_case_or_404(case_id, organization_id)
     referral.status = status
     if outcome_date is not None:
         referral.outcome_date = _coerce_date(outcome_date)
@@ -685,8 +738,11 @@ def create_appointment(
 
 
 def get_appointment(appointment_id: int, organization_id: int) -> Optional[BeneficiaryAppointment]:
-    return BeneficiaryAppointment.query.filter_by(
-        id=appointment_id, organization_id=organization_id
+    return db.session.scalars(
+        select(BeneficiaryAppointment).where(
+            BeneficiaryAppointment.id == appointment_id,
+            BeneficiaryAppointment.organization_id == organization_id,
+        ).limit(1)
     ).first()
 
 
@@ -698,16 +754,17 @@ def list_appointments(
     staff_id: Optional[int] = None,
     status: Optional[str] = None,
 ) -> List[BeneficiaryAppointment]:
-    q = BeneficiaryAppointment.query.filter_by(organization_id=organization_id)
+    stmt = select(BeneficiaryAppointment).where(BeneficiaryAppointment.organization_id == organization_id)
     if case_id is not None:
-        q = q.filter_by(case_id=case_id)
+        stmt = stmt.where(BeneficiaryAppointment.case_id == case_id)
     if beneficiary_id is not None:
-        q = q.filter_by(beneficiary_id=beneficiary_id)
+        stmt = stmt.where(BeneficiaryAppointment.beneficiary_id == beneficiary_id)
     if staff_id is not None:
-        q = q.filter_by(staff_id=staff_id)
+        stmt = stmt.where(BeneficiaryAppointment.staff_id == staff_id)
     if status:
-        q = q.filter_by(status=status)
-    return q.order_by(BeneficiaryAppointment.scheduled_at.asc()).all()
+        stmt = stmt.where(BeneficiaryAppointment.status == status)
+    stmt = stmt.order_by(BeneficiaryAppointment.scheduled_at.asc())
+    return list(db.session.scalars(stmt))
 
 
 def update_appointment(
@@ -715,9 +772,14 @@ def update_appointment(
     organization_id: int,
     **fields: Any,
 ) -> BeneficiaryAppointment:
-    appt = BeneficiaryAppointment.query.filter_by(
-        id=appointment_id, organization_id=organization_id
-    ).first_or_404()
+    appt = db.session.scalars(
+        select(BeneficiaryAppointment).where(
+            BeneficiaryAppointment.id == appointment_id,
+            BeneficiaryAppointment.organization_id == organization_id,
+        ).limit(1)
+    ).first()
+    if appt is None:
+        raise NotFound()
     allowed = {
         "title", "appointment_type", "scheduled_at", "duration_minutes",
         "location", "is_virtual", "meeting_link", "status", "notes",
@@ -733,9 +795,14 @@ def update_appointment(
 
 
 def cancel_appointment(appointment_id: int, organization_id: int) -> None:
-    appt = BeneficiaryAppointment.query.filter_by(
-        id=appointment_id, organization_id=organization_id
-    ).first_or_404()
+    appt = db.session.scalars(
+        select(BeneficiaryAppointment).where(
+            BeneficiaryAppointment.id == appointment_id,
+            BeneficiaryAppointment.organization_id == organization_id,
+        ).limit(1)
+    ).first()
+    if appt is None:
+        raise NotFound()
     appt.status = "cancelled"
     db.session.commit()
 
@@ -757,7 +824,7 @@ def create_case_goal(
     status: str = "planned",
     target_date: Optional[Any] = None,
 ) -> ProgramCaseGoal:
-    case = ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    case = _get_case_or_404(case_id, organization_id)
     goal = ProgramCaseGoal(
         organization_id=organization_id,
         case_id=case.id,
@@ -779,11 +846,15 @@ def create_case_goal(
 
 
 def list_case_goals(case_id: int, organization_id: int, *, status: Optional[str] = None) -> List[ProgramCaseGoal]:
-    ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
-    q = ProgramCaseGoal.query.filter_by(case_id=case_id, organization_id=organization_id)
+    _get_case_or_404(case_id, organization_id)
+    stmt = select(ProgramCaseGoal).where(
+        ProgramCaseGoal.case_id == case_id,
+        ProgramCaseGoal.organization_id == organization_id,
+    )
     if status:
-        q = q.filter_by(status=status)
-    return q.order_by(ProgramCaseGoal.target_date.asc(), ProgramCaseGoal.created_at.asc()).all()
+        stmt = stmt.where(ProgramCaseGoal.status == status)
+    stmt = stmt.order_by(ProgramCaseGoal.target_date.asc(), ProgramCaseGoal.created_at.asc())
+    return list(db.session.scalars(stmt))
 
 
 def update_case_goal(
@@ -792,12 +863,16 @@ def update_case_goal(
     organization_id: int,
     **fields: Any,
 ) -> ProgramCaseGoal:
-    ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
-    goal = ProgramCaseGoal.query.filter_by(
-        id=goal_id,
-        case_id=case_id,
-        organization_id=organization_id,
-    ).first_or_404()
+    _get_case_or_404(case_id, organization_id)
+    goal = db.session.scalars(
+        select(ProgramCaseGoal).where(
+            ProgramCaseGoal.id == goal_id,
+            ProgramCaseGoal.case_id == case_id,
+            ProgramCaseGoal.organization_id == organization_id,
+        ).limit(1)
+    ).first()
+    if goal is None:
+        raise NotFound()
 
     allowed = {
         "title",
@@ -839,13 +914,15 @@ def create_case_task(
     due_date: Optional[Any] = None,
     is_milestone: bool = False,
 ) -> ProgramCaseTask:
-    ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    _get_case_or_404(case_id, organization_id)
     if goal_id is not None:
-        ProgramCaseGoal.query.filter_by(
-            id=goal_id,
-            case_id=case_id,
-            organization_id=organization_id,
-        ).first_or_404()
+        _ = db.session.scalars(
+            select(ProgramCaseGoal).where(
+                ProgramCaseGoal.id == goal_id,
+                ProgramCaseGoal.case_id == case_id,
+                ProgramCaseGoal.organization_id == organization_id,
+            ).limit(1)
+        ).first() or (_ for _ in ()).throw(NotFound())
 
     task = ProgramCaseTask(
         organization_id=organization_id,
@@ -876,15 +953,19 @@ def list_case_tasks(
     status: Optional[str] = None,
     milestone_only: bool = False,
 ) -> List[ProgramCaseTask]:
-    ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
-    q = ProgramCaseTask.query.filter_by(case_id=case_id, organization_id=organization_id)
+    _get_case_or_404(case_id, organization_id)
+    stmt = select(ProgramCaseTask).where(
+        ProgramCaseTask.case_id == case_id,
+        ProgramCaseTask.organization_id == organization_id,
+    )
     if goal_id is not None:
-        q = q.filter_by(goal_id=goal_id)
+        stmt = stmt.where(ProgramCaseTask.goal_id == goal_id)
     if status:
-        q = q.filter_by(status=status)
+        stmt = stmt.where(ProgramCaseTask.status == status)
     if milestone_only:
-        q = q.filter_by(is_milestone=True)
-    return q.order_by(ProgramCaseTask.due_date.asc(), ProgramCaseTask.created_at.asc()).all()
+        stmt = stmt.where(ProgramCaseTask.is_milestone == True)
+    stmt = stmt.order_by(ProgramCaseTask.due_date.asc(), ProgramCaseTask.created_at.asc())
+    return list(db.session.scalars(stmt))
 
 
 def update_case_task(
@@ -893,12 +974,16 @@ def update_case_task(
     organization_id: int,
     **fields: Any,
 ) -> ProgramCaseTask:
-    ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
-    task = ProgramCaseTask.query.filter_by(
-        id=task_id,
-        case_id=case_id,
-        organization_id=organization_id,
-    ).first_or_404()
+    _get_case_or_404(case_id, organization_id)
+    task = db.session.scalars(
+        select(ProgramCaseTask).where(
+            ProgramCaseTask.id == task_id,
+            ProgramCaseTask.case_id == case_id,
+            ProgramCaseTask.organization_id == organization_id,
+        ).limit(1)
+    ).first()
+    if task is None:
+        raise NotFound()
 
     allowed = {
         "title",
@@ -914,11 +999,13 @@ def update_case_task(
         if key not in allowed:
             continue
         if key == "goal_id" and value is not None:
-            ProgramCaseGoal.query.filter_by(
-                id=value,
-                case_id=case_id,
-                organization_id=organization_id,
-            ).first_or_404()
+            _ = db.session.scalars(
+                select(ProgramCaseGoal).where(
+                    ProgramCaseGoal.id == value,
+                    ProgramCaseGoal.case_id == case_id,
+                    ProgramCaseGoal.organization_id == organization_id,
+                ).limit(1)
+            ).first() or (_ for _ in ()).throw(NotFound())
         if key == "due_date":
             value = _coerce_date(value) if value is not None else None
         if key == "is_milestone":
@@ -936,12 +1023,14 @@ def update_case_task(
 
 
 def milestone_progress(case_id: int, organization_id: int) -> Dict[str, Any]:
-    ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
-    milestones = ProgramCaseTask.query.filter_by(
-        case_id=case_id,
-        organization_id=organization_id,
-        is_milestone=True,
-    ).all()
+    _get_case_or_404(case_id, organization_id)
+    milestones = list(db.session.scalars(
+        select(ProgramCaseTask).where(
+            ProgramCaseTask.case_id == case_id,
+            ProgramCaseTask.organization_id == organization_id,
+            ProgramCaseTask.is_milestone == True,
+        )
+    ))
 
     total = len(milestones)
     completed = sum(1 for m in milestones if m.status == "done")
@@ -981,7 +1070,7 @@ def add_case_document(
     notes: Optional[str] = None,
     uploaded_by_user_id: Optional[int] = None,
 ) -> ProgramCaseDocument:
-    case = ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    case = _get_case_or_404(case_id, organization_id)
     doc = ProgramCaseDocument(
         organization_id=organization_id,
         case_id=case.id,
@@ -1006,11 +1095,15 @@ def list_case_documents(
     *,
     category: Optional[str] = None,
 ) -> List[ProgramCaseDocument]:
-    ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
-    q = ProgramCaseDocument.query.filter_by(case_id=case_id, organization_id=organization_id)
+    _get_case_or_404(case_id, organization_id)
+    stmt = select(ProgramCaseDocument).where(
+        ProgramCaseDocument.case_id == case_id,
+        ProgramCaseDocument.organization_id == organization_id,
+    )
     if category:
-        q = q.filter_by(category=category)
-    return q.order_by(ProgramCaseDocument.created_at.desc()).all()
+        stmt = stmt.where(ProgramCaseDocument.category == category)
+    stmt = stmt.order_by(ProgramCaseDocument.created_at.desc())
+    return list(db.session.scalars(stmt))
 
 
 def get_case_document(
@@ -1018,12 +1111,17 @@ def get_case_document(
     case_id: int,
     organization_id: int,
 ) -> ProgramCaseDocument:
-    ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
-    return ProgramCaseDocument.query.filter_by(
-        id=document_id,
-        case_id=case_id,
-        organization_id=organization_id,
-    ).first_or_404()
+    _get_case_or_404(case_id, organization_id)
+    doc = db.session.scalars(
+        select(ProgramCaseDocument).where(
+            ProgramCaseDocument.id == document_id,
+            ProgramCaseDocument.case_id == case_id,
+            ProgramCaseDocument.organization_id == organization_id,
+        ).limit(1)
+    ).first()
+    if doc is None:
+        raise NotFound()
+    return doc
 
 
 # ---------------------------------------------------------------------------
@@ -1045,7 +1143,7 @@ def create_followup(
     created_by_user_id: Optional[int] = None,
     notes: Optional[str] = None,
 ) -> ProgramCaseFollowUp:
-    case = ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    case = _get_case_or_404(case_id, organization_id)
     followup = ProgramCaseFollowUp(
         organization_id=organization_id,
         case_id=case.id,
@@ -1079,15 +1177,19 @@ def list_followups(
     due_before: Optional[Any] = None,
     include_escalated: bool = True,
 ) -> List[ProgramCaseFollowUp]:
-    ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
-    q = ProgramCaseFollowUp.query.filter_by(case_id=case_id, organization_id=organization_id)
+    _get_case_or_404(case_id, organization_id)
+    stmt = select(ProgramCaseFollowUp).where(
+        ProgramCaseFollowUp.case_id == case_id,
+        ProgramCaseFollowUp.organization_id == organization_id,
+    )
     if status:
-        q = q.filter_by(status=status)
+        stmt = stmt.where(ProgramCaseFollowUp.status == status)
     if due_before is not None:
-        q = q.filter(ProgramCaseFollowUp.due_at <= _coerce_datetime(due_before))
+        stmt = stmt.where(ProgramCaseFollowUp.due_at <= _coerce_datetime(due_before))
     if not include_escalated:
-        q = q.filter(ProgramCaseFollowUp.status != "escalated")
-    return q.order_by(ProgramCaseFollowUp.due_at.asc()).all()
+        stmt = stmt.where(ProgramCaseFollowUp.status != "escalated")
+    stmt = stmt.order_by(ProgramCaseFollowUp.due_at.asc())
+    return list(db.session.scalars(stmt))
 
 
 def update_followup(
@@ -1096,12 +1198,16 @@ def update_followup(
     organization_id: int,
     **fields: Any,
 ) -> ProgramCaseFollowUp:
-    ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
-    followup = ProgramCaseFollowUp.query.filter_by(
-        id=followup_id,
-        case_id=case_id,
-        organization_id=organization_id,
-    ).first_or_404()
+    _get_case_or_404(case_id, organization_id)
+    followup = db.session.scalars(
+        select(ProgramCaseFollowUp).where(
+            ProgramCaseFollowUp.id == followup_id,
+            ProgramCaseFollowUp.case_id == case_id,
+            ProgramCaseFollowUp.organization_id == organization_id,
+        ).limit(1)
+    ).first()
+    if followup is None:
+        raise NotFound()
 
     allowed = {
         "title",
@@ -1179,17 +1285,20 @@ def dispatch_followup_reminders(
     channel: str = "auto",
     only_overdue: bool = False,
 ) -> Dict[str, Any]:
-    case = ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    case = _get_case_or_404(case_id, organization_id)
     now = _utcnow()
 
-    q = ProgramCaseFollowUp.query.filter_by(case_id=case_id, organization_id=organization_id)
-    q = q.filter(ProgramCaseFollowUp.status.in_(["scheduled", "in_progress", "missed"]))
+    stmt = select(ProgramCaseFollowUp).where(
+        ProgramCaseFollowUp.case_id == case_id,
+        ProgramCaseFollowUp.organization_id == organization_id,
+        ProgramCaseFollowUp.status.in_(["scheduled", "in_progress", "missed"]),
+    )
     if only_overdue:
-        q = q.filter(ProgramCaseFollowUp.due_at < now)
+        stmt = stmt.where(ProgramCaseFollowUp.due_at < now)
     else:
-        q = q.filter(ProgramCaseFollowUp.reminder_at.isnot(None)).filter(ProgramCaseFollowUp.reminder_at <= now)
+        stmt = stmt.where(ProgramCaseFollowUp.reminder_at.isnot(None), ProgramCaseFollowUp.reminder_at <= now)
 
-    followups = q.all()
+    followups = list(db.session.scalars(stmt))
     sent = 0
     failed = 0
     skipped = 0
@@ -1200,7 +1309,9 @@ def dispatch_followup_reminders(
         beneficiary_name = "beneficiary"
         email = None
         phone = None
-        beneficiary = Beneficiary.query.filter_by(id=case.beneficiary_id).first()
+        beneficiary = db.session.scalars(
+            select(Beneficiary).where(Beneficiary.id == case.beneficiary_id).limit(1)
+        ).first()
         if beneficiary is not None:
             beneficiary_name = f"{beneficiary.first_name} {beneficiary.last_name}".strip()
             email = beneficiary.email
@@ -1261,14 +1372,17 @@ def escalate_overdue_followups(
     *,
     reason: str = "Follow-up overdue",
 ) -> int:
-    ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    _get_case_or_404(case_id, organization_id)
     now = _utcnow()
-    overdue = (
-        ProgramCaseFollowUp.query
-        .filter_by(case_id=case_id, organization_id=organization_id)
-        .filter(ProgramCaseFollowUp.status.in_(["scheduled", "in_progress", "missed"]))
-        .filter(ProgramCaseFollowUp.due_at < now)
-        .all()
+    overdue = list(
+        db.session.scalars(
+            select(ProgramCaseFollowUp).where(
+                ProgramCaseFollowUp.case_id == case_id,
+                ProgramCaseFollowUp.organization_id == organization_id,
+                ProgramCaseFollowUp.status.in_(["scheduled", "in_progress", "missed"]),
+                ProgramCaseFollowUp.due_at < now,
+            )
+        )
     )
 
     count = 0
@@ -1286,9 +1400,16 @@ def escalate_overdue_followups(
 
 
 def followup_summary(case_id: int, organization_id: int) -> Dict[str, Any]:
-    ProgramCase.query.filter_by(id=case_id, organization_id=organization_id).first_or_404()
+    _get_case_or_404(case_id, organization_id)
     now = _utcnow()
-    followups = ProgramCaseFollowUp.query.filter_by(case_id=case_id, organization_id=organization_id).all()
+    followups = list(
+        db.session.scalars(
+            select(ProgramCaseFollowUp).where(
+                ProgramCaseFollowUp.case_id == case_id,
+                ProgramCaseFollowUp.organization_id == organization_id,
+            )
+        )
+    )
 
     by_status: Dict[str, int] = {}
     overdue = 0
@@ -1318,14 +1439,16 @@ def followup_summary(case_id: int, organization_id: int) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def beneficiary_profile(beneficiary_id: int, organization_id: int) -> Dict[str, Any]:
-    beneficiary = Beneficiary.query.filter_by(
-        id=beneficiary_id, organization_id=organization_id
-    ).first_or_404()
+    beneficiary = _get_beneficiary_or_404(beneficiary_id, organization_id)
 
-    cases = ProgramCase.query.filter_by(
-        organization_id=organization_id,
-        beneficiary_id=beneficiary_id,
-    ).all()
+    cases = list(
+        db.session.scalars(
+            select(ProgramCase).where(
+                ProgramCase.organization_id == organization_id,
+                ProgramCase.beneficiary_id == beneficiary_id,
+            )
+        )
+    )
     case_ids = [c.id for c in cases]
 
     total_cases = len(cases)
@@ -1340,56 +1463,58 @@ def beneficiary_profile(beneficiary_id: int, organization_id: int) -> Dict[str, 
 
     latest_assessment: Optional[BeneficiaryAssessment] = None
     if case_ids:
-        latest_assessment = (
-            BeneficiaryAssessment.query
-            .filter(BeneficiaryAssessment.case_id.in_(case_ids))
+        latest_assessment = db.session.scalars(
+            select(BeneficiaryAssessment)
+            .where(BeneficiaryAssessment.case_id.in_(case_ids))
             .order_by(BeneficiaryAssessment.assessment_date.desc(), BeneficiaryAssessment.id.desc())
-            .first()
-        )
+            .limit(1)
+        ).first()
 
-    service_count = (
-        BeneficiaryServiceLog.query
-        .filter_by(organization_id=organization_id, beneficiary_id=beneficiary_id)
-        .count()
-    )
+    service_count = db.session.scalar(
+        select(func.count()).select_from(BeneficiaryServiceLog).where(
+            BeneficiaryServiceLog.organization_id == organization_id,
+            BeneficiaryServiceLog.beneficiary_id == beneficiary_id,
+        )
+    ) or 0
 
     referral_count = 0
     if case_ids:
-        referral_count = (
-            BeneficiaryReferral.query
-            .filter(BeneficiaryReferral.case_id.in_(case_ids))
-            .count()
-        )
+        referral_count = db.session.scalar(
+            select(func.count()).select_from(BeneficiaryReferral).where(
+                BeneficiaryReferral.case_id.in_(case_ids)
+            )
+        ) or 0
 
     document_count = 0
     followup_count = 0
     escalated_followups = 0
     if case_ids:
-        document_count = (
-            ProgramCaseDocument.query
-            .filter(ProgramCaseDocument.case_id.in_(case_ids))
-            .count()
-        )
-        followup_count = (
-            ProgramCaseFollowUp.query
-            .filter(ProgramCaseFollowUp.case_id.in_(case_ids))
-            .count()
-        )
-        escalated_followups = (
-            ProgramCaseFollowUp.query
-            .filter(ProgramCaseFollowUp.case_id.in_(case_ids))
-            .filter_by(status="escalated")
-            .count()
-        )
+        document_count = db.session.scalar(
+            select(func.count()).select_from(ProgramCaseDocument).where(
+                ProgramCaseDocument.case_id.in_(case_ids)
+            )
+        ) or 0
+        followup_count = db.session.scalar(
+            select(func.count()).select_from(ProgramCaseFollowUp).where(
+                ProgramCaseFollowUp.case_id.in_(case_ids)
+            )
+        ) or 0
+        escalated_followups = db.session.scalar(
+            select(func.count()).select_from(ProgramCaseFollowUp).where(
+                ProgramCaseFollowUp.case_id.in_(case_ids),
+                ProgramCaseFollowUp.status == "escalated",
+            )
+        ) or 0
 
     now = _utcnow()
-    upcoming_appointments = (
-        BeneficiaryAppointment.query
-        .filter_by(organization_id=organization_id, beneficiary_id=beneficiary_id)
-        .filter(BeneficiaryAppointment.scheduled_at >= now)
-        .filter(BeneficiaryAppointment.status.in_(["scheduled", "confirmed"]))
-        .count()
-    )
+    upcoming_appointments = db.session.scalar(
+        select(func.count()).select_from(BeneficiaryAppointment).where(
+            BeneficiaryAppointment.organization_id == organization_id,
+            BeneficiaryAppointment.beneficiary_id == beneficiary_id,
+            BeneficiaryAppointment.scheduled_at >= now,
+            BeneficiaryAppointment.status.in_(["scheduled", "confirmed"]),
+        )
+    ) or 0
 
     return {
         "beneficiary": {
@@ -1434,24 +1559,28 @@ def beneficiary_timeline(
     *,
     limit: int = 100,
 ) -> List[Dict[str, Any]]:
-    Beneficiary.query.filter_by(
-        id=beneficiary_id, organization_id=organization_id
-    ).first_or_404()
+    _get_beneficiary_or_404(beneficiary_id, organization_id)
 
-    cases = ProgramCase.query.filter_by(
-        organization_id=organization_id,
-        beneficiary_id=beneficiary_id,
-    ).all()
+    cases = list(
+        db.session.scalars(
+            select(ProgramCase).where(
+                ProgramCase.organization_id == organization_id,
+                ProgramCase.beneficiary_id == beneficiary_id,
+            )
+        )
+    )
     case_ids = [c.id for c in cases]
 
     events: List[Dict[str, Any]] = []
 
     if case_ids:
-        activities = (
-            CaseActivity.query
-            .filter(CaseActivity.organization_id == organization_id)
-            .filter(CaseActivity.case_id.in_(case_ids))
-            .all()
+        activities = list(
+            db.session.scalars(
+                select(CaseActivity).where(
+                    CaseActivity.organization_id == organization_id,
+                    CaseActivity.case_id.in_(case_ids),
+                )
+            )
         )
         for item in activities:
             events.append(
@@ -1464,11 +1593,13 @@ def beneficiary_timeline(
                 }
             )
 
-        assessments = (
-            BeneficiaryAssessment.query
-            .filter(BeneficiaryAssessment.organization_id == organization_id)
-            .filter(BeneficiaryAssessment.case_id.in_(case_ids))
-            .all()
+        assessments = list(
+            db.session.scalars(
+                select(BeneficiaryAssessment).where(
+                    BeneficiaryAssessment.organization_id == organization_id,
+                    BeneficiaryAssessment.case_id.in_(case_ids),
+                )
+            )
         )
         for item in assessments:
             events.append(
@@ -1482,11 +1613,13 @@ def beneficiary_timeline(
                 }
             )
 
-        referrals = (
-            BeneficiaryReferral.query
-            .filter(BeneficiaryReferral.organization_id == organization_id)
-            .filter(BeneficiaryReferral.case_id.in_(case_ids))
-            .all()
+        referrals = list(
+            db.session.scalars(
+                select(BeneficiaryReferral).where(
+                    BeneficiaryReferral.organization_id == organization_id,
+                    BeneficiaryReferral.case_id.in_(case_ids),
+                )
+            )
         )
         for item in referrals:
             events.append(
@@ -1500,11 +1633,13 @@ def beneficiary_timeline(
                 }
             )
 
-        documents = (
-            ProgramCaseDocument.query
-            .filter(ProgramCaseDocument.organization_id == organization_id)
-            .filter(ProgramCaseDocument.case_id.in_(case_ids))
-            .all()
+        documents = list(
+            db.session.scalars(
+                select(ProgramCaseDocument).where(
+                    ProgramCaseDocument.organization_id == organization_id,
+                    ProgramCaseDocument.case_id.in_(case_ids),
+                )
+            )
         )
         for item in documents:
             events.append(
@@ -1518,11 +1653,13 @@ def beneficiary_timeline(
                 }
             )
 
-        followups = (
-            ProgramCaseFollowUp.query
-            .filter(ProgramCaseFollowUp.organization_id == organization_id)
-            .filter(ProgramCaseFollowUp.case_id.in_(case_ids))
-            .all()
+        followups = list(
+            db.session.scalars(
+                select(ProgramCaseFollowUp).where(
+                    ProgramCaseFollowUp.organization_id == organization_id,
+                    ProgramCaseFollowUp.case_id.in_(case_ids),
+                )
+            )
         )
         for item in followups:
             events.append(
@@ -1537,10 +1674,13 @@ def beneficiary_timeline(
                 }
             )
 
-    service_logs = (
-        BeneficiaryServiceLog.query
-        .filter_by(organization_id=organization_id, beneficiary_id=beneficiary_id)
-        .all()
+    service_logs = list(
+        db.session.scalars(
+            select(BeneficiaryServiceLog).where(
+                BeneficiaryServiceLog.organization_id == organization_id,
+                BeneficiaryServiceLog.beneficiary_id == beneficiary_id,
+            )
+        )
     )
     for item in service_logs:
         events.append(
@@ -1555,10 +1695,13 @@ def beneficiary_timeline(
             }
         )
 
-    appointments = (
-        BeneficiaryAppointment.query
-        .filter_by(organization_id=organization_id, beneficiary_id=beneficiary_id)
-        .all()
+    appointments = list(
+        db.session.scalars(
+            select(BeneficiaryAppointment).where(
+                BeneficiaryAppointment.organization_id == organization_id,
+                BeneficiaryAppointment.beneficiary_id == beneficiary_id,
+            )
+        )
     )
     for item in appointments:
         events.append(

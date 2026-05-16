@@ -27,6 +27,7 @@ from datetime import UTC, datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
+from sqlalchemy import select
 
 from ngo_homesuite.models.core import AccountingSyncLog, Donation, Expense, db
 
@@ -155,7 +156,9 @@ def push_donation_to_quickbooks(
     donation_id: int,
 ) -> Dict[str, Any]:
     """Push a Donation as a Sales Receipt to QuickBooks Online."""
-    donation = Donation.query.filter_by(id=donation_id, organization_id=org_id).first()
+    donation = db.session.scalars(
+        select(Donation).where(Donation.id == donation_id, Donation.organization_id == org_id).limit(1)
+    ).first()
     if not donation:
         return {"error": "Donation not found"}
 
@@ -207,7 +210,9 @@ def push_expense_to_quickbooks(
     expense_id: int,
 ) -> Dict[str, Any]:
     """Push an Expense as a Purchase to QuickBooks Online."""
-    expense = Expense.query.filter_by(id=expense_id, organization_id=org_id).first()
+    expense = db.session.scalars(
+        select(Expense).where(Expense.id == expense_id, Expense.organization_id == org_id).limit(1)
+    ).first()
     if not expense:
         return {"error": "Expense not found"}
 
@@ -316,7 +321,9 @@ def push_donation_to_xero(
     donation_id: int,
 ) -> Dict[str, Any]:
     """Push a Donation as a Xero Invoice (ACCREC)."""
-    donation = Donation.query.filter_by(id=donation_id, organization_id=org_id).first()
+    donation = db.session.scalars(
+        select(Donation).where(Donation.id == donation_id, Donation.organization_id == org_id).limit(1)
+    ).first()
     if not donation:
         return {"error": "Donation not found"}
 
@@ -365,7 +372,9 @@ def push_expense_to_xero(
     expense_id: int,
 ) -> Dict[str, Any]:
     """Push an Expense as a Xero BankTransaction (SPEND)."""
-    expense = Expense.query.filter_by(id=expense_id, organization_id=org_id).first()
+    expense = db.session.scalars(
+        select(Expense).where(Expense.id == expense_id, Expense.organization_id == org_id).limit(1)
+    ).first()
     if not expense:
         return {"error": "Expense not found"}
 
@@ -449,11 +458,12 @@ def list_sync_logs(
     status: Optional[str] = None,
     limit: int = 100,
 ) -> List[AccountingSyncLog]:
-    q = AccountingSyncLog.query.filter_by(organization_id=org_id)
+    stmt = select(AccountingSyncLog).where(AccountingSyncLog.organization_id == org_id)
     if provider:
-        q = q.filter_by(provider=provider)
+        stmt = stmt.where(AccountingSyncLog.provider == provider)
     if sync_type:
-        q = q.filter_by(sync_type=sync_type)
+        stmt = stmt.where(AccountingSyncLog.sync_type == sync_type)
     if status:
-        q = q.filter_by(status=status)
-    return q.order_by(AccountingSyncLog.created_at.desc()).limit(limit).all()
+        stmt = stmt.where(AccountingSyncLog.status == status)
+    stmt = stmt.order_by(AccountingSyncLog.created_at.desc()).limit(limit)
+    return list(db.session.scalars(stmt))
