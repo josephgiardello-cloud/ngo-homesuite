@@ -9,7 +9,6 @@ from typing import Any
 
 from flask import Blueprint, jsonify, request
 from flask_login import current_user, login_required
-import requests
 from sqlalchemy import select
 
 from ngo_homesuite.grants.facade import GrantsFacade
@@ -157,87 +156,6 @@ def grants_calendar():
 @login_required
 def grants_restricted_funds():
     return jsonify(_grants().restricted_funding_summary(_org_id()))
-
-
-@v2_bp.route("/grants/opportunities/calibrate", methods=["POST"])
-@login_required
-@roles_required("admin", "staff")
-def calibrate_external_grant_opportunity():
-    data = _json_or_400(required=["source", "payload"])
-    source = str(data.get("source") or "").strip().lower()
-    payload = data.get("payload")
-    if not isinstance(payload, dict):
-        return jsonify({"error": "payload must be an object"}), 400
-    try:
-        result = _grants().calibrate_external_opportunity(source, payload)
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-    return jsonify(result)
-
-
-@v2_bp.route("/grants/opportunities/import/grants-gov", methods=["POST"])
-@login_required
-@roles_required("admin", "staff")
-def import_grants_gov_opportunities_route():
-    data = request.get_json(silent=True) or {}
-
-    # Direct payload mode supports deterministic testing and one-off imports.
-    raw_records = data.get("records")
-    if raw_records is not None:
-        if not isinstance(raw_records, list):
-            return jsonify({"error": "records must be a list"}), 400
-        imported_ids: list[int] = []
-        calibration_failures: list[dict[str, object]] = []
-        probability = float(data.get("probability", 0.4))
-        status = str(data.get("status", "identified"))
-        for record in raw_records:
-            if not isinstance(record, dict):
-                calibration_failures.append({"external_id": None, "missing_fields": ["payload"], "score": 0.0})
-                continue
-            calibration = _grants().calibrate_external_opportunity("grants_gov", record)
-            if not calibration.get("is_ready"):
-                calibration_failures.append(
-                    {
-                        "external_id": calibration.get("normalized_preview", {}).get("external_id"),
-                        "missing_fields": calibration.get("missing_fields", []),
-                        "score": calibration.get("score", 0.0),
-                    }
-                )
-                continue
-            imported = _grants().import_external_opportunity(
-                _org_id(),
-                source="grants_gov",
-                payload=record,
-                probability=probability,
-                status=status,
-            )
-            imported_ids.append(int(imported.id))
-        return jsonify(
-            {
-                "source": "grants_gov",
-                "mode": "records",
-                "fetched": len(raw_records),
-                "imported": len(imported_ids),
-                "calibration_failures": calibration_failures,
-                "opportunity_ids": imported_ids,
-            }
-        )
-
-    try:
-        result = _grants().import_grants_gov_opportunities(
-            _org_id(),
-            keyword=data.get("keyword"),
-            rows=int(data.get("rows", 25)),
-            status=str(data.get("status", "identified")),
-            probability=float(data.get("probability", 0.4)),
-            endpoint=data.get("endpoint"),
-            timeout_seconds=int(data.get("timeout_seconds", 25)),
-        )
-    except requests.RequestException as exc:
-        return jsonify({"error": f"grants.gov request failed: {exc}"}), 502
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-    return jsonify(result)
 
 
 def _grant_dict(g) -> dict:
