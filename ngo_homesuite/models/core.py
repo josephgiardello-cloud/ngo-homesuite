@@ -466,6 +466,7 @@ class Grant(db.Model):
     disbursements = db.relationship('GrantDisbursement', backref='grant', cascade='all, delete-orphan')
     budget_lines = db.relationship('GrantBudgetLine', backref='grant', cascade='all, delete-orphan')
     expense_allocations = db.relationship('GrantExpenseAllocation', backref='grant', cascade='all, delete-orphan')
+    opportunities = db.relationship('GrantOpportunity', backref='awarded_grant', foreign_keys='GrantOpportunity.awarded_grant_id')
     project = db.relationship('Project', backref='grants')
     organization = db.relationship('Organization', backref='grants')
 
@@ -504,6 +505,7 @@ class GrantBudgetLine(db.Model):
     line_name = db.Column(db.String(200), nullable=False)
     allocated_amount = db.Column(db.Float, nullable=False)
     notes = db.Column(db.Text, nullable=True)
+    version_id = db.Column(db.Integer, nullable=False, default=0)
     created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
     updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
 
@@ -512,6 +514,10 @@ class GrantBudgetLine(db.Model):
     __table_args__ = (
         db.UniqueConstraint('grant_id', 'category', name='uq_grant_budget_line_grant_category'),
     )
+
+    __mapper_args__ = {
+        'version_id_col': version_id,
+    }
 
     def __repr__(self):
         return f'<GrantBudgetLine grant={self.grant_id} category={self.category}>'
@@ -530,12 +536,80 @@ class GrantExpenseAllocation(db.Model):
     amount = db.Column(db.Float, nullable=False)
     category = db.Column(db.String(80), nullable=False)
     supporting_document_ref = db.Column(db.String(255), nullable=True)
+    version_id = db.Column(db.Integer, nullable=False, default=0)
     created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
 
     expense = db.relationship('Expense', backref='grant_allocations')
 
+    __mapper_args__ = {
+        'version_id_col': version_id,
+    }
+
     def __repr__(self):
         return f'<GrantExpenseAllocation grant={self.grant_id} expense={self.expense_id} amount={self.amount}>'
+
+
+class GrantOpportunity(db.Model):
+    """Pre-award grant opportunity tracking and forecast metadata."""
+
+    __tablename__ = 'grant_opportunities'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    awarded_grant_id = db.Column(db.Integer, db.ForeignKey('grants.id'), nullable=True, index=True)
+    funder_name = db.Column(db.String(200), nullable=False)
+    program_name = db.Column(db.String(200), nullable=False)
+    title = db.Column(db.String(300), nullable=False)
+    deadline = db.Column(db.Date, nullable=True, index=True)
+    amount_min = db.Column(db.Float, nullable=True)
+    amount_max = db.Column(db.Float, nullable=True)
+    probability = db.Column(db.Float, nullable=False, default=0.0)
+    probability_weighted_amount = db.Column(db.Float, nullable=False, default=0.0)
+    status = db.Column(db.String(30), nullable=False, default='identified', index=True)
+    notes = db.Column(db.Text, nullable=True)
+    version_id = db.Column(db.Integer, nullable=False, default=0)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
+
+    proposals = db.relationship('GrantProposal', backref='opportunity', cascade='all, delete-orphan')
+
+    __mapper_args__ = {
+        'version_id_col': version_id,
+    }
+
+    def __repr__(self):
+        return f'<GrantOpportunity {self.title} [{self.status}]>'
+
+
+class GrantProposal(db.Model):
+    """Versioned proposal record linked to a grant opportunity."""
+
+    __tablename__ = 'grant_proposals'
+
+    id = db.Column(db.Integer, primary_key=True)
+    opportunity_id = db.Column(db.Integer, db.ForeignKey('grant_opportunities.id'), nullable=False, index=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    version_number = db.Column(db.Integer, nullable=False, default=1)
+    amount_requested = db.Column(db.Float, nullable=True)
+    narrative_summary = db.Column(db.Text, nullable=True)
+    submission_date = db.Column(db.Date, nullable=True)
+    outcome = db.Column(db.String(30), nullable=False, default='draft', index=True)
+    document_ref = db.Column(db.String(255), nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+    version_id = db.Column(db.Integer, nullable=False, default=0)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
+
+    __table_args__ = (
+        db.UniqueConstraint('opportunity_id', 'version_number', name='uq_grant_proposal_opportunity_version'),
+    )
+
+    __mapper_args__ = {
+        'version_id_col': version_id,
+    }
+
+    def __repr__(self):
+        return f'<GrantProposal opp={self.opportunity_id} v{self.version_number} [{self.outcome}]>'
 
 
 class MembershipTier(db.Model):
@@ -1325,6 +1399,8 @@ __all__ = [
     'GrantDisbursement',
     'GrantBudgetLine',
     'GrantExpenseAllocation',
+    'GrantOpportunity',
+    'GrantProposal',
     'MembershipTier',
     'MembershipRecord',
     'StewardshipJourney',
