@@ -185,3 +185,38 @@ def test_list_at_risk_donors_keeps_donor_hydration_tenant_scoped(registry, app, 
     donor_row = payload["donors"][0]
     assert donor_row["donor_name"] == "Unknown"
     assert donor_row["email"] is None
+
+
+def test_run_reconciliation_propagates_queued_reference_status(registry):
+    payload = registry.execute(
+        "run_reconciliation",
+        {"bank_statement_ref": "bank_stmt_2026_05", "ledger_ref": "ledger_2026_05"},
+        _runtime_ctx(),
+    )
+
+    assert payload["ok"] is True
+    assert payload["status"] == "queued"
+    assert payload["result"]["mode"] == "reference_only"
+
+
+def test_run_reconciliation_reports_balanced_for_structured_result(registry, monkeypatch):
+    def _fake_reconcile(*, bank_statement, ledger, actor):
+        return {
+            "mode": "structured",
+            "status": "balanced",
+            "matched_count": 2,
+            "unmatched_bank_count": 0,
+            "unmatched_ledger_count": 0,
+        }
+
+    monkeypatch.setattr(registry.bank_reconciliation_service, "reconcile", _fake_reconcile)
+
+    payload = registry.execute(
+        "run_reconciliation",
+        {"bank_statement_ref": "b", "ledger_ref": "l"},
+        _runtime_ctx(),
+    )
+
+    assert payload["ok"] is True
+    assert payload["status"] == "balanced"
+    assert payload["result"]["matched_count"] == 2

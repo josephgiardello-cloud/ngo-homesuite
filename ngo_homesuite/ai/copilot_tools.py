@@ -898,9 +898,13 @@ class CopilotToolRegistry:
             ledger=ledger_ref,
             actor=actor,
         )
+        if isinstance(result, dict):
+            status = str(result.get("status") or "reconciliation_completed")
+        else:
+            status = "reconciliation_started" if result is None else "reconciliation_completed"
         return {
             "ok": True,
-            "status": "reconciliation_started" if result is None else "reconciliation_completed",
+            "status": status,
             "bank_statement_ref": bank_statement_ref,
             "ledger_ref": ledger_ref,
             "result": result,
