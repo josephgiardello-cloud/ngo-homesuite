@@ -19,6 +19,7 @@ Documentation index:
 - Production checklist: `docs/production_checklist.md`
 - Observability stack runbook: `docs/observability_stack.md`
 - Backup/restore drill runbook: `docs/backup_restore_drill.md`
+- Dependency update policy: `docs/dependency_policy.md`
 - Architecture decisions (ADR): `docs/adr/README.md`
 - Release/versioning process: `docs/release_process.md`
 

@@ -84,6 +84,21 @@ jobs:
         print("Backup/restore drill smoke passed")
         PY
 
+    - name: Dependency drift guard
+      run: |
+        python tools/check_dependency_drift.py
+
+    - name: Verify dependency policy artifact
+      run: |
+        python - <<'PY'
+        from pathlib import Path
+
+        path = Path("docs/dependency_policy.md")
+        if not path.exists():
+            raise SystemExit("Missing docs/dependency_policy.md")
+        print("Dependency policy artifact check passed")
+        PY
+
     - name: Run tests
       run: |
         pytest ngo_homesuite/ -v --tb=short --cov=ngo_homesuite --cov-report=xml
