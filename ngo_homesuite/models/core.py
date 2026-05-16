@@ -627,15 +627,51 @@ class Task(db.Model):
     due_date = db.Column(db.DateTime, nullable=True, index=True)
     completed_at = db.Column(db.DateTime, nullable=True)
     notes = db.Column(db.Text, nullable=True)
+    
+    # Reminder tracking
+    reminder_channel = db.Column(db.String(20), default='email', nullable=False)  # email, sms, auto, none
+    reminder_sent_count = db.Column(db.Integer, default=0, nullable=False)
+    last_reminder_sent_at = db.Column(db.DateTime, nullable=True)
+    last_reminder_error = db.Column(db.Text, nullable=True)
 
     created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
     updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
 
     assigned_to = db.relationship('User', backref='tasks')
     donor = db.relationship('Donor', backref='tasks')
+    reminders = db.relationship('TaskReminder', backref='task', cascade='all, delete-orphan', order_by='TaskReminder.sent_at')
 
     def __repr__(self):
         return f'<Task {self.title[:40]} [{self.status}]>'
+
+
+class TaskReminder(db.Model):
+    """Immutable history of task reminders sent to assignee."""
+
+    __tablename__ = 'task_reminders'
+
+    id = db.Column(db.Integer, primary_key=True)
+    task_id = db.Column(db.Integer, db.ForeignKey('tasks.id'), nullable=False, index=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    sent_to_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    
+    # Reminder delivery
+    channel = db.Column(db.String(20), nullable=False)  # email, sms, in_app
+    recipient_email = db.Column(db.String(255), nullable=True)  # snapshot at send time
+    recipient_phone = db.Column(db.String(30), nullable=True)  # snapshot at send time
+    
+    # Reminder type/timing
+    reminder_type = db.Column(db.String(30), default='upcoming', nullable=False)  # upcoming (before due), overdue, escalation
+    sent_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    delivery_status = db.Column(db.String(30), default='pending', nullable=False)  # pending, sent, failed, bounced
+    delivery_error = db.Column(db.Text, nullable=True)
+    
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    
+    sent_to_user = db.relationship('User', backref='task_reminders')
+    
+    def __repr__(self):
+        return f'<TaskReminder task_id={self.task_id} {self.channel} [{self.delivery_status}]>'
 
 
 # ---------------------------------------------------------------------------

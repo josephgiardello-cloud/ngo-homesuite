@@ -561,3 +561,102 @@ def get_organization_activity_feed():
         entity_type_filter=entity_type,
     )
     return jsonify([item.to_dict() for item in items])
+
+
+# ------------------------------------------------------------------ #
+# TASK REMINDERS & MANAGEMENT
+# ------------------------------------------------------------------ #
+
+@v2_bp.route("/tasks/my", methods=["GET"])
+@login_required
+def my_tasks():
+    """Get tasks assigned to current user."""
+    from ngo_homesuite.services.task_service import list_tasks as svc_list
+    
+    status = request.args.get("status")
+    priority = request.args.get("priority")
+    overdue_only = request.args.get("overdue") == "1"
+    
+    tasks = svc_list(
+        _org_id(),
+        assigned_to_id=current_user.id,
+        status=status,
+        priority=priority,
+        overdue_only=overdue_only,
+    )
+    return jsonify([_task_dict(t) for t in tasks])
+
+
+@v2_bp.route("/tasks/<int:task_id>", methods=["PATCH"])
+@login_required
+@roles_required("admin", "staff")
+def update_task(task_id: int):
+    """Update task (status, assignment, reminder channel)."""
+    from ngo_homesuite.services.task_service import update_task as svc_update, get_task as svc_get
+    
+    data = request.get_json(silent=True) or {}
+    task = svc_update(task_id, _org_id(), **data)
+    return jsonify(_task_dict(task))
+
+
+@v2_bp.route("/tasks/<int:task_id>/remind", methods=["POST"])
+@login_required
+@roles_required("admin", "staff")
+def send_task_reminder(task_id: int):
+    """Manually send reminder for a task."""
+    from ngo_homesuite.services.reminder_service import dispatch_task_reminder
+    
+    data = request.get_json(silent=True) or {}
+    reminder_type = data.get("reminder_type", "manual")
+    
+    result = dispatch_task_reminder(task_id, _org_id(), reminder_type=reminder_type)
+    return jsonify(result)
+
+
+@v2_bp.route("/tasks/reminders", methods=["GET"])
+@login_required
+def task_reminder_history():
+    """Get reminder history for tasks."""
+    from ngo_homesuite.services.reminder_service import list_reminders
+    
+    task_id = request.args.get("task_id", type=int)
+    delivery_status = request.args.get("delivery_status")
+    
+    reminders = list_reminders(_org_id(), task_id=task_id, delivery_status=delivery_status)
+    return jsonify([
+        {
+            "id": r.id,
+            "task_id": r.task_id,
+            "sent_to_user_id": r.sent_to_user_id,
+            "channel": r.channel,
+            "reminder_type": r.reminder_type,
+            "sent_at": r.sent_at.isoformat(),
+            "delivery_status": r.delivery_status,
+            "delivery_error": r.delivery_error,
+        }
+        for r in reminders
+    ])
+
+
+@v2_bp.route("/tasks/dispatch-reminders", methods=["POST"])
+@login_required
+@roles_required("admin")
+def dispatch_reminders_admin():
+    """Admin endpoint to manually dispatch task reminders (for testing/adhoc)."""
+    from ngo_homesuite.services.reminder_service import (
+        dispatch_upcoming_task_reminders,
+        dispatch_overdue_task_reminders,
+    )
+    
+    data = request.get_json(silent=True) or {}
+    reminder_type = data.get("type", "upcoming")  # "upcoming", "overdue", or "both"
+    
+    result = {}
+    if reminder_type in ("upcoming", "both"):
+        hours_before = data.get("hours_before", 24)
+        result["upcoming"] = dispatch_upcoming_task_reminders(_org_id(), hours_before_due=hours_before)
+    
+    if reminder_type in ("overdue", "both"):
+        result["overdue"] = dispatch_overdue_task_reminders(_org_id())
+    
+    return jsonify(result)
