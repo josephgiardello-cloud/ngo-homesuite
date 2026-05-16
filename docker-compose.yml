@@ -3,6 +3,7 @@ version: "3.9"
 # Profiles:
 #   default          — app + Caddy edge (SQLite, development)
 #   postgres         — app + PostgreSQL (production DB)
+#   cache            — add Redis for server-side session storage
 #   edge             — add Caddy TLS termination
 #   postgres,edge    — full production stack
 
@@ -110,6 +111,23 @@ services:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ngohs} -d ${POSTGRES_DB:-ngo_homesuite}"]
       interval: 10s
       timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Redis (optional profile for server-side sessions/cache)
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: ngo-homesuite-redis
+    profiles: ["cache"]
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
       retries: 5
 
   # ---------------------------------------------------------------------------

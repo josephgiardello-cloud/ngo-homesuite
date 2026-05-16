@@ -45,6 +45,20 @@ def create_app(config=None):
     if config is None:
         config = get_config()
     app.config.from_object(config)
+
+    if app.config.get('SESSION_STORE_BACKEND') == 'redis' and app.config.get('REDIS_URL'):
+        try:
+            from flask_session import Session  # type: ignore
+            import redis  # type: ignore
+
+            app.config['SESSION_TYPE'] = 'redis'
+            app.config['SESSION_REDIS'] = redis.from_url(str(app.config.get('REDIS_URL')))
+            app.config['SESSION_KEY_PREFIX'] = str(app.config.get('REDIS_KEY_PREFIX', 'ngohs:'))
+            app.config['SESSION_PERMANENT'] = False
+            Session(app)
+            app.logger.info('Redis-backed server session storage enabled')
+        except Exception as exc:
+            app.logger.warning('Could not enable Redis session storage; falling back to secure cookies: %s', exc)
     
     # Initialize extensions
     db.init_app(app)

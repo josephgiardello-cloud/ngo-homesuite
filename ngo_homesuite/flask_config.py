@@ -37,6 +37,9 @@ class Config:
     SESSION_COOKIE_SECURE = _RUNTIME_SETTINGS.session_cookie_secure
     SESSION_COOKIE_HTTPONLY = _RUNTIME_SETTINGS.session_cookie_httponly
     SESSION_COOKIE_SAMESITE = _RUNTIME_SETTINGS.session_cookie_samesite
+    SESSION_STORE_BACKEND = _RUNTIME_SETTINGS.session_store_backend
+    REDIS_URL = _RUNTIME_SETTINGS.redis_url
+    REDIS_KEY_PREFIX = _RUNTIME_SETTINGS.redis_key_prefix
     
     # Login
     REMEMBER_COOKIE_DURATION = timedelta(days=30)

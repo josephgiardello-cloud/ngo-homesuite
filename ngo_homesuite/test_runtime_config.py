@@ -23,6 +23,9 @@ def _clear_runtime_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "DB_POOL_TIMEOUT_SEC",
         "DB_POOL_RECYCLE_SEC",
         "DB_POOL_PRE_PING",
+        "SESSION_STORE_BACKEND",
+        "REDIS_URL",
+        "REDIS_KEY_PREFIX",
     ]
     for key in keys:
         monkeypatch.delenv(key, raising=False)
@@ -177,4 +180,30 @@ def test_load_runtime_settings_rejects_invalid_database_url(monkeypatch: pytest.
     monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
 
     with pytest.raises(RuntimeError, match="database_url"):
+        config.load_runtime_settings()
+
+
+def test_load_runtime_settings_accepts_redis_session_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_runtime_env(monkeypatch)
+
+    monkeypatch.setenv("SECRET_KEY", "redis-session-secret")
+    monkeypatch.setenv("SESSION_STORE_BACKEND", "redis")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("REDIS_KEY_PREFIX", "ngohs:test:")
+    monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
+
+    settings = config.load_runtime_settings()
+    assert settings.session_store_backend == "redis"
+    assert settings.redis_url == "redis://localhost:6379/0"
+    assert settings.redis_key_prefix == "ngohs:test:"
+
+
+def test_load_runtime_settings_rejects_invalid_session_store_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_runtime_env(monkeypatch)
+
+    monkeypatch.setenv("SECRET_KEY", "invalid-session-backend")
+    monkeypatch.setenv("SESSION_STORE_BACKEND", "memcached")
+    monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
+
+    with pytest.raises(RuntimeError, match="session_store_backend"):
         config.load_runtime_settings()

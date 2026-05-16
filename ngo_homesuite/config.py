@@ -58,6 +58,9 @@ class RuntimeSettings(BaseModel):
     session_cookie_secure: bool = Field(default=False)
     session_cookie_httponly: bool = Field(default=True)
     session_cookie_samesite: str = Field(default="Lax")
+    session_store_backend: str = Field(default="cookie")
+    redis_url: str | None = None
+    redis_key_prefix: str = Field(default="ngohs:")
 
     mail_server: str = Field(default="localhost")
     mail_port: int = Field(default=25)
@@ -120,6 +123,15 @@ class RuntimeSettings(BaseModel):
         normalized = str(value).strip().capitalize()
         if normalized not in allowed:
             raise ValueError(f"session_cookie_samesite must be one of {sorted(allowed)}, got: {value!r}")
+        return normalized
+
+    @field_validator("session_store_backend")
+    @classmethod
+    def _validate_session_store_backend(cls, value: str) -> str:
+        normalized = str(value).strip().lower()
+        allowed = {"cookie", "redis"}
+        if normalized not in allowed:
+            raise ValueError(f"session_store_backend must be one of {sorted(allowed)}, got: {value!r}")
         return normalized
 
     @field_validator("port")
@@ -332,6 +344,9 @@ def load_runtime_settings() -> RuntimeSettings:
         "session_cookie_secure": _parse_bool(os.environ.get("SESSION_COOKIE_SECURE"), False),
         "session_cookie_httponly": _parse_bool(os.environ.get("SESSION_COOKIE_HTTPONLY"), True),
         "session_cookie_samesite": os.environ.get("SESSION_COOKIE_SAMESITE", "Lax"),
+        "session_store_backend": os.environ.get("SESSION_STORE_BACKEND", "cookie"),
+        "redis_url": os.environ.get("REDIS_URL"),
+        "redis_key_prefix": os.environ.get("REDIS_KEY_PREFIX", "ngohs:"),
         "mail_server": os.environ.get("MAIL_SERVER", "localhost"),
         "mail_port": int(os.environ.get("MAIL_PORT", "25")),
         "mail_use_tls": _parse_bool(os.environ.get("MAIL_USE_TLS"), False),

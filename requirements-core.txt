@@ -6,6 +6,7 @@ Flask-Migrate==4.0.7
 Flask-WTF==1.2.2
 Flask-Babel==4.0.0
 Flask-Limiter==4.1.1
+Flask-Session==0.8.0
 Pydantic==2.9.2
 PyYAML==6.0.2
 
@@ -29,3 +30,4 @@ requests==2.32.3
 python-dateutil==2.9.0.post0
 reportlab==4.2.2
 openpyxl==3.1.5
+redis==5.1.1
