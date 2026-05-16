@@ -10,6 +10,8 @@ from ngo_homesuite.db.utils import audit
 from ngo_homesuite.models.core import (
     Expense,
     Grant,
+    GrantApprovalDecision,
+    GrantApprovalRequest,
     GrantBudgetLine,
     GrantDisbursement,
     GrantExpenseAllocation,
@@ -18,6 +20,7 @@ from ngo_homesuite.models.core import (
     db,
 )
 from ngo_homesuite.services import grant_preaward_service
+from ngo_homesuite.services import grant_outcomes_service
 
 
 # ---------------------------------------------------------------------------
@@ -40,6 +43,10 @@ class GrantAllocationError(ValueError):
     """Raised when grant expense allocation violates budget or tenant constraints."""
 
 
+class GrantApprovalError(ValueError):
+    """Raised when grant action approval workflow constraints are violated."""
+
+
 # ---------------------------------------------------------------------------
 
 _VALID_GRANT_STATUSES = {"prospect", "in_progress", "submitted", "awarded", "active", "declined", "closed", "reporting"}
@@ -55,6 +62,12 @@ _VALID_TRANSITIONS = {
 }
 _VALID_OPPORTUNITY_STATUSES = {"identified", "qualified", "in_progress", "submitted", "awarded", "declined", "archived"}
 _VALID_PROPOSAL_OUTCOMES = {"draft", "submitted", "awarded", "declined", "withdrawn"}
+_VALID_APPROVAL_ACTIONS = {
+    "proposal_submit",
+    "disbursement_add",
+    "outcome_record",
+    "grant_closeout",
+}
 
 
 def _grant_disbursed_total(grant_id: int, organization_id: int) -> float:
@@ -957,6 +970,258 @@ def convert_opportunity_to_grant(
 
 def opportunity_forecast_summary(organization_id: int) -> dict:
     return grant_preaward_service.opportunity_forecast_summary(organization_id)
+
+
+def _get_approval_request(request_id: int, organization_id: int) -> GrantApprovalRequest:
+    approval = db.session.scalars(
+        select(GrantApprovalRequest).where(
+            GrantApprovalRequest.id == request_id,
+            GrantApprovalRequest.organization_id == organization_id,
+        ).with_for_update().limit(1)
+    ).first()
+    if approval is None:
+        raise GrantApprovalError("approval request not found for organization")
+    return approval
+
+
+def create_approval_request(
+    organization_id: int,
+    *,
+    action_type: str,
+    resource_type: str,
+    resource_id: int,
+    requested_by_user_id: int,
+    requested_by_role: str,
+    payload: Optional[dict] = None,
+) -> GrantApprovalRequest:
+    if action_type not in _VALID_APPROVAL_ACTIONS:
+        raise GrantApprovalError(f"invalid approval action '{action_type}'")
+    if not resource_type.strip():
+        raise GrantApprovalError("resource_type is required")
+    if int(resource_id) <= 0:
+        raise GrantApprovalError("resource_id must be positive")
+
+    approval = GrantApprovalRequest(
+        organization_id=organization_id,
+        action_type=action_type,
+        resource_type=resource_type.strip(),
+        resource_id=int(resource_id),
+        requested_by_user_id=int(requested_by_user_id),
+        requested_by_role=(requested_by_role or "").strip() or "unknown",
+        status="pending",
+        payload_json=payload or None,
+    )
+    db.session.add(approval)
+    db.session.commit()
+    audit(
+        "grant.approval.request.create",
+        entity_type="grant_approval_request",
+        entity_id=int(approval.id),
+        details={
+            "organization_id": int(organization_id),
+            "after": {
+                "action_type": approval.action_type,
+                "resource_type": approval.resource_type,
+                "resource_id": int(approval.resource_id),
+                "status": approval.status,
+                "requested_by_user_id": int(approval.requested_by_user_id),
+                "requested_by_role": approval.requested_by_role,
+            },
+        },
+    )
+    return approval
+
+
+def decide_approval_request(
+    request_id: int,
+    organization_id: int,
+    *,
+    decided_by_user_id: int,
+    decided_by_role: str,
+    decision: str,
+    comment: Optional[str] = None,
+) -> GrantApprovalRequest:
+    normalized_decision = (decision or "").strip().lower()
+    if normalized_decision not in {"approved", "rejected"}:
+        raise GrantApprovalError("decision must be approved or rejected")
+
+    approval = _get_approval_request(request_id, organization_id)
+    if approval.status != "pending":
+        raise GrantApprovalError("approval request is no longer pending")
+    if int(decided_by_user_id) == int(approval.requested_by_user_id):
+        raise GrantApprovalError("requester cannot approve/reject their own request")
+
+    role = (decided_by_role or "").strip().lower()
+    if role not in {"admin", "org_admin", "finance", "finance_admin", "executive"}:
+        raise GrantApprovalError("approver role not allowed for grant approvals")
+
+    approval.status = normalized_decision
+    decision_row = GrantApprovalDecision(
+        request_id=approval.id,
+        organization_id=organization_id,
+        decided_by_user_id=int(decided_by_user_id),
+        decided_by_role=(decided_by_role or "").strip() or "unknown",
+        decision=normalized_decision,
+        comment=(comment or "").strip() or None,
+    )
+    db.session.add(decision_row)
+    db.session.commit()
+    audit(
+        "grant.approval.request.decision",
+        entity_type="grant_approval_request",
+        entity_id=int(approval.id),
+        details={
+            "organization_id": int(organization_id),
+            "decision": normalized_decision,
+            "decided_by_user_id": int(decided_by_user_id),
+            "decided_by_role": decision_row.decided_by_role,
+            "status": approval.status,
+        },
+    )
+    return approval
+
+
+def _consume_approved_request(
+    *,
+    request_id: int,
+    organization_id: int,
+    required_action: str,
+    required_resource_type: str,
+    required_resource_id: int,
+    executed_by_user_id: int,
+) -> GrantApprovalRequest:
+    approval = _get_approval_request(request_id, organization_id)
+    if approval.status != "approved":
+        raise GrantApprovalError("approval request must be approved before execution")
+    if approval.action_type != required_action:
+        raise GrantApprovalError("approval action does not match requested operation")
+    if approval.resource_type != required_resource_type or int(approval.resource_id) != int(required_resource_id):
+        raise GrantApprovalError("approval resource mismatch")
+    if int(executed_by_user_id) == int(approval.requested_by_user_id):
+        raise GrantApprovalError("requester cannot execute their own approved request")
+
+    approval.status = "executed"
+    db.session.commit()
+    audit(
+        "grant.approval.request.execute",
+        entity_type="grant_approval_request",
+        entity_id=int(approval.id),
+        details={
+            "organization_id": int(organization_id),
+            "status": approval.status,
+            "executed_by_user_id": int(executed_by_user_id),
+        },
+    )
+    return approval
+
+
+def submit_proposal_with_approval(
+    proposal_id: int,
+    organization_id: int,
+    *,
+    submission_date: date,
+    approval_request_id: int,
+    executed_by_user_id: int,
+    document_ref: Optional[str] = None,
+) -> GrantProposal:
+    proposal = submit_proposal(
+        proposal_id,
+        organization_id,
+        submission_date=submission_date,
+        document_ref=document_ref,
+    )
+    _consume_approved_request(
+        request_id=approval_request_id,
+        organization_id=organization_id,
+        required_action="proposal_submit",
+        required_resource_type="proposal",
+        required_resource_id=int(proposal_id),
+        executed_by_user_id=executed_by_user_id,
+    )
+    return proposal
+
+
+def add_disbursement_with_approval(
+    grant_id: int,
+    organization_id: int,
+    amount: float,
+    received_date: date,
+    *,
+    approval_request_id: int,
+    executed_by_user_id: int,
+    currency: str = "USD",
+    reference: Optional[str] = None,
+    notes: Optional[str] = None,
+) -> GrantDisbursement:
+    disbursement = add_disbursement(
+        grant_id,
+        organization_id,
+        amount,
+        received_date,
+        currency=currency,
+        reference=reference,
+        notes=notes,
+    )
+    _consume_approved_request(
+        request_id=approval_request_id,
+        organization_id=organization_id,
+        required_action="disbursement_add",
+        required_resource_type="grant",
+        required_resource_id=int(grant_id),
+        executed_by_user_id=executed_by_user_id,
+    )
+    return disbursement
+
+
+def record_outcome_with_approval(
+    grant_id: int,
+    organization_id: int,
+    *,
+    template_id: int,
+    current_value: float,
+    approval_request_id: int,
+    executed_by_user_id: int,
+    program_case_id: Optional[int] = None,
+    note: Optional[str] = None,
+    source: str = "manual",
+):
+    record = grant_outcomes_service.record_outcome(
+        grant_id,
+        organization_id,
+        template_id=template_id,
+        current_value=current_value,
+        program_case_id=program_case_id,
+        note=note,
+        source=source,
+    )
+    _consume_approved_request(
+        request_id=approval_request_id,
+        organization_id=organization_id,
+        required_action="outcome_record",
+        required_resource_type="grant",
+        required_resource_id=int(grant_id),
+        executed_by_user_id=executed_by_user_id,
+    )
+    return record
+
+
+def close_grant_with_approval(
+    grant_id: int,
+    organization_id: int,
+    *,
+    approval_request_id: int,
+    executed_by_user_id: int,
+) -> Grant:
+    grant = advance_grant_status(grant_id, organization_id, new_status="closed")
+    _consume_approved_request(
+        request_id=approval_request_id,
+        organization_id=organization_id,
+        required_action="grant_closeout",
+        required_resource_type="grant",
+        required_resource_id=int(grant_id),
+        executed_by_user_id=executed_by_user_id,
+    )
+    return grant
 
 
 def get_disbursements(grant_id: int, organization_id: int) -> List[GrantDisbursement]:

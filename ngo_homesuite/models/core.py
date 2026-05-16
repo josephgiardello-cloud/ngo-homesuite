@@ -672,6 +672,52 @@ class GrantOutcomeRecord(db.Model):
         return f'<GrantOutcomeRecord grant={self.grant_id} template={self.template_id} value={self.current_value}>'
 
 
+class GrantApprovalRequest(db.Model):
+    """Approval gate request for sensitive grant actions."""
+
+    __tablename__ = 'grant_approval_requests'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    action_type = db.Column(db.String(60), nullable=False, index=True)
+    resource_type = db.Column(db.String(40), nullable=False, index=True)
+    resource_id = db.Column(db.Integer, nullable=False, index=True)
+    requested_by_user_id = db.Column(db.Integer, nullable=False, index=True)
+    requested_by_role = db.Column(db.String(40), nullable=False)
+    status = db.Column(db.String(20), nullable=False, default='pending', index=True)  # pending, approved, rejected, executed
+    payload_json = db.Column(JSON, nullable=True)
+    version_id = db.Column(db.Integer, nullable=False, default=0)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
+
+    decisions = db.relationship('GrantApprovalDecision', backref='approval_request', cascade='all, delete-orphan')
+
+    __mapper_args__ = {
+        'version_id_col': version_id,
+    }
+
+    def __repr__(self):
+        return f'<GrantApprovalRequest {self.action_type} {self.resource_type}:{self.resource_id} [{self.status}]>'
+
+
+class GrantApprovalDecision(db.Model):
+    """Immutable decision log for grant approval requests."""
+
+    __tablename__ = 'grant_approval_decisions'
+
+    id = db.Column(db.Integer, primary_key=True)
+    request_id = db.Column(db.Integer, db.ForeignKey('grant_approval_requests.id'), nullable=False, index=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    decided_by_user_id = db.Column(db.Integer, nullable=False, index=True)
+    decided_by_role = db.Column(db.String(40), nullable=False)
+    decision = db.Column(db.String(20), nullable=False)  # approved, rejected
+    comment = db.Column(db.Text, nullable=True)
+    decided_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+
+    def __repr__(self):
+        return f'<GrantApprovalDecision request={self.request_id} decision={self.decision}>'
+
+
 class MembershipTier(db.Model):
     """Configurable membership tier for an organization."""
 
@@ -1463,6 +1509,8 @@ __all__ = [
     'GrantProposal',
     'GrantOutcomeTemplate',
     'GrantOutcomeRecord',
+    'GrantApprovalRequest',
+    'GrantApprovalDecision',
     'MembershipTier',
     'MembershipRecord',
     'StewardshipJourney',
