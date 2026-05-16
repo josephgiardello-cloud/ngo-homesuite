@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+
+{% block title %}{{ beneficiary.first_name }} {{ beneficiary.last_name }} - NGO HomeSuite{% endblock %}
+
+{% block content %}
+<div style="display:flex; align-items:center; gap:1rem; flex-wrap:wrap;">
+    <div>
+        <h1>{{ beneficiary.first_name }} {{ beneficiary.last_name }}</h1>
+        <p class="text-muted">Beneficiary profile</p>
+    </div>
+    <div style="margin-left:auto;" class="actions-row">
+        <a href="{{ url_for('main.beneficiaries_list') }}" class="btn btn-secondary">← All Beneficiaries</a>
+    </div>
+</div>
+
+<!-- Demographics card -->
+<div class="card mt-3">
+    <div style="display:grid; gap:0.75rem 2rem; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));">
+        <div>
+            <div class="text-muted" style="font-size:0.8em; text-transform:uppercase; letter-spacing:0.05em;">Status</div>
+            <div>
+                <span class="badge {{ 'badge-success' if beneficiary.status == 'active' else 'badge-secondary' }}">{{ beneficiary.status }}</span>
+            </div>
+        </div>
+        <div>
+            <div class="text-muted" style="font-size:0.8em; text-transform:uppercase; letter-spacing:0.05em;">Email</div>
+            <div>{{ beneficiary.email or '—' }}</div>
+        </div>
+        <div>
+            <div class="text-muted" style="font-size:0.8em; text-transform:uppercase; letter-spacing:0.05em;">Phone</div>
+            <div>{{ beneficiary.phone or '—' }}</div>
+        </div>
+        <div>
+            <div class="text-muted" style="font-size:0.8em; text-transform:uppercase; letter-spacing:0.05em;">Program</div>
+            <div>{{ beneficiary.program or '—' }}</div>
+        </div>
+        <div>
+            <div class="text-muted" style="font-size:0.8em; text-transform:uppercase; letter-spacing:0.05em;">Gender</div>
+            <div>{{ beneficiary.gender or '—' }}</div>
+        </div>
+        <div>
+            <div class="text-muted" style="font-size:0.8em; text-transform:uppercase; letter-spacing:0.05em;">Date of Birth</div>
+            <div>{{ beneficiary.date_of_birth.strftime('%Y-%m-%d') if beneficiary.date_of_birth else '—' }}</div>
+        </div>
+        <div>
+            <div class="text-muted" style="font-size:0.8em; text-transform:uppercase; letter-spacing:0.05em;">Location</div>
+            <div>
+                {% if beneficiary.city and beneficiary.country %}
+                    {{ beneficiary.city }}, {{ beneficiary.country }}
+                {% elif beneficiary.city %}
+                    {{ beneficiary.city }}
+                {% elif beneficiary.country %}
+                    {{ beneficiary.country }}
+                {% else %}
+                    —
+                {% endif %}
+            </div>
+        </div>
+        <div>
+            <div class="text-muted" style="font-size:0.8em; text-transform:uppercase; letter-spacing:0.05em;">Enrolled</div>
+            <div>{{ beneficiary.created_at.strftime('%Y-%m-%d') if beneficiary.created_at else '—' }}</div>
+        </div>
+    </div>
+    {% if beneficiary.notes %}
+    <hr style="border-color:var(--border); margin:1rem 0;">
+    <div>
+        <div class="text-muted" style="font-size:0.8em; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.35rem;">Notes</div>
+        <p style="margin:0;">{{ beneficiary.notes }}</p>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Cases section -->
+<h2 class="mt-4">Cases <span style="font-size:0.7em; color:var(--muted); font-weight:400;">({{ cases|length }})</span></h2>
+
+{% if cases %}
+<div class="table-wrap mt-2">
+<table>
+    <thead>
+        <tr>
+            <th>Title</th>
+            <th>Type</th>
+            <th>Status</th>
+            <th>Priority</th>
+            <th>Progress</th>
+            <th>Opened</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for case in cases %}
+        <tr>
+            <td>{{ case.title or '(untitled)' }}</td>
+            <td>{{ case.case_type or '—' }}</td>
+            <td>
+                <span class="badge
+                    {% if case.status == 'open' %}badge-info
+                    {% elif case.status == 'closed' %}badge-secondary
+                    {% elif case.status == 'active' %}badge-success
+                    {% else %}badge-secondary{% endif %}">
+                    {{ case.status }}
+                </span>
+            </td>
+            <td>{{ case.priority or '—' }}</td>
+            <td>
+                {% if case.progress_percent is not none %}
+                <div style="display:flex; align-items:center; gap:0.5rem;">
+                    <div style="flex:1; background:var(--border); border-radius:4px; height:6px; min-width:60px;">
+                        <div style="width:{{ [case.progress_percent, 100]|min }}%; background:var(--primary); border-radius:4px; height:100%;"></div>
+                    </div>
+                    <span style="font-size:0.8em; color:var(--muted);">{{ case.progress_percent|int }}%</span>
+                </div>
+                {% else %}
+                —
+                {% endif %}
+            </td>
+            <td>{{ case.opened_date.strftime('%Y-%m-%d') if case.opened_date else (case.created_at.strftime('%Y-%m-%d') if case.created_at else '—') }}</td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<div class="card mt-2">
+    <p>No cases linked to this beneficiary yet.</p>
+    <p class="text-muted" style="font-size:0.9em; margin-top:0.5rem;">Cases can be created via the <strong>Programs API</strong> at <code>POST /programs/cases</code> with <code>beneficiary_id={{ beneficiary.id }}</code>.</p>
+</div>
+{% endif %}
+
+<style>
+.badge { display:inline-block; padding:0.2em 0.6em; border-radius:4px; font-size:0.8em; font-weight:600; }
+.badge-success { background:var(--success-bg); color:var(--success-text); }
+.badge-info { background:var(--info-bg); color:var(--info-text); }
+.badge-secondary { background:var(--surface-soft); color:var(--muted); border:1px solid var(--border); }
+</style>
+{% endblock %}

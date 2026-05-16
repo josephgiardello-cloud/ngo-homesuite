@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+
+{% block title %}Beneficiaries - NGO HomeSuite{% endblock %}
+
+{% block content %}
+<h1>Beneficiaries</h1>
+<p class="text-muted">Track individuals served by your programs.</p>
+
+<div class="mb-3 mt-2 actions-row">
+    <a href="{{ url_for('main.beneficiary_new') }}" class="btn btn-primary">Add Beneficiary</a>
+</div>
+
+<form method="get" class="mb-3" style="display:grid; gap:0.75rem; grid-template-columns: 1fr 220px auto; align-items:end;">
+    <div class="form-group" style="margin:0;">
+        <label for="q">Search</label>
+        <input type="text" id="q" name="q" value="{{ filter_q }}" placeholder="Name, email, or program" />
+    </div>
+    <div class="form-group" style="margin:0;">
+        <label for="status">Status</label>
+        <select id="status" name="status">
+            <option value="" {{ 'selected' if not filter_status else '' }}>All</option>
+            <option value="active" {{ 'selected' if filter_status == 'active' else '' }}>Active</option>
+            <option value="inactive" {{ 'selected' if filter_status == 'inactive' else '' }}>Inactive</option>
+            <option value="pending" {{ 'selected' if filter_status == 'pending' else '' }}>Pending</option>
+        </select>
+    </div>
+    <button type="submit" class="btn btn-primary">Apply</button>
+</form>
+
+{% if beneficiaries %}
+<div class="table-wrap">
+<table>
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Phone</th>
+            <th>Program</th>
+            <th>Status</th>
+            <th>Added</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for b in beneficiaries %}
+        <tr>
+            <td><a href="{{ url_for('main.beneficiary_detail', beneficiary_id=b.id) }}">{{ b.first_name }} {{ b.last_name }}</a></td>
+            <td>{{ b.email or '-' }}</td>
+            <td>{{ b.phone or '-' }}</td>
+            <td>{{ b.program or '-' }}</td>
+            <td>
+                <span class="badge {{ 'badge-success' if b.status == 'active' else 'badge-secondary' }}">{{ b.status }}</span>
+            </td>
+            <td>{{ b.created_at.strftime('%Y-%m-%d') if b.created_at else '-' }}</td>
+            <td>
+                <div class="actions-row">
+                    <a href="{{ url_for('main.beneficiary_detail', beneficiary_id=b.id) }}" class="btn btn-secondary">View</a>
+                </div>
+            </td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<div class="card">
+    <p>No beneficiaries matched your filters. <a href="{{ url_for('main.beneficiary_new') }}">Add the first one.</a></p>
+</div>
+{% endif %}
+
+<style>
+.badge { display:inline-block; padding:0.2em 0.6em; border-radius:4px; font-size:0.8em; font-weight:600; }
+.badge-success { background:var(--success-bg); color:var(--success-text); }
+.badge-secondary { background:var(--surface-soft); color:var(--muted); border:1px solid var(--border); }
+</style>
+{% endblock %}

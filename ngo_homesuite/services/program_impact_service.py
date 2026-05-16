@@ -152,6 +152,7 @@ def list_cases(
     case_type: Optional[str] = None,
     donor_id: Optional[int] = None,
     project_id: Optional[int] = None,
+    beneficiary_id: Optional[int] = None,
 ) -> List[ProgramCase]:
     stmt = select(ProgramCase).where(ProgramCase.organization_id == organization_id)
     if status:
@@ -162,6 +163,8 @@ def list_cases(
         stmt = stmt.where(ProgramCase.donor_id == donor_id)
     if project_id:
         stmt = stmt.where(ProgramCase.project_id == project_id)
+    if beneficiary_id:
+        stmt = stmt.where(ProgramCase.beneficiary_id == beneficiary_id)
     stmt = stmt.order_by(ProgramCase.created_at.desc())
     return list(db.session.scalars(stmt))
 

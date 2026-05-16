@@ -11,7 +11,7 @@ from flask import Blueprint, render_template, redirect, url_for, request, flash,
 from flask_login import login_required, current_user
 from flask_wtf import FlaskForm
 from werkzeug.exceptions import NotFound
-from wtforms import BooleanField, FloatField, SelectField, StringField, SubmitField, TextAreaField
+from wtforms import BooleanField, DateField, FloatField, SelectField, StringField, SubmitField, TextAreaField
 from wtforms.validators import DataRequired, Optional as WTOptional, NumberRange, Email
 from io import BytesIO
 from openpyxl import Workbook
@@ -19,7 +19,8 @@ from openpyxl import Workbook
 from ngo_homesuite.models.core import (
     Organization, Beneficiary, Project, Donation, Donor, Fund, Expense, DonationReceipt, P2PPage, Volunteer, db
 )
-from ngo_homesuite.services.beneficiary_service import create_beneficiary, list_beneficiaries
+from ngo_homesuite.services.beneficiary_service import create_beneficiary, get_beneficiary, list_beneficiaries, update_beneficiary
+from ngo_homesuite.services.program_impact_service import list_cases
 from ngo_homesuite.services.donation_service import DonationConcurrencyError, DonationNotFound, DonationService
 from ngo_homesuite.services.donor_service import DonorNotFound, DonorService
 from ngo_homesuite.services.expense_service import ExpenseService
@@ -175,6 +176,29 @@ class RecurringDonationForm(FlaskForm):
         validators=[DataRequired()],
     )
     submit = SubmitField('Create Recurring Plan')
+
+
+class BeneficiaryIntakeForm(FlaskForm):
+    first_name = StringField('First Name', validators=[DataRequired()])
+    last_name = StringField('Last Name', validators=[WTOptional()])
+    email = StringField('Email', validators=[WTOptional(), Email()])
+    phone = StringField('Phone', validators=[WTOptional()])
+    date_of_birth = DateField('Date of Birth', validators=[WTOptional()], format='%Y-%m-%d')
+    gender = SelectField(
+        'Gender',
+        choices=[('', '-- Select --'), ('male', 'Male'), ('female', 'Female'), ('non_binary', 'Non-binary'), ('prefer_not_to_say', 'Prefer not to say')],
+        validators=[WTOptional()],
+    )
+    program = StringField('Program / Service Area', validators=[WTOptional()])
+    status = SelectField(
+        'Status',
+        choices=[('active', 'Active'), ('inactive', 'Inactive'), ('pending', 'Pending')],
+        validators=[DataRequired()],
+    )
+    city = StringField('City', validators=[WTOptional()])
+    country = StringField('Country', validators=[WTOptional()])
+    notes = TextAreaField('Notes', validators=[WTOptional()])
+    submit = SubmitField('Save Beneficiary')
 
 
 def _current_org() -> TypingOptional[Organization]:
@@ -1824,3 +1848,108 @@ def about():
 def help():
     """Help/documentation page."""
     return render_template('help.html', active_page='help')
+
+
+# ---------------------------------------------------------------------------
+# Beneficiary Management UI
+# ---------------------------------------------------------------------------
+
+@main_bp.route('/beneficiaries')
+@login_required
+def beneficiaries_list():
+    org = _current_org()
+    query = request.args.get('q', '').strip()
+    status_filter = request.args.get('status', '').strip()
+
+    beneficiaries = []
+    if org:
+        all_beneficiaries = list_beneficiaries(org.id)
+        if query:
+            ql = query.lower()
+            all_beneficiaries = [
+                b for b in all_beneficiaries
+                if ql in (b.first_name or '').lower()
+                or ql in (b.last_name or '').lower()
+                or ql in (b.email or '').lower()
+                or ql in (b.program or '').lower()
+            ]
+        if status_filter:
+            all_beneficiaries = [b for b in all_beneficiaries if b.status == status_filter]
+        beneficiaries = all_beneficiaries
+
+    ai_context = {
+        'active_page': 'beneficiaries',
+        'organization': org.name if org else None,
+        'beneficiary_count': len(beneficiaries),
+    }
+    return render_template(
+        'beneficiaries.html',
+        beneficiaries=beneficiaries,
+        active_page='beneficiaries',
+        filter_q=query,
+        filter_status=status_filter,
+        ai_context=ai_context,
+    )
+
+
+@main_bp.route('/beneficiaries/new', methods=['GET', 'POST'])
+@login_required
+@roles_required('admin', 'staff')
+def beneficiary_new():
+    org = _current_org()
+    if not org:
+        flash('No organization is available.', 'error')
+        return redirect(url_for('main.beneficiaries_list'))
+
+    form = BeneficiaryIntakeForm()
+    if form.validate_on_submit():
+        try:
+            create_beneficiary(
+                org.id,
+                form.first_name.data,
+                form.last_name.data or '',
+                email=form.email.data or None,
+                phone=form.phone.data or None,
+                date_of_birth=form.date_of_birth.data,
+                gender=form.gender.data or None,
+                program=form.program.data or None,
+                status=form.status.data,
+                city=form.city.data or None,
+                country=form.country.data or None,
+                notes=form.notes.data or None,
+            )
+            flash('Beneficiary added successfully.', 'success')
+            return redirect(url_for('main.beneficiaries_list'))
+        except ValueError as exc:
+            flash(str(exc), 'error')
+
+    return render_template('beneficiary_form.html', form=form, is_edit=False, active_page='beneficiaries')
+
+
+@main_bp.route('/beneficiaries/<int:beneficiary_id>')
+@login_required
+def beneficiary_detail(beneficiary_id: int):
+    org = _current_org()
+    if not org:
+        abort(404)
+
+    beneficiary = get_beneficiary(beneficiary_id, org.id)
+    if not beneficiary:
+        abort(404)
+
+    cases = list_cases(org.id, beneficiary_id=beneficiary_id)
+
+    ai_context = {
+        'active_page': 'beneficiaries',
+        'organization': org.name,
+        'beneficiary_id': beneficiary.id,
+        'beneficiary_name': f"{beneficiary.first_name} {beneficiary.last_name}".strip(),
+        'case_count': len(cases),
+    }
+    return render_template(
+        'beneficiary_detail.html',
+        beneficiary=beneficiary,
+        cases=cases,
+        active_page='beneficiaries',
+        ai_context=ai_context,
+    )
