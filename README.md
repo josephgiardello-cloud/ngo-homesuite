@@ -17,6 +17,8 @@ A comprehensive nonprofit management system for managing donors, donations, fund
 Documentation index:
 - Feature maturity matrix: `docs/feature_status.md`
 - Production checklist: `docs/production_checklist.md`
+- Observability stack runbook: `docs/observability_stack.md`
+- Backup/restore drill runbook: `docs/backup_restore_drill.md`
 - Architecture decisions (ADR): `docs/adr/README.md`
 - Release/versioning process: `docs/release_process.md`
 

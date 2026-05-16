@@ -63,6 +63,27 @@ jobs:
         print("Observability artifact check passed")
         PY
 
+    - name: Backup/restore drill smoke (non-prod)
+      run: |
+        python - <<'PY'
+        import sqlite3
+        from pathlib import Path
+
+        from ngo_homesuite.db.backup_restore_drill import run_backup_restore_drill
+
+        tmp = Path(".ci-drill")
+        tmp.mkdir(parents=True, exist_ok=True)
+        source = tmp / "source.sqlite3"
+        with sqlite3.connect(str(source)) as conn:
+            conn.execute("CREATE TABLE IF NOT EXISTS healthcheck (id INTEGER PRIMARY KEY, value TEXT)")
+            conn.execute("INSERT INTO healthcheck (value) VALUES ('ok')")
+            conn.commit()
+
+        result = run_backup_restore_drill(str(source), str(tmp / "outputs"))
+        assert result["integrity"] == "ok"
+        print("Backup/restore drill smoke passed")
+        PY
+
     - name: Run tests
       run: |
         pytest ngo_homesuite/ -v --tb=short --cov=ngo_homesuite --cov-report=xml
