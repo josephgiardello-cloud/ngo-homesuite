@@ -38,6 +38,9 @@ class ExpenseService:
         currency: str,
         payee: Optional[str],
         description: Optional[str],
+        grant_id: Optional[int] = None,
+        expense_category: Optional[str] = None,
+        supporting_document_ref: Optional[str] = None,
     ) -> Expense:
         if amount <= 0:
             raise ValueError("Expense amount must be positive")
@@ -55,5 +58,26 @@ class ExpenseService:
             description=(description or "").strip() or None,
         )
         db.session.add(expense)
+        db.session.flush()
+
+        if grant_id is not None:
+            if not (expense_category or "").strip():
+                db.session.rollback()
+                raise ValueError("expense_category is required when grant_id is provided")
+            from ngo_homesuite.services import grant_service
+
+            try:
+                grant_service.allocate_expense_to_budget_line(
+                    grant_id=grant_id,
+                    organization_id=org_id,
+                    expense_id=int(expense.id),
+                    category=expense_category,
+                    supporting_document_ref=supporting_document_ref,
+                    commit=False,
+                )
+            except Exception:
+                db.session.rollback()
+                raise
+
         db.session.commit()
         return expense

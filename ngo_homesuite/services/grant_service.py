@@ -7,7 +7,7 @@ from typing import List, Optional
 from sqlalchemy import and_, func, or_, select
 
 from ngo_homesuite.db.utils import audit
-from ngo_homesuite.models.core import Grant, GrantDisbursement, db
+from ngo_homesuite.models.core import Expense, Grant, GrantBudgetLine, GrantDisbursement, GrantExpenseAllocation, db
 
 
 # ---------------------------------------------------------------------------
@@ -24,6 +24,10 @@ class GrantNotFound(Exception):
 
 class InvalidGrantTransition(ValueError):
     """Raised when a requested grant status transition is not permitted."""
+
+
+class GrantAllocationError(ValueError):
+    """Raised when grant expense allocation violates budget or tenant constraints."""
 
 
 # ---------------------------------------------------------------------------
@@ -47,6 +51,45 @@ def _grant_disbursed_total(grant_id: int, organization_id: int) -> float:
         GrantDisbursement.organization_id == organization_id,
     )
     return float(db.session.scalar(stmt) or 0)
+
+
+def _grant_budget_allocated_total(grant_id: int, organization_id: int) -> float:
+    stmt = select(func.coalesce(func.sum(GrantBudgetLine.allocated_amount), 0)).where(
+        GrantBudgetLine.grant_id == grant_id,
+        GrantBudgetLine.organization_id == organization_id,
+    )
+    return float(db.session.scalar(stmt) or 0)
+
+
+def _grant_spent_total(grant_id: int, organization_id: int) -> float:
+    stmt = select(func.coalesce(func.sum(GrantExpenseAllocation.amount), 0)).where(
+        GrantExpenseAllocation.grant_id == grant_id,
+        GrantExpenseAllocation.organization_id == organization_id,
+    )
+    return float(db.session.scalar(stmt) or 0)
+
+
+def _grant_has_budget_lines(grant_id: int, organization_id: int) -> bool:
+    stmt = select(func.count(GrantBudgetLine.id)).where(
+        GrantBudgetLine.grant_id == grant_id,
+        GrantBudgetLine.organization_id == organization_id,
+    )
+    return int(db.session.scalar(stmt) or 0) > 0
+
+
+def _grant_budget_remaining(grant_id: int, organization_id: int) -> float:
+    allocated = _grant_budget_allocated_total(grant_id, organization_id)
+    spent = _grant_spent_total(grant_id, organization_id)
+    return max(0.0, allocated - spent)
+
+
+def _normalize_budget_category(category: str) -> str:
+    normalized = (category or "").strip().lower().replace(" ", "_")
+    if not normalized:
+        raise GrantAllocationError("budget category is required")
+    if len(normalized) > 80:
+        raise GrantAllocationError("budget category is too long")
+    return normalized
 
 
 def _validate_currency(code: str) -> str:
@@ -171,12 +214,19 @@ def advance_grant_status(grant_id: int, organization_id: int, new_status: str, *
         raise InvalidGrantTransition("Cannot transition to active before award amount is set")
 
     if new_status == "closed" and grant.amount_awarded:
-        disbursed = _grant_disbursed_total(grant.id, organization_id)
         awarded_amount = float(grant.amount_awarded or 0)
-        if disbursed + 1e-9 < awarded_amount:
-            raise InvalidGrantTransition(
-                f"Cannot close grant with outstanding restricted balance. awarded={awarded_amount:.2f}, disbursed={disbursed:.2f}"
-            )
+        if _grant_has_budget_lines(grant.id, organization_id):
+            remaining_budget = _grant_budget_remaining(grant.id, organization_id)
+            if remaining_budget > 1e-9:
+                raise InvalidGrantTransition(
+                    f"Cannot close grant with outstanding restricted balance. remaining_budget={remaining_budget:.2f}"
+                )
+        else:
+            disbursed = _grant_disbursed_total(grant.id, organization_id)
+            if disbursed + 1e-9 < awarded_amount:
+                raise InvalidGrantTransition(
+                    f"Cannot close grant with outstanding restricted balance. awarded={awarded_amount:.2f}, disbursed={disbursed:.2f}"
+                )
 
     grant.status = new_status
     if new_status == "awarded" and kwargs.get("amount_awarded"):
@@ -311,6 +361,162 @@ def add_disbursement(
     return disbursement
 
 
+def create_budget_line(
+    grant_id: int,
+    organization_id: int,
+    *,
+    category: str,
+    allocated_amount: float,
+    line_name: Optional[str] = None,
+    notes: Optional[str] = None,
+) -> GrantBudgetLine:
+    if allocated_amount <= 0:
+        raise GrantAllocationError("allocated_amount must be positive")
+
+    grant = db.session.scalars(
+        select(Grant).where(Grant.id == grant_id, Grant.organization_id == organization_id).limit(1)
+    ).first()
+    if grant is None:
+        raise GrantNotFound(grant_id)
+
+    normalized_category = _normalize_budget_category(category)
+    existing = db.session.scalars(
+        select(GrantBudgetLine).where(
+            GrantBudgetLine.grant_id == grant_id,
+            GrantBudgetLine.organization_id == organization_id,
+            GrantBudgetLine.category == normalized_category,
+        ).limit(1)
+    ).first()
+    if existing is not None:
+        raise GrantAllocationError(f"budget line category '{normalized_category}' already exists for this grant")
+
+    current_allocated = _grant_budget_allocated_total(grant_id, organization_id)
+    projected_allocated = current_allocated + float(allocated_amount)
+    if grant.amount_awarded is not None and projected_allocated > float(grant.amount_awarded) + 1e-9:
+        raise GrantAllocationError("budget lines cannot exceed amount_awarded")
+
+    budget_line = GrantBudgetLine(
+        grant_id=grant_id,
+        organization_id=organization_id,
+        category=normalized_category,
+        line_name=(line_name or normalized_category.replace("_", " ").title()).strip(),
+        allocated_amount=float(allocated_amount),
+        notes=(notes or "").strip() or None,
+    )
+    db.session.add(budget_line)
+    db.session.commit()
+    audit(
+        "grant.budget_line.create",
+        entity_type="grant",
+        entity_id=int(grant_id),
+        details={
+            "organization_id": int(organization_id),
+            "budget_line_id": int(budget_line.id),
+            "category": normalized_category,
+            "allocated_amount": float(allocated_amount),
+        },
+    )
+    return budget_line
+
+
+def allocate_expense_to_budget_line(
+    grant_id: int,
+    organization_id: int,
+    *,
+    expense_id: int,
+    category: str,
+    supporting_document_ref: Optional[str] = None,
+    commit: bool = True,
+) -> GrantExpenseAllocation:
+    grant = db.session.scalars(
+        select(Grant).where(Grant.id == grant_id, Grant.organization_id == organization_id).limit(1)
+    ).first()
+    if grant is None:
+        raise GrantNotFound(grant_id)
+
+    expense = db.session.scalars(
+        select(Expense).where(Expense.id == expense_id, Expense.organization_id == organization_id).limit(1)
+    ).first()
+    if expense is None:
+        raise GrantAllocationError("expense not found for organization")
+
+    normalized_category = _normalize_budget_category(category)
+    budget_line = db.session.scalars(
+        select(GrantBudgetLine).where(
+            GrantBudgetLine.grant_id == grant_id,
+            GrantBudgetLine.organization_id == organization_id,
+            GrantBudgetLine.category == normalized_category,
+        ).limit(1)
+    ).first()
+    if budget_line is None:
+        raise GrantAllocationError(f"no budget line configured for category '{normalized_category}'")
+
+    existing = db.session.scalars(
+        select(GrantExpenseAllocation).where(
+            GrantExpenseAllocation.expense_id == expense_id,
+            GrantExpenseAllocation.organization_id == organization_id,
+        ).limit(1)
+    ).first()
+    if existing is not None:
+        raise GrantAllocationError("expense already allocated to a grant budget line")
+
+    amount = float(expense.amount or 0)
+    if amount <= 0:
+        raise GrantAllocationError("expense amount must be positive")
+
+    line_spent_stmt = select(func.coalesce(func.sum(GrantExpenseAllocation.amount), 0)).where(
+        GrantExpenseAllocation.budget_line_id == budget_line.id,
+        GrantExpenseAllocation.organization_id == organization_id,
+    )
+    line_spent = float(db.session.scalar(line_spent_stmt) or 0)
+    line_remaining = float(budget_line.allocated_amount or 0) - line_spent
+    if amount > line_remaining + 1e-9:
+        raise GrantAllocationError("expense allocation exceeds remaining budget line balance")
+
+    if grant.amount_awarded is not None:
+        spent_total = _grant_spent_total(grant_id, organization_id)
+        if spent_total + amount > float(grant.amount_awarded) + 1e-9:
+            raise GrantAllocationError("expense allocation exceeds awarded amount")
+
+    allocation = GrantExpenseAllocation(
+        grant_id=grant_id,
+        budget_line_id=budget_line.id,
+        expense_id=expense_id,
+        organization_id=organization_id,
+        amount=amount,
+        category=normalized_category,
+        supporting_document_ref=(supporting_document_ref or "").strip() or None,
+    )
+    db.session.add(allocation)
+    db.session.flush()
+
+    if commit:
+        db.session.commit()
+
+    audit(
+        "grant.expense.allocate",
+        entity_type="grant",
+        entity_id=int(grant_id),
+        details={
+            "organization_id": int(organization_id),
+            "allocation_id": int(allocation.id),
+            "expense_id": int(expense_id),
+            "budget_line_id": int(budget_line.id),
+            "category": normalized_category,
+            "amount": amount,
+        },
+    )
+    return allocation
+
+
+def list_budget_lines(grant_id: int, organization_id: int) -> List[GrantBudgetLine]:
+    stmt = select(GrantBudgetLine).where(
+        GrantBudgetLine.grant_id == grant_id,
+        GrantBudgetLine.organization_id == organization_id,
+    ).order_by(GrantBudgetLine.category.asc())
+    return list(db.session.scalars(stmt))
+
+
 def get_disbursements(grant_id: int, organization_id: int) -> List[GrantDisbursement]:
     stmt = select(GrantDisbursement).where(
         GrantDisbursement.grant_id == grant_id,
@@ -436,7 +642,12 @@ def restricted_funding_summary(organization_id: int) -> dict:
     for grant in grants:
         awarded = float(grant.amount_awarded or 0)
         disbursed = total_disbursed(organization_id, grant_id=int(grant.id))
-        remaining = max(0.0, awarded - disbursed)
+        spent = _grant_spent_total(int(grant.id), organization_id)
+
+        if _grant_has_budget_lines(int(grant.id), organization_id):
+            remaining = _grant_budget_remaining(int(grant.id), organization_id)
+        else:
+            remaining = max(0.0, awarded - disbursed)
 
         total_awarded += awarded
         total_disbursed_amount += disbursed
@@ -451,7 +662,8 @@ def restricted_funding_summary(organization_id: int) -> dict:
                 "award_date": grant.award_date.isoformat() if grant.award_date else None,
                 "report_due_date": grant.report_due_date.isoformat() if grant.report_due_date else None,
                 "amount_awarded": awarded,
-                "amount_disbursed": disbursed,
+                "amount_disbursed": spent,
+                "amount_received": disbursed,
                 "outstanding_balance": remaining,
             }
         )

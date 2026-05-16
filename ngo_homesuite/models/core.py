@@ -464,6 +464,8 @@ class Grant(db.Model):
     updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
 
     disbursements = db.relationship('GrantDisbursement', backref='grant', cascade='all, delete-orphan')
+    budget_lines = db.relationship('GrantBudgetLine', backref='grant', cascade='all, delete-orphan')
+    expense_allocations = db.relationship('GrantExpenseAllocation', backref='grant', cascade='all, delete-orphan')
     project = db.relationship('Project', backref='grants')
     organization = db.relationship('Organization', backref='grants')
 
@@ -488,6 +490,52 @@ class GrantDisbursement(db.Model):
 
     def __repr__(self):
         return f'<GrantDisbursement grant={self.grant_id} {self.amount}>'
+
+
+class GrantBudgetLine(db.Model):
+    """Line-item budget allocation within a grant award."""
+
+    __tablename__ = 'grant_budget_lines'
+
+    id = db.Column(db.Integer, primary_key=True)
+    grant_id = db.Column(db.Integer, db.ForeignKey('grants.id'), nullable=False, index=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    category = db.Column(db.String(80), nullable=False, index=True)
+    line_name = db.Column(db.String(200), nullable=False)
+    allocated_amount = db.Column(db.Float, nullable=False)
+    notes = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
+
+    allocations = db.relationship('GrantExpenseAllocation', backref='budget_line', cascade='all, delete-orphan')
+
+    __table_args__ = (
+        db.UniqueConstraint('grant_id', 'category', name='uq_grant_budget_line_grant_category'),
+    )
+
+    def __repr__(self):
+        return f'<GrantBudgetLine grant={self.grant_id} category={self.category}>'
+
+
+class GrantExpenseAllocation(db.Model):
+    """Expense-to-grant line allocation for restricted fund tracking."""
+
+    __tablename__ = 'grant_expense_allocations'
+
+    id = db.Column(db.Integer, primary_key=True)
+    grant_id = db.Column(db.Integer, db.ForeignKey('grants.id'), nullable=False, index=True)
+    budget_line_id = db.Column(db.Integer, db.ForeignKey('grant_budget_lines.id'), nullable=False, index=True)
+    expense_id = db.Column(db.Integer, db.ForeignKey('expenses.id'), nullable=False, unique=True, index=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    amount = db.Column(db.Float, nullable=False)
+    category = db.Column(db.String(80), nullable=False)
+    supporting_document_ref = db.Column(db.String(255), nullable=True)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+
+    expense = db.relationship('Expense', backref='grant_allocations')
+
+    def __repr__(self):
+        return f'<GrantExpenseAllocation grant={self.grant_id} expense={self.expense_id} amount={self.amount}>'
 
 
 class MembershipTier(db.Model):
@@ -1275,6 +1323,8 @@ __all__ = [
     'AIMessage',
     'Grant',
     'GrantDisbursement',
+    'GrantBudgetLine',
+    'GrantExpenseAllocation',
     'MembershipTier',
     'MembershipRecord',
     'StewardshipJourney',
