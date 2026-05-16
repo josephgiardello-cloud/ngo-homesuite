@@ -8,7 +8,7 @@ from __future__ import annotations
 from flask import Blueprint, jsonify, request
 from flask_login import current_user, login_required
 
-from ngo_homesuite.services.donation_service import DonationNotFound, DonationService
+from ngo_homesuite.services.donation_service import DonationConcurrencyError, DonationNotFound, DonationService
 from ngo_homesuite.web.rbac import roles_required
 
 donations_bp = Blueprint("donations", __name__, url_prefix="/donations")
@@ -54,6 +54,8 @@ def create_donation():
         )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+    except DonationConcurrencyError as exc:
+        return jsonify({"error": str(exc)}), 409
 
     return jsonify({
         "id": donation.id,
@@ -153,6 +155,8 @@ def update_status(donation_id: int):
         return jsonify({"error": "Donation not found"}), 404
     except InvalidStatusTransition as exc:
         return jsonify({"error": str(exc)}), 422
+    except DonationConcurrencyError as exc:
+        return jsonify({"error": str(exc)}), 409
     return jsonify({"id": donation.id, "status": donation.status})
 
 
@@ -170,6 +174,8 @@ def generate_receipt(donation_id: int):
         return jsonify({"error": "Donation not found"}), 404
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 422
+    except DonationConcurrencyError as exc:
+        return jsonify({"error": str(exc)}), 409
     return jsonify({
         "receipt_number": receipt.receipt_number,
         "status": receipt.status,

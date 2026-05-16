@@ -24,6 +24,10 @@ class FundHasTransactions(Exception):
     """Raised when attempting to delete a fund that still has linked records."""
 
 
+class FundConcurrencyError(RuntimeError):
+    """Raised when optimistic concurrency detects stale updates."""
+
+
 class FundService:
     # ------------------------------------------------------------------
     # Read
@@ -145,7 +149,7 @@ class FundService:
             db.session.commit()
         except StaleDataError as exc:
             db.session.rollback()
-            raise RuntimeError(
+            raise FundConcurrencyError(
                 f"Concurrent update detected while creating fund for org {org_id}; please retry."
             ) from exc
         except IntegrityError as exc:
@@ -180,7 +184,7 @@ class FundService:
             db.session.commit()
         except StaleDataError as exc:
             db.session.rollback()
-            raise RuntimeError(
+            raise FundConcurrencyError(
                 f"Concurrent update detected for fund {fund_id}; please reload and retry."
             ) from exc
         except IntegrityError as exc:
@@ -222,7 +226,7 @@ class FundService:
             db.session.commit()
         except StaleDataError as exc:
             db.session.rollback()
-            raise RuntimeError(
+            raise FundConcurrencyError(
                 f"Concurrent update detected for fund {fund_id}; please reload and retry."
             ) from exc
 

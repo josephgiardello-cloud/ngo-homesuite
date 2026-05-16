@@ -45,6 +45,10 @@ class InvalidStatusTransition(Exception):
     pass
 
 
+class DonationConcurrencyError(RuntimeError):
+    """Raised when optimistic concurrency detects stale updates."""
+
+
 class DonationService:
     # ------------------------------------------------------------------
     # Read
@@ -169,7 +173,7 @@ class DonationService:
             db.session.commit()
         except StaleDataError as exc:
             db.session.rollback()
-            raise RuntimeError(
+            raise DonationConcurrencyError(
                 f"Concurrent update detected while creating recurring plan for donor {donor_id}; please retry."
             ) from exc
         return plan
@@ -257,7 +261,7 @@ class DonationService:
             db.session.commit()
         except StaleDataError as exc:
             db.session.rollback()
-            raise RuntimeError(
+            raise DonationConcurrencyError(
                 f"Concurrent update detected while processing recurring plans for org {org_id}; please retry."
             ) from exc
         return {"processed": processed, "failed": failed}
@@ -332,7 +336,7 @@ class DonationService:
             db.session.commit()
         except StaleDataError as exc:
             db.session.rollback()
-            raise RuntimeError(
+            raise DonationConcurrencyError(
                 f"Concurrent update detected while creating donation for org {org_id}; please retry."
             ) from exc
         except IntegrityError:
@@ -370,7 +374,7 @@ class DonationService:
             db.session.commit()
         except StaleDataError as exc:
             db.session.rollback()
-            raise RuntimeError(
+            raise DonationConcurrencyError(
                 f"Concurrent update detected for donation {donation_id}; please reload and retry."
             ) from exc
         return donation
@@ -400,7 +404,7 @@ class DonationService:
             db.session.commit()
         except StaleDataError as exc:
             db.session.rollback()
-            raise RuntimeError(
+            raise DonationConcurrencyError(
                 f"Concurrent update detected for donation {donation_id}; please reload and retry."
             ) from exc
         return donation
@@ -428,7 +432,7 @@ class DonationService:
             db.session.commit()
         except StaleDataError as exc:
             db.session.rollback()
-            raise RuntimeError(
+            raise DonationConcurrencyError(
                 f"Concurrent update detected for donation {donation_id}; please reload and retry."
             ) from exc
 

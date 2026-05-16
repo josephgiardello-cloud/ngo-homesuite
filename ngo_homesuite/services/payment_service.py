@@ -31,7 +31,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from ngo_homesuite.models.core import Donation, db
-from ngo_homesuite.services.donation_service import DonationNotFound, DonationService
+from ngo_homesuite.services.donation_service import DonationConcurrencyError, DonationNotFound, DonationService
 
 logger = logging.getLogger(__name__)
 
@@ -308,7 +308,7 @@ class PaymentService:
                 "Race-condition idempotency: donation already inserted",
                 extra={"reference_number": reference_number, "donation_id": donation.id},
             )
-        except Exception as exc:
+        except (ValueError, DonationConcurrencyError) as exc:
             raise WebhookProcessingError(
                 f"Failed to create donation from Stripe webhook: {exc}"
             ) from exc

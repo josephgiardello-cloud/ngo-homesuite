@@ -10,6 +10,7 @@ from typing import Optional as TypingOptional
 from flask import Blueprint, render_template, redirect, url_for, request, flash, send_file, current_app, Response, session, abort
 from flask_login import login_required, current_user
 from flask_wtf import FlaskForm
+from werkzeug.exceptions import NotFound
 from wtforms import BooleanField, FloatField, SelectField, StringField, SubmitField, TextAreaField
 from wtforms.validators import DataRequired, Optional as WTOptional, NumberRange, Email
 from io import BytesIO
@@ -19,10 +20,10 @@ from ngo_homesuite.models.core import (
     Organization, Beneficiary, Project, Donation, Donor, Fund, Expense, DonationReceipt, P2PPage, Volunteer, db
 )
 from ngo_homesuite.services.beneficiary_service import create_beneficiary, list_beneficiaries
-from ngo_homesuite.services.donation_service import DonationNotFound, DonationService
-from ngo_homesuite.services.donor_service import DonorService
+from ngo_homesuite.services.donation_service import DonationConcurrencyError, DonationNotFound, DonationService
+from ngo_homesuite.services.donor_service import DonorNotFound, DonorService
 from ngo_homesuite.services.expense_service import ExpenseService
-from ngo_homesuite.services.fund_service import FundNotFound, FundService
+from ngo_homesuite.services.fund_service import FundConcurrencyError, FundNotFound, FundService
 from ngo_homesuite.services.organization_service import get_first_active_organization
 from ngo_homesuite.services.project_service import ProjectNotFound, ProjectService
 from ngo_homesuite.services.reporting_service import ReportingService
@@ -832,8 +833,10 @@ def p2p_manage():
                 else:
                     close_page(page_id, org.id)
                     flash('Fundraiser closed.', 'success')
-            except Exception:
-                flash('Unable to update fundraiser status.', 'error')
+            except NotFound:
+                flash('Fundraiser page not found for this organization.', 'error')
+            except ValueError as exc:
+                flash(str(exc), 'error')
             return redirect(url_for('main.p2p_manage'))
 
         if not donors:
@@ -1136,30 +1139,37 @@ def donation_create():
     if form.validate_on_submit():
         try:
             donor = donor_service.get_donor(form.donor_id.data, org.id)
-        except Exception:
+        except DonorNotFound:
             donor = None
         if donor is None:
             flash('Please select a valid donor.', 'error')
             return render_template('donation_form.html', form=form, active_page='donations')
 
-        donation = donation_service.create_donation(
-            org_id=org.id,
-            donor_name=donor.name,
-            amount=form.amount.data,
-            currency=form.currency.data,
-            donor_email=donor.email,
-            donor_phone=donor.phone,
-            donor_id=donor.id,
-            project_id=form.project_id.data or None,
-            fund_id=form.fund_id.data or None,
-            payment_method=form.payment_method.data,
-            reference_number=form.reference_number.data or None,
-            purpose=form.purpose.data,
-            notes=form.notes.data,
-            status='received',
-        )
-        donation_service.update_status(donation.id, org.id, 'processed', actor_id=getattr(current_user, 'id', None))
-        _issue_receipt_for_donation(donation, recipient_email=donor.email)
+        try:
+            donation = donation_service.create_donation(
+                org_id=org.id,
+                donor_name=donor.name,
+                amount=form.amount.data,
+                currency=form.currency.data,
+                donor_email=donor.email,
+                donor_phone=donor.phone,
+                donor_id=donor.id,
+                project_id=form.project_id.data or None,
+                fund_id=form.fund_id.data or None,
+                payment_method=form.payment_method.data,
+                reference_number=form.reference_number.data or None,
+                purpose=form.purpose.data,
+                notes=form.notes.data,
+                status='received',
+            )
+            donation_service.update_status(donation.id, org.id, 'processed', actor_id=getattr(current_user, 'id', None))
+            _issue_receipt_for_donation(donation, recipient_email=donor.email)
+        except ValueError as exc:
+            flash(str(exc), 'error')
+            return render_template('donation_form.html', form=form, active_page='donations')
+        except DonationConcurrencyError:
+            flash('This donation was updated by another user. Please reload and try again.', 'error')
+            return render_template('donation_form.html', form=form, active_page='donations')
         flash('Donation recorded successfully and receipt generated.', 'success')
         return redirect(url_for('main.dashboard'))
 
@@ -1189,22 +1199,31 @@ def recurring_donations():
     if form.validate_on_submit():
         try:
             donor = donor_service.get_donor(form.donor_id.data, org.id)
-        except Exception:
+        except DonorNotFound:
             donor = None
         if donor is None:
             flash('Please select a valid donor.', 'error')
             return render_template('recurring_donations.html', form=form, plans=[], active_page='donations')
 
-        donation_service.create_recurring_plan(
-            org.id,
-            donor.id,
-            amount=form.amount.data,
-            currency=form.currency.data,
-            payment_method=form.payment_method.data,
-            purpose=form.purpose.data,
-            frequency=form.frequency.data,
-            next_charge_date=_next_charge_date(date.today(), form.frequency.data),
-        )
+        try:
+            donation_service.create_recurring_plan(
+                org.id,
+                donor.id,
+                amount=form.amount.data,
+                currency=form.currency.data,
+                payment_method=form.payment_method.data,
+                purpose=form.purpose.data,
+                frequency=form.frequency.data,
+                next_charge_date=_next_charge_date(date.today(), form.frequency.data),
+            )
+        except ValueError as exc:
+            flash(str(exc), 'error')
+            plans = donation_service.list_recurring_plans(org.id)
+            return render_template('recurring_donations.html', form=form, plans=plans, active_page='donations')
+        except DonationConcurrencyError:
+            flash('Recurring plan changed while saving. Please try again.', 'error')
+            plans = donation_service.list_recurring_plans(org.id)
+            return render_template('recurring_donations.html', form=form, plans=plans, active_page='donations')
         flash('Recurring donation plan created.', 'success')
         return redirect(url_for('main.recurring_donations'))
 
@@ -1672,13 +1691,20 @@ def fund_create():
 
     form = FundForm()
     if form.validate_on_submit():
-        FundService().create_fund(
-            org.id,
-            form.name.data,
-            description=form.description.data,
-            is_active=form.is_active.data == 'true',
-            actor_id=getattr(current_user, 'id', None),
-        )
+        try:
+            FundService().create_fund(
+                org.id,
+                form.name.data,
+                description=form.description.data,
+                is_active=form.is_active.data == 'true',
+                actor_id=getattr(current_user, 'id', None),
+            )
+        except ValueError as exc:
+            flash(str(exc), 'error')
+            return render_template('fund_form.html', form=form, is_edit=False, active_page='funds')
+        except FundConcurrencyError:
+            flash('This fund was changed by another user. Please reload and try again.', 'error')
+            return render_template('fund_form.html', form=form, is_edit=False, active_page='funds')
         flash('Fund created successfully.', 'success')
         return redirect(url_for('main.funds_list'))
 
@@ -1699,14 +1725,21 @@ def fund_edit(fund_id: int):
         form.is_active.data = 'true' if fund.is_active else 'false'
 
     if form.validate_on_submit():
-        FundService().update_fund(
-            fund.id,
-            org.id,
-            actor_id=getattr(current_user, 'id', None),
-            name=form.name.data,
-            description=form.description.data,
-            is_active=form.is_active.data == 'true',
-        )
+        try:
+            FundService().update_fund(
+                fund.id,
+                org.id,
+                actor_id=getattr(current_user, 'id', None),
+                name=form.name.data,
+                description=form.description.data,
+                is_active=form.is_active.data == 'true',
+            )
+        except ValueError as exc:
+            flash(str(exc), 'error')
+            return render_template('fund_form.html', form=form, is_edit=True, fund=fund, active_page='funds')
+        except FundConcurrencyError:
+            flash('This fund was updated by another user. Please reload and submit again.', 'error')
+            return render_template('fund_form.html', form=form, is_edit=True, fund=fund, active_page='funds')
         flash('Fund updated successfully.', 'success')
         return redirect(url_for('main.funds_list'))
 
