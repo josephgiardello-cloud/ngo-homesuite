@@ -97,6 +97,11 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Secret scan (Gitleaks)
+      uses: gitleaks/gitleaks-action@v2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
@@ -106,16 +111,21 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install bandit safety
+        pip install bandit pip-audit
 
-    - name: Run Bandit security checks
+    - name: Run Bandit security checks (high confidence/severity)
       run: |
-        bandit -r ngo_homesuite/ -f json -o bandit-report.json || true
-        bandit -r ngo_homesuite/
+        bandit -r ngo_homesuite/ -lll -iii
 
-    - name: Check for known vulnerabilities
+    - name: Check for known vulnerabilities (pip-audit)
       run: |
-        safety check --json || true
+        pip-audit -r requirements.txt
+
+    - name: Dynamic auth/AI hardening tests
+      env:
+        NGO_HOMESUITE_DB_KEY: ""
+      run: |
+        pytest ngo_homesuite/ai/test_ai_hardening.py ngo_homesuite/ai/test_copilot_routes.py -v --maxfail=10
 
   db-policy:
     name: DB Policy (${{ matrix.mode }})
@@ -151,3 +161,27 @@ jobs:
     - name: Run DB tests
       run: |
         pytest ngo_homesuite/db -v --maxfail=10
+
+  critical-paths:
+    name: Critical Paths (donations/audit/encryption)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest
+
+    - name: Run critical path tests
+      env:
+        NGO_HOMESUITE_DB_KEY: ""
+      run: |
+        pytest ngo_homesuite/web/test_sprint1_features.py ngo_homesuite/db/test_utils_audit.py ngo_homesuite/db/test_connection_hardening.py -v --maxfail=10
