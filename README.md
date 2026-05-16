@@ -81,18 +81,18 @@ Note on depth and maturity:
 - Includes stable `operationId` values and reusable component schemas for tooling/client generation
 
 ### 🚀 High-ROI Workflow Layer
-- Domain graph snapshot endpoint at `/api/domain/snapshot` (Donor/Campaign/Grant/Beneficiary/Program/Outcome)
-- Semantic task context endpoint at `/api/semantic/context?task=...`
-- Opinionated workflow API endpoints:
+- Experimental domain graph snapshot endpoint at `/api/domain/snapshot` (Donor/Campaign/Grant/Beneficiary/Program/Outcome)
+- Experimental semantic task context endpoint at `/api/semantic/context?task=...`
+- Opinionated workflow API endpoints (foundational):
    - `POST /api/workflows/donation/{donationId}/run`
    - `POST /api/workflows/grant/run`
    - `POST /api/workflows/program-impact/run`
 - Minimal workflow UI at `/workflows` for operations users
 
-### 🏗️ V2 Operating System Baseline
-- Deterministic workflow runtime module at `ngo_homesuite/workflow_engine/`
-- Multi-tenant and RBAC guards at `ngo_homesuite/tenant/` and `ngo_homesuite/rbac/`
-- Append-only in-memory event store baseline at `ngo_homesuite/audit/event_store.py`
+### 🏗️ V2 Foundation (Experimental)
+- Deterministic workflow runtime module at `ngo_homesuite/workflow_engine/` (foundational)
+- Multi-tenant and RBAC guards at `ngo_homesuite/tenant/` and `ngo_homesuite/rbac/` (in progress)
+- Append-only event store baseline at `ngo_homesuite/audit/event_store.py`
 - Versioned API endpoints under `/api/v1/`:
    - `GET /api/v1/workflows`
    - `POST /api/v1/workflows/instances`
@@ -121,12 +121,14 @@ Note on depth and maturity:
 ngo-homesuite/
 ├── auth/              # Authentication, session, password policy
 ├── db/                # Database layer, migrations, schema
-├── dal/               # Data access layer (donations, donors, funds, etc.)
 ├── models/            # Data models and entities
 ├── services/          # Business logic (reporting, reconciliation, etc.)
 ├── utils/             # Utilities (backup, export, email, integrity)
-├── ui/                # User interface components
 ├── web/               # Flask web application
+├── api/               # Versioned API surface and contracts
+├── workflow_engine/   # Deterministic workflow runtime (foundational)
+├── tenant/            # Tenant scoping primitives
+├── rbac/              # Role/permission policy layer
 ├── migrations/        # SQL migrations
 ├── config/            # Configuration management
 └── translations/      # i18n translations
@@ -136,7 +138,8 @@ ngo-homesuite/
 
 ### Prerequisites
 - Python 3.10+
-- SQLite3
+- PostgreSQL 15+ (recommended for production-like local runs)
+- SQLite3 (quick demos/dev only)
 - pip or conda
 
 ### Installation
@@ -173,7 +176,7 @@ ngo-homesuite/
 
 ### Database Setup
 
-#### Unencrypted (Default)
+#### Quick Demo (SQLite)
 ```bash
 python -m ngo_homesuite.db.migrate
 ```
@@ -209,14 +212,16 @@ python -m ngo_homesuite.db.migrate --dry-run --verify-backup
 python -m ngo_homesuite.main
 ```
 
+Primary launcher: `python -m ngo_homesuite.main`
+
 The Flask application will be available at `http://localhost:5000` (default).
 
-### Production-Style Local Deployment
+### Production-Style Local Deployment (PostgreSQL recommended)
 
-Use Docker Compose with Gunicorn (and optional Caddy reverse proxy profile):
+Use Docker Compose with Gunicorn and PostgreSQL profile:
 
 ```bash
-docker compose up --build
+docker compose --profile postgres up --build
 ```
 
 App endpoint: `http://localhost:8000`

@@ -1,10 +1,11 @@
 # Feature Maturity Status
 
-Last updated: 2026-05-15
+Last updated: 2026-05-16
 
 This document separates feature availability from production maturity. The README links here to avoid overstating readiness.
 
 Maturity scale:
+- `Not started`: Planned only, no meaningful implementation yet.
 - `Foundational`: Working baseline, partial workflows, limited edge-case coverage.
 - `Operational`: Used in primary workflows, decent test coverage, still needs polish.
 - `Production-ready`: Strong coverage, operational hardening, and documented runbooks.

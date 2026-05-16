@@ -3,7 +3,7 @@
 This module intentionally delegates runtime concerns to the application factory stack
 (`ngo_homesuite.app_factory`, `ngo_homesuite.app.bootstrap`, and `ngo_homesuite.wsgi`).
 It is kept for backward compatibility with existing commands such as
-`python -m ngo_homesuite.main` and `python NGOMG.py`.
+`python -m ngo_homesuite.main`.
 """
 
 from __future__ import annotations
