@@ -41,6 +41,29 @@
         font-size: 0.8rem;
         text-decoration: none;
     }
+
+    .grant-pulse-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+        gap: 0.55rem;
+    }
+
+    .grant-pulse-card {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface-soft);
+        padding: 0.6rem 0.72rem;
+    }
+
+    .grant-pulse-label {
+        font-size: 0.8rem;
+        color: var(--muted);
+    }
+
+    .grant-pulse-value {
+        font-size: 1.05rem;
+        font-weight: 700;
+    }
 </style>
 {% endblock %}
 
@@ -79,6 +102,14 @@
     <h3 style="margin-bottom: 0.75rem;">AI Copilot Summary</h3>
     <div id="activity-insights" style="padding:0.75rem 1rem; border:1px solid var(--border); border-radius:8px; margin-bottom:1rem;">
         <p class="text-muted" style="margin:0;">Loading activity summary...</p>
+    </div>
+
+    <h3 style="margin-bottom: 0.75rem;">Grant Operations Pulse</h3>
+    <div id="grant-pulse" class="grant-pulse-grid" style="margin-bottom:1rem;">
+        <div class="grant-pulse-card"><div class="grant-pulse-label">Restricted Remaining</div><div class="grant-pulse-value">-</div></div>
+        <div class="grant-pulse-card"><div class="grant-pulse-label">Awarded</div><div class="grant-pulse-value">-</div></div>
+        <div class="grant-pulse-card"><div class="grant-pulse-label">Disbursed</div><div class="grant-pulse-value">-</div></div>
+        <div class="grant-pulse-card"><div class="grant-pulse-label">Milestones (90d)</div><div class="grant-pulse-value">-</div></div>
     </div>
 
     <h3 style="margin-bottom: 1rem;">Recent Activity</h3>
@@ -320,9 +351,37 @@ async function loadActivityInsights() {
     }
 }
 
+async function loadGrantPulse() {
+    const pulse = document.getElementById('grant-pulse');
+    if (!pulse) return;
+    try {
+        const [calendarResponse, restrictedResponse] = await Promise.all([
+            fetch('/api/v2/grants/calendar?within_days=90'),
+            fetch('/api/v2/grants/restricted-funds'),
+        ]);
+        if (!calendarResponse.ok || !restrictedResponse.ok) {
+            throw new Error('Failed to load grant pulse');
+        }
+
+        const calendar = await calendarResponse.json();
+        const restricted = await restrictedResponse.json();
+
+        pulse.innerHTML = `
+            <div class="grant-pulse-card"><div class="grant-pulse-label">Restricted Remaining</div><div class="grant-pulse-value">$${Number(restricted.total_restricted_remaining || 0).toFixed(2)}</div></div>
+            <div class="grant-pulse-card"><div class="grant-pulse-label">Awarded</div><div class="grant-pulse-value">$${Number(restricted.total_awarded || 0).toFixed(2)}</div></div>
+            <div class="grant-pulse-card"><div class="grant-pulse-label">Disbursed</div><div class="grant-pulse-value">$${Number(restricted.total_disbursed || 0).toFixed(2)}</div></div>
+            <div class="grant-pulse-card"><div class="grant-pulse-label">Milestones (90d)</div><div class="grant-pulse-value">${Array.isArray(calendar) ? calendar.length : 0}</div></div>
+        `;
+    } catch (error) {
+        console.error('Error loading grant pulse:', error);
+        pulse.innerHTML = '<p class="text-muted" style="margin:0;">Failed to load grant operations pulse.</p>';
+    }
+}
+
 function refreshActivityDashboard() {
     loadActivityFeed();
     loadActivityInsights();
+    loadGrantPulse();
 }
 
 // Load activity when page loads

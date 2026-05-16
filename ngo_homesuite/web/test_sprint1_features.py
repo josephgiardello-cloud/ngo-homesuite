@@ -309,6 +309,19 @@ def test_task_board_page_renders_for_authenticated_user(client):
     body = rv.get_data(as_text=True)
     assert 'Task Board' in body
     assert 'Reminder Candidates' in body
+    assert 'Grant Operations' in body
+    assert 'Upcoming Grant Milestones' in body
+
+
+def test_activity_feed_page_renders_grant_operations_pulse(client):
+    _login_admin(client)
+
+    rv = client.get('/activity')
+    assert rv.status_code == 200
+
+    body = rv.get_data(as_text=True)
+    assert 'Activity Feed' in body
+    assert 'Grant Operations Pulse' in body
 
 
 def test_donor_merge_relinks_donations(client, app):

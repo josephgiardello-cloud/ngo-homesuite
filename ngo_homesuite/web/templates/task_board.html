@@ -156,6 +156,31 @@
         background: var(--surface-soft);
         padding: 0.5rem 0.65rem;
     }
+
+    .grant-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 0.65rem;
+    }
+
+    .grant-card {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface-soft);
+        padding: 0.55rem 0.65rem;
+    }
+
+    .grant-list {
+        display: grid;
+        gap: 0.45rem;
+    }
+
+    .grant-list-item {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface-soft);
+        padding: 0.5rem 0.65rem;
+    }
 </style>
 {% endblock %}
 
@@ -200,6 +225,10 @@
                 <input id="reminder-limit" type="number" min="5" max="50" value="20" />
             </div>
             <div>
+                <label for="grant-window">Grant Calendar Window (days)</label>
+                <input id="grant-window" type="number" min="14" max="730" value="120" />
+            </div>
+            <div>
                 <button id="refresh-board" type="button" class="btn btn-primary" style="width:100%;">Refresh Board</button>
             </div>
         </div>
@@ -236,6 +265,23 @@
             <p class="text-muted" style="margin:0;">Loading reminder candidates...</p>
         </div>
     </div>
+
+    <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.65rem;">
+            <h3 style="margin:0;">Grant Operations</h3>
+            <a href="/activity?entity_type=organization&activity_type=task&q=grant" class="btn btn-secondary">Open Grant Activity</a>
+        </div>
+        <div id="restricted-funds-summary" class="grant-grid" style="margin-bottom:0.75rem;">
+            <div class="summary-card"><div class="summary-label">Restricted Grants</div><div class="summary-value">-</div></div>
+            <div class="summary-card"><div class="summary-label">Total Awarded</div><div class="summary-value">-</div></div>
+            <div class="summary-card"><div class="summary-label">Total Disbursed</div><div class="summary-value">-</div></div>
+            <div class="summary-card"><div class="summary-label">Restricted Remaining</div><div class="summary-value">-</div></div>
+        </div>
+        <h4 style="margin:0.25rem 0 0.55rem 0;">Upcoming Grant Milestones</h4>
+        <div id="grant-calendar" class="grant-list">
+            <p class="text-muted" style="margin:0;">Loading grant calendar...</p>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -244,6 +290,7 @@ function boardFilters() {
         status: (document.getElementById('status-filter')?.value || '').trim(),
         priority: (document.getElementById('priority-filter')?.value || '').trim(),
         reminders_limit: Number(document.getElementById('reminder-limit')?.value || 20),
+        grant_within_days: Number(document.getElementById('grant-window')?.value || 120),
     };
 }
 
@@ -388,6 +435,46 @@ function renderReminderCandidates(candidates) {
     });
 }
 
+function renderRestrictedFunds(summary) {
+    const root = document.getElementById('restricted-funds-summary');
+    if (!root) return;
+
+    root.innerHTML = `
+        <div class="summary-card"><div class="summary-label">Restricted Grants</div><div class="summary-value">${summary.grant_count || 0}</div></div>
+        <div class="summary-card"><div class="summary-label">Total Awarded</div><div class="summary-value">$${Number(summary.total_awarded || 0).toFixed(2)}</div></div>
+        <div class="summary-card"><div class="summary-label">Total Disbursed</div><div class="summary-value">$${Number(summary.total_disbursed || 0).toFixed(2)}</div></div>
+        <div class="summary-card"><div class="summary-label">Restricted Remaining</div><div class="summary-value">$${Number(summary.total_restricted_remaining || 0).toFixed(2)}</div></div>
+    `;
+}
+
+function renderGrantCalendar(events) {
+    const root = document.getElementById('grant-calendar');
+    if (!root) return;
+
+    if (!Array.isArray(events) || events.length === 0) {
+        root.innerHTML = '<p class="text-muted" style="margin:0;">No grant milestones in the selected window.</p>';
+        return;
+    }
+
+    root.innerHTML = '';
+    events.slice(0, 10).forEach(event => {
+        const item = document.createElement('div');
+        item.className = 'grant-list-item';
+        item.innerHTML = `
+            <div style="display:flex;justify-content:space-between;gap:0.4rem;align-items:center;flex-wrap:wrap;">
+                <strong>${event.title}</strong>
+                <span class="pill">${event.event_date}</span>
+            </div>
+            <div class="task-meta" style="margin-top:0.35rem;">
+                <span>${event.event_label}</span>
+                <span>Funder: ${event.funder_name}</span>
+                <span>Status: ${event.status}</span>
+            </div>
+        `;
+        root.appendChild(item);
+    });
+}
+
 async function loadBoard() {
     const filters = boardFilters();
     const query = buildQuery(filters);
@@ -401,6 +488,20 @@ async function loadBoard() {
     renderSummary(payload.summary || {});
     renderTaskColumns(payload.tasks || []);
     renderReminderCandidates(payload.reminder_candidates || []);
+
+    const grantWindow = Number(filters.grant_within_days || 120);
+    const [calendarResponse, restrictedResponse] = await Promise.all([
+        fetch(`/api/v2/grants/calendar?within_days=${Math.max(14, Math.min(grantWindow, 730))}`),
+        fetch('/api/v2/grants/restricted-funds'),
+    ]);
+    if (!calendarResponse.ok || !restrictedResponse.ok) {
+        throw new Error('Failed to load grant operations data');
+    }
+
+    const calendarPayload = await calendarResponse.json();
+    const restrictedPayload = await restrictedResponse.json();
+    renderGrantCalendar(calendarPayload || []);
+    renderRestrictedFunds(restrictedPayload || {});
 }
 
 async function refreshBoardWithFallback() {
