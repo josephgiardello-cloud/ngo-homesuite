@@ -1,20 +1,23 @@
 import logging
 import requests
-import os
+
+from ngo_homesuite.config import get_runtime_settings
 
 logger = logging.getLogger(__name__)
 
 
 def _mailchimp_api_root() -> str:
     """Derive the Mailchimp API root from the API key datacenter suffix."""
-    api_key = os.getenv("MAILCHIMP_API_KEY", "")
+    settings = get_runtime_settings()
+    api_key = settings.mailchimp_api_key or ""
     dc = api_key.split("-")[-1] if "-" in api_key else "us1"
     return f"https://{dc}.api.mailchimp.com/3.0"
 
 
 def add_subscriber(email, first_name, last_name):
-    api_key = os.getenv('MAILCHIMP_API_KEY')
-    list_id = os.getenv('MAILCHIMP_LIST_ID')
+    settings = get_runtime_settings()
+    api_key = settings.mailchimp_api_key
+    list_id = settings.mailchimp_list_id
     if not api_key or not list_id:
         logger.warning("Mailchimp not configured; subscriber not added for %s", email)
         return False
@@ -36,8 +39,9 @@ def add_subscriber(email, first_name, last_name):
 def remove_subscriber(email: str) -> bool:
     """Unsubscribe (archive) a member from the configured list."""
     import hashlib
-    api_key = os.getenv("MAILCHIMP_API_KEY")
-    list_id = os.getenv("MAILCHIMP_LIST_ID")
+    settings = get_runtime_settings()
+    api_key = settings.mailchimp_api_key
+    list_id = settings.mailchimp_list_id
     if not api_key or not list_id:
         logger.warning("Mailchimp not configured; cannot remove %s", email)
         return False
@@ -53,8 +57,9 @@ def remove_subscriber(email: str) -> bool:
 def update_subscriber_tags(email: str, tags: list[str], *, remove_tags: list[str] | None = None) -> bool:
     """Add/remove tags on a Mailchimp subscriber."""
     import hashlib
-    api_key = os.getenv("MAILCHIMP_API_KEY")
-    list_id = os.getenv("MAILCHIMP_LIST_ID")
+    settings = get_runtime_settings()
+    api_key = settings.mailchimp_api_key
+    list_id = settings.mailchimp_list_id
     if not api_key or not list_id:
         logger.warning("Mailchimp not configured; cannot update tags for %s", email)
         return False

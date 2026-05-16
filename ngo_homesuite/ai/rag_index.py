@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from ngo_homesuite.config import get_runtime_settings
 from ngo_homesuite.ai.pii_redact import redact_pii
 
 
@@ -165,4 +165,5 @@ class LocalRAGIndex:
 
 
 def default_index_dir() -> str:
-    return os.getenv("NGO_COPILOT_INDEX_DIR", "data/copilot_index")
+    settings = get_runtime_settings()
+    return settings.copilot_index_dir

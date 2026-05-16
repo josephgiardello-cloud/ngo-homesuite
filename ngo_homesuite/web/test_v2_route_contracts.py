@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from ngo_homesuite.models.core import Donation, Donor, Organization, db
+from ngo_homesuite.models.core import Donation, Donor, MembershipTier, Organization, ProgramCase, Task, db
 
 
 @pytest.fixture(scope="module")
@@ -110,3 +110,95 @@ def test_v2_p2p_link_rejects_cross_tenant_donation(client, app):
     )
     assert rv.status_code == 400
     assert (rv.get_json() or {}).get("error") == "Invalid resource reference"
+
+
+def test_v2_mutating_endpoints_reject_cross_tenant_references(client, app):
+    _login_admin(client)
+
+    with app.app_context():
+        local_org = db.session.scalars(
+            db.select(Organization).where(Organization.is_active == True).order_by(Organization.id.asc()).limit(1)
+        ).first()
+        assert local_org is not None
+        local_org_id = int(local_org.id)
+
+        local_donor = db.session.scalars(
+            db.select(Donor).where(Donor.organization_id == local_org_id).limit(1)
+        ).first()
+        if local_donor is None:
+            local_donor = Donor(
+                organization_id=local_org_id,
+                name="Tenant Matrix Local Donor",
+                email="tenant-matrix-local@example.org",
+            )
+            db.session.add(local_donor)
+            db.session.flush()
+
+        foreign_org = Organization(name="Tenant Matrix Org", slug="tenant-matrix-org", is_active=True)
+        db.session.add(foreign_org)
+        db.session.flush()
+
+        foreign_donor = Donor(
+            organization_id=foreign_org.id,
+            name="Tenant Matrix Foreign Donor",
+            email="tenant-matrix-foreign@example.org",
+        )
+        db.session.add(foreign_donor)
+        db.session.flush()
+
+        foreign_tier = MembershipTier(
+            organization_id=foreign_org.id,
+            name="Foreign Tier",
+            price=10,
+            currency="USD",
+            interval="annual",
+        )
+        db.session.add(foreign_tier)
+        db.session.flush()
+
+        foreign_task = Task(
+            organization_id=foreign_org.id,
+            title="Foreign Task",
+            status="open",
+            priority="medium",
+            task_type="general",
+        )
+        db.session.add(foreign_task)
+        db.session.flush()
+
+        foreign_case = ProgramCase(
+            organization_id=foreign_org.id,
+            title="Foreign Case",
+            case_type="service",
+            status="open",
+        )
+        db.session.add(foreign_case)
+        db.session.commit()
+
+        foreign_donor_id = int(foreign_donor.id)
+        foreign_tier_id = int(foreign_tier.id)
+        foreign_task_id = int(foreign_task.id)
+        foreign_case_id = int(foreign_case.id)
+        local_donor_id = int(local_donor.id)
+
+    create_page_with_foreign_donor = client.post(
+        "/api/v2/p2p/pages",
+        json={"donor_id": foreign_donor_id, "title": "Cross Tenant Page"},
+    )
+    assert create_page_with_foreign_donor.status_code == 400
+    assert (create_page_with_foreign_donor.get_json() or {}).get("error") == "Invalid resource reference"
+
+    enroll_with_foreign_tier = client.post(
+        "/api/v2/membership/enroll",
+        json={"donor_id": local_donor_id, "tier_id": foreign_tier_id},
+    )
+    assert enroll_with_foreign_tier.status_code == 404
+
+    complete_foreign_task = client.post(f"/api/v2/tasks/{foreign_task_id}/complete", json={"notes": "x"})
+    assert complete_foreign_task.status_code == 404
+
+    advance_foreign_case = client.post(
+        f"/api/v2/cases/{foreign_case_id}/status",
+        json={"new_status": "closed"},
+    )
+    assert advance_foreign_case.status_code == 404

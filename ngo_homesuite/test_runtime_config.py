@@ -207,3 +207,16 @@ def test_load_runtime_settings_rejects_invalid_session_store_backend(monkeypatch
 
     with pytest.raises(RuntimeError, match="session_store_backend"):
         config.load_runtime_settings()
+
+
+def test_load_runtime_settings_reads_mailchimp_env_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_runtime_env(monkeypatch)
+
+    monkeypatch.setenv("SECRET_KEY", "mailchimp-config-secret")
+    monkeypatch.setenv("MAILCHIMP_API_KEY", "key-us3")
+    monkeypatch.setenv("MAILCHIMP_LIST_ID", "list_abc123")
+    monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
+
+    settings = config.load_runtime_settings()
+    assert settings.mailchimp_api_key == "key-us3"
+    assert settings.mailchimp_list_id == "list_abc123"

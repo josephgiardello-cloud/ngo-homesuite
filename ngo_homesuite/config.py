@@ -68,6 +68,8 @@ class RuntimeSettings(BaseModel):
     mail_username: str | None = None
     mail_password: str | None = None
     default_mail_sender: str = Field(default="noreply@ngohomesuite.local")
+    mailchimp_api_key: str | None = None
+    mailchimp_list_id: str | None = None
 
     apex_ai_enabled: bool = Field(default=True)
     ollama_host: str = Field(default="http://localhost:11434")
@@ -353,6 +355,8 @@ def load_runtime_settings() -> RuntimeSettings:
         "mail_username": os.environ.get("MAIL_USERNAME"),
         "mail_password": os.environ.get("MAIL_PASSWORD"),
         "default_mail_sender": os.environ.get("DEFAULT_MAIL_SENDER", "noreply@ngohomesuite.local"),
+        "mailchimp_api_key": os.environ.get("MAILCHIMP_API_KEY"),
+        "mailchimp_list_id": os.environ.get("MAILCHIMP_LIST_ID"),
         "apex_ai_enabled": _parse_bool(os.environ.get("APEX_AI_ENABLED"), True),
         "ollama_host": os.environ.get("OLLAMA_HOST") or os.environ.get("APEX_BASE_URL") or "http://localhost:11434",
         "ollama_model": os.environ.get("OLLAMA_MODEL") or os.environ.get("APEX_MODEL") or "llama3.2",
