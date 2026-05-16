@@ -58,6 +58,19 @@ def test_login_rejects_scheme_relative_next_url(client, app):
     assert "/dashboard" in rv.headers.get("Location", "")
 
 
+def test_login_rejects_encoded_backslash_next_url(client, app):
+    _ensure_user(app, "auth_sec_user2b", "AuthPass123!")
+
+    rv = client.post(
+        "/auth/login?next=/%5Cevil.example/phish",
+        data={"username": "auth_sec_user2b", "password": "AuthPass123!"},
+        follow_redirects=False,
+    )
+
+    assert rv.status_code == 302
+    assert "/dashboard" in rv.headers.get("Location", "")
+
+
 def test_login_accepts_safe_relative_next_path(client, app):
     _ensure_user(app, "auth_sec_user3", "AuthPass123!")
 

@@ -273,3 +273,38 @@ def test_v1_workflow_trace_is_tenant_scoped(client, app):
 
     blocked = client.get(f"/api/v1/workflows/instances/{instance_id}/trace")
     assert blocked.status_code == 404
+
+
+def test_v1_audit_events_requires_org_id(client, app):
+    _ensure_user(app, "v2_audit_missing_org", "v2_audit_missing_org@test.local", "admin", "v2_audit_missing_org_pass_123")
+    _login(client, "v2_audit_missing_org", "v2_audit_missing_org_pass_123")
+
+    rv = client.get("/api/v1/audit/events")
+    assert rv.status_code == 400
+    assert "org_id" in rv.get_json()["error"]
+
+
+def test_v1_audit_events_cross_tenant_access_is_blocked(client, app):
+    _ensure_user(app, "v2_audit_owner", "v2_audit_owner@test.local", "admin", "v2_audit_owner_pass_123")
+
+    with app.app_context():
+        owner = User.query.filter_by(username="v2_audit_owner").first()
+        assert owner is not None
+
+        primary_org = Organization.query.filter_by(is_active=True).order_by(Organization.id.asc()).first()
+        other_org = Organization.query.filter_by(slug="audit-cross-tenant-org").first()
+        if other_org is None:
+            other_org = Organization(name="Audit Cross Tenant Org", slug="audit-cross-tenant-org", is_active=True)
+            db.session.add(other_org)
+            db.session.flush()
+
+        owner.organization_id = primary_org.id
+        db.session.commit()
+
+        other_org_id = str(other_org.id)
+
+    _login(client, "v2_audit_owner", "v2_audit_owner_pass_123")
+    blocked = client.get(f"/api/v1/audit/events?org_id={other_org_id}")
+
+    assert blocked.status_code == 403
+    assert "another tenant" in blocked.get_json()["error"]

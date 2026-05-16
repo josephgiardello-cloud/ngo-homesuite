@@ -63,3 +63,26 @@ def test_reconcile_structured_mismatch_reports_unmatched_entries(svc):
 def test_reconcile_rejects_invalid_structured_amount(svc):
     with pytest.raises(ValueError, match="Invalid reconciliation amount"):
         svc.reconcile(bank_statement=[{"amount": "not-a-number"}], ledger=[{"amount": 1}], actor="tester")
+
+
+def test_reconcile_amount_fallback_matches_duplicates_deterministically(svc):
+    bank_statement = [
+        {"tx_id": "TX-A", "amount": "25.00"},
+        {"tx_id": "TX-B", "amount": "25.00"},
+        {"tx_id": "TX-C", "amount": "10.00"},
+    ]
+    ledger = [
+        {"tx_id": "TX-X", "amount": "25.00"},
+        {"tx_id": "TX-Y", "amount": "25.00"},
+        {"tx_id": "TX-Z", "amount": "99.00"},
+    ]
+
+    result = svc.reconcile(bank_statement=bank_statement, ledger=ledger, actor="tester")
+
+    assert result["status"] == "mismatch"
+    assert result["matched_count"] == 2
+    assert result["matched_total"] == 50.0
+    assert result["unmatched_bank_count"] == 1
+    assert result["unmatched_bank_total"] == 10.0
+    assert result["unmatched_ledger_count"] == 1
+    assert result["unmatched_ledger_total"] == 99.0
