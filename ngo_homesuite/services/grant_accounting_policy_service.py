@@ -1,12 +1,22 @@
 """Grant accounting policy primitives for carry-forward and allowable-cost checks."""
 from __future__ import annotations
 
+import os
+import warnings
 from collections import defaultdict
 from typing import Optional
 
 from sqlalchemy import func
 
 from ngo_homesuite.models.core import Expense, GrantDisbursement, GrantExpenseAllocation, db
+
+
+if os.getenv("NGOHS_WARN_DIRECT_GRANT_SERVICE_IMPORTS", "0") == "1":
+    warnings.warn(
+        "Direct import of grant_accounting_policy_service is deprecated. Use ngo_homesuite.grants.facade.GrantsFacade instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
 
 
 class GrantAccountingPolicyError(ValueError):

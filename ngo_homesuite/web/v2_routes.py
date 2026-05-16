@@ -11,11 +11,14 @@ from flask import Blueprint, jsonify, request
 from flask_login import current_user, login_required
 from sqlalchemy import select
 
+from ngo_homesuite.grants.facade import GrantsFacade
+from ngo_homesuite.grants.exceptions import GrantNotFound, InvalidGrantTransition
 from ngo_homesuite.models.core import Donor, Grant, User, db
 
 from ngo_homesuite.web.rbac import roles_required
 
 v2_bp = Blueprint("v2", __name__, url_prefix="/api/v2")
+_GRANTS_FACADE = GrantsFacade()
 
 
 def _org_id() -> int:
@@ -34,6 +37,10 @@ def _json_or_400(required: list[str] | None = None) -> dict[str, Any]:
 
 def _parse_iso_date(value: str) -> date:
     return date.fromisoformat((value or "").strip())
+
+
+def _grants():
+    return _GRANTS_FACADE
 
 
 def _normalize_grant_dates(data: dict[str, Any], fields: tuple[str, ...]) -> tuple[dict[str, Any], str | None]:
@@ -57,9 +64,8 @@ def _normalize_grant_dates(data: dict[str, Any], fields: tuple[str, ...]) -> tup
 @v2_bp.route("/grants", methods=["GET"])
 @login_required
 def list_grants():
-    from ngo_homesuite.services.grant_service import list_grants as svc_list
     status = request.args.get("status")
-    grants = svc_list(_org_id(), status=status)
+    grants = _grants().list_grants(_org_id(), status=status)
     return jsonify([_grant_dict(g) for g in grants])
 
 
@@ -67,7 +73,6 @@ def list_grants():
 @login_required
 @roles_required("admin", "staff")
 def create_grant():
-    from ngo_homesuite.services.grant_service import create_grant as svc_create
     data = _json_or_400(required=["title", "funder_name"])
     payload, error = _normalize_grant_dates(
         data,
@@ -76,7 +81,7 @@ def create_grant():
     if error:
         return jsonify({"error": error}), 400
     try:
-        grant = svc_create(_org_id(), **payload)
+        grant = _grants().create_grant(_org_id(), **payload)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify(_grant_dict(grant)), 201
@@ -85,8 +90,7 @@ def create_grant():
 @v2_bp.route("/grants/<int:grant_id>", methods=["GET"])
 @login_required
 def get_grant(grant_id: int):
-    from ngo_homesuite.services.grant_service import get_grant as svc_get
-    grant = svc_get(grant_id, _org_id())
+    grant = _grants().get_grant(grant_id, _org_id())
     if not grant:
         return jsonify({"error": "not found"}), 404
     return jsonify(_grant_dict(grant))
@@ -96,13 +100,12 @@ def get_grant(grant_id: int):
 @login_required
 @roles_required("admin", "staff")
 def advance_grant(grant_id: int):
-    from ngo_homesuite.services.grant_service import advance_grant_status, GrantNotFound, InvalidGrantTransition
     data = _json_or_400(required=["new_status"])
     payload, error = _normalize_grant_dates(data, ("submission_date", "award_date", "report_due_date"))
     if error:
         return jsonify({"error": error}), 400
     try:
-        grant = advance_grant_status(
+        grant = _grants().advance_grant_status(
             grant_id,
             _org_id(),
             new_status=payload["new_status"],
@@ -121,7 +124,6 @@ def advance_grant(grant_id: int):
 @login_required
 @roles_required("admin", "staff")
 def add_disbursement(grant_id: int):
-    from ngo_homesuite.services.grant_service import add_disbursement as svc_add, GrantNotFound
     data = _json_or_400(required=["amount", "received_date"])
     payload = dict(data)
     try:
@@ -129,7 +131,7 @@ def add_disbursement(grant_id: int):
     except ValueError:
         return jsonify({"error": "received_date must be ISO format YYYY-MM-DD"}), 400
     try:
-        disb = svc_add(grant_id, _org_id(), **payload)
+        disb = _grants().add_disbursement(grant_id, _org_id(), **payload)
     except GrantNotFound as exc:
         return jsonify({"error": str(exc)}), 404
     except ValueError as exc:
@@ -140,25 +142,20 @@ def add_disbursement(grant_id: int):
 @v2_bp.route("/grants/pipeline-summary", methods=["GET"])
 @login_required
 def grants_pipeline_summary():
-    from ngo_homesuite.services.grant_service import grant_pipeline_summary
-    return jsonify(grant_pipeline_summary(_org_id()))
+    return jsonify(_grants().grant_pipeline_summary(_org_id()))
 
 
 @v2_bp.route("/grants/calendar", methods=["GET"])
 @login_required
 def grants_calendar():
-    from ngo_homesuite.services.grant_service import grant_calendar_events
-
     within_days = request.args.get("within_days", 120, type=int)
-    return jsonify(grant_calendar_events(_org_id(), within_days=max(1, min(within_days, 730)) ))
+    return jsonify(_grants().grant_calendar_events(_org_id(), within_days=max(1, min(within_days, 730))))
 
 
 @v2_bp.route("/grants/restricted-funds", methods=["GET"])
 @login_required
 def grants_restricted_funds():
-    from ngo_homesuite.services.grant_service import restricted_funding_summary
-
-    return jsonify(restricted_funding_summary(_org_id()))
+    return jsonify(_grants().restricted_funding_summary(_org_id()))
 
 
 def _grant_dict(g) -> dict:

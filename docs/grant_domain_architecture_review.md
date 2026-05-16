@@ -21,6 +21,15 @@ Facade-only policy for new call-sites:
 - Preferred entrypoint: `ngo_homesuite.grants.services.GrantsFacade`
 - Avoid calling grant sub-services directly from routes.
 
+Enforcement rule (implemented for web routes):
+
+- Route modules must import grants via `from ngo_homesuite.grants.facade import GrantsFacade`.
+- A guard test (`ngo_homesuite/web/test_grant_route_facade_enforcement.py`) fails if web routes directly import legacy `ngo_homesuite.services.grant_*` modules.
+
+Suggested CI grep gate (follow-up):
+
+- Fail build if `ngo_homesuite/web/**/*.py` contains `from ngo_homesuite.services.grant_`.
+
 ## Current Service Ownership Boundaries
 
 - `ngo_homesuite/services/grant_service.py`
