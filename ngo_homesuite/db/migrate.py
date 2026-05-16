@@ -302,6 +302,33 @@ def auto_migrate(db_path: str | None = None) -> None:
                 hash_val = hashlib.sha256(f.read()).hexdigest()
             sql = mf.read_text(encoding='utf-8')
             try:
+                if version == 12:
+                    existing_tables = {
+                        str(row[0])
+                        for row in conn.execute(
+                            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('donations', 'funds')"
+                        ).fetchall()
+                    }
+                    if existing_tables != {"donations", "funds"}:
+                        now_utc = datetime.now(UTC).isoformat().replace('+00:00', 'Z')
+                        _insert_schema_version_row(conn, version=version, hash_value=hash_val, applied_at_utc=now_utc)
+                        try:
+                            conn.execute(
+                                'INSERT INTO schema_hash (version, hash, applied_at_utc) VALUES (?, ?, ?)',
+                                (version, hash_val, now_utc),
+                            )
+                        except Exception:
+                            pass
+                        conn.commit()
+                        _emit_migration_event(
+                            step="apply",
+                            status="ok",
+                            message="Skipped migration until core tables are created by bootstrap",
+                            version=version,
+                            file=mf.name,
+                        )
+                        print(f"Skipped migration {version} ({mf.name}) until core tables are created by bootstrap.")
+                        continue
                 conn.executescript(sql)
             except Exception as exc:
                 raise MigrationApplyError(f"Failed applying migration v{version} ({mf.name})") from exc

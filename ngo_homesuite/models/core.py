@@ -212,6 +212,7 @@ class Donation(db.Model):
     # Donation details
     amount = db.Column(db.Float, nullable=False)
     currency = db.Column(db.String(3), default='USD', nullable=False)
+    version_id = db.Column(db.Integer, nullable=False, default=0)
     donation_date = db.Column(db.DateTime, default=_utcnow_naive, nullable=False, index=True)
     
     # Payment info
@@ -231,6 +232,10 @@ class Donation(db.Model):
     
     def __repr__(self):
         return f'<Donation {self.amount} {self.currency}>'
+
+    __mapper_args__ = {
+        'version_id_col': version_id,
+    }
 
 
 class RecurringDonationPlan(db.Model):
@@ -310,6 +315,7 @@ class Fund(db.Model):
     name = db.Column(db.String(200), nullable=False)
     description = db.Column(db.Text, nullable=True)
     is_active = db.Column(db.Boolean, default=True, nullable=False)
+    version_id = db.Column(db.Integer, nullable=False, default=0)
     created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
     updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
 
@@ -322,6 +328,10 @@ class Fund(db.Model):
 
     def __repr__(self):
         return f'<Fund {self.name}>'
+
+    __mapper_args__ = {
+        'version_id_col': version_id,
+    }
 
 
 class Volunteer(db.Model):

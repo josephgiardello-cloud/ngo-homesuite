@@ -56,10 +56,24 @@ def _stripe_header(payload: bytes, secret: str, ts: int) -> str:
 
 def test_stripe_webhook_processed_and_duplicate(client, app, monkeypatch):
     monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_test")
+
+    # Ensure an org exists and obtain its ID for the metadata
+    org_id = _ensure_user(app, "webhook_admin", "webhook_admin@test.local", "admin", "webhook_admin_pass_123")
+
     payload = {
         "id": "evt_webhook_1",
         "type": "checkout.session.completed",
-        "data": {"object": {"id": "cs_123", "payment_status": "paid"}},
+        "data": {
+            "object": {
+                "id": "cs_123",
+                "payment_status": "paid",
+                "payment_intent": "pi_test_dedup_1",
+                "amount_total": 5000,
+                "currency": "usd",
+                "customer_details": {"name": "Test Donor", "email": "donor@test.local"},
+                "metadata": {"org_id": str(org_id)},
+            }
+        },
     }
     raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     header = _stripe_header(raw, "whsec_test", int(time.time()))
@@ -70,7 +84,9 @@ def test_stripe_webhook_processed_and_duplicate(client, app, monkeypatch):
         headers={"Stripe-Signature": header},
     )
     assert rv1.status_code == 200
-    assert rv1.get_json()["status"] == "processed"
+    body1 = rv1.get_json()
+    assert body1["status"] == "processed"
+    assert "donation_id" in body1
 
     rv2 = client.post(
         "/integrations/webhooks/stripe",

@@ -19,6 +19,9 @@ from openpyxl import Workbook
 from ngo_homesuite.models.core import (
     Organization, Beneficiary, Project, Donation, Donor, Fund, Expense, DonationReceipt, P2PPage, RecurringDonationPlan, Volunteer, db
 )
+from ngo_homesuite.services.donation_service import DonationService
+from ngo_homesuite.services.donor_service import DonorService
+from ngo_homesuite.services.fund_service import FundService
 from ngo_homesuite.domain import (
     BeneficiaryEntity,
     CampaignEntity,
@@ -377,50 +380,13 @@ def _build_domain_registry_for_org(org: Organization | None) -> DomainRegistry:
 
 
 def _issue_receipt_for_donation(donation: Donation, recipient_email: str | None = None):
-    existing = DonationReceipt.query.filter_by(donation_id=donation.id).first()
-    if existing:
-        return existing
-
-    receipt_number = f"R-{donation.id:06d}-{datetime.now(timezone.utc).strftime('%Y%m%d')}"
-    receipt = DonationReceipt(
+    """Delegate receipt generation to DonationService.generate_receipt()."""
+    svc = DonationService()
+    return svc.generate_receipt(
         donation_id=donation.id,
-        receipt_number=receipt_number,
-        status='generated',
+        org_id=donation.organization_id,
         sent_to_email=recipient_email,
     )
-    db.session.add(receipt)
-    donation.status = 'receipted'
-
-    # Generate bytes to ensure receipt content is always renderable.
-    donor = donation.donor
-    donation_payload = {
-        'amount_cents': int(round(float(donation.amount or 0) * 100)),
-        'currency': donation.currency,
-        'received_at': donation.donation_date.strftime('%Y-%m-%d') if donation.donation_date else datetime.now(timezone.utc).strftime('%Y-%m-%d'),
-    }
-    donor_payload = {
-        'name': donor.name if donor else donation.donor_name,
-        'address': '',
-    }
-    generate_receipt_pdf_bytes(donation_payload, donor_payload)
-
-    if recipient_email:
-        try:
-            from ngo_homesuite.utils.email_service import send_receipt
-
-            send_receipt(
-                recipient_email,
-                donor_payload['name'],
-                donation_payload['amount_cents'],
-                donation.currency,
-            )
-            receipt.status = 'sent'
-            receipt.sent_at = datetime.now(timezone.utc)
-        except Exception as exc:
-            receipt.status = 'failed'
-            receipt.error_message = str(exc)
-
-    return receipt
 
 
 @main_bp.route('/api/openapi.yaml', methods=['GET'])
@@ -684,37 +650,31 @@ def public_give():
 
     if form.validate_on_submit():
         donor_email = (form.donor_email.data or '').strip() or None
-        donor = None
-        if donor_email:
-            donor = Donor.query.filter_by(organization_id=org.id, email=donor_email).first()
 
-        if donor is None:
-            donor = Donor(
-                organization_id=org.id,
-                name=form.donor_name.data.strip(),
-                email=donor_email,
-                phone=(form.donor_phone.data or '').strip() or None,
-                donor_type='individual',
-                notes='Created from public donation portal.',
-            )
-            db.session.add(donor)
-            db.session.flush()
+        _donor_svc = DonorService()
+        donor, _created = _donor_svc.find_or_create_by_email(
+            org.id,
+            donor_email,
+            form.donor_name.data.strip(),
+            phone=(form.donor_phone.data or '').strip() or None,
+            donor_type='individual',
+            notes='Created from public donation portal.',
+        )
 
-        donation = Donation(
-            organization_id=org.id,
-            donor_id=donor.id,
+        _donation_svc = DonationService()
+        donation = _donation_svc.create_donation(
+            org_id=org.id,
             donor_name=donor.name,
-            donor_email=donor.email,
-            donor_phone=donor.phone,
             amount=form.amount.data,
             currency=form.currency.data,
+            donor_email=donor.email,
+            donor_phone=donor.phone,
+            donor_id=donor.id,
             payment_method=form.payment_method.data,
             purpose=form.purpose.data or 'General Fund',
-            status='received',
             notes='Public portal donation',
+            status='received',
         )
-        db.session.add(donation)
-        db.session.flush()
 
         if form.make_recurring.data:
             if not donor.email:
@@ -734,9 +694,11 @@ def public_give():
                 status='active',
             )
             db.session.add(plan)
+            db.session.commit()
 
+        # Advance to 'processed' so generate_receipt() is satisfied, then issue.
+        _donation_svc.update_status(donation.id, org.id, 'processed', actor_id=None)
         _issue_receipt_for_donation(donation, recipient_email=donor.email)
-        db.session.commit()
 
         flash('Thank you for your donation. Your receipt has been generated.', 'success')
         return redirect(url_for('main.public_give'))
@@ -753,15 +715,23 @@ def dashboard():
     if org:
         beneficiary_count = Beneficiary.query.filter_by(organization_id=org.id, status='active').count()
         project_count = Project.query.filter_by(organization_id=org.id, status='active').count()
-        donor_count = Donor.query.filter_by(organization_id=org.id).count()
-        total_donations = db.session.query(func.sum(Donation.amount)).filter_by(organization_id=org.id).scalar() or 0
 
-        recent_donations = Donation.query.filter_by(organization_id=org.id).order_by(Donation.donation_date.desc()).limit(5).all()
+        _donor_svc = DonorService()
+        donor_count = _donor_svc.list_donors(org.id, per_page=1)['total']
+
+        _donation_svc = DonationService()
+        donation_page = _donation_svc.list_donations(org.id, per_page=5)
+        recent_donations = donation_page['items']
+        total_donations = (
+            db.session.query(func.sum(Donation.amount)).filter_by(organization_id=org.id).scalar() or 0
+        )
 
         total_budget = db.session.query(func.sum(Project.budget)).filter_by(organization_id=org.id).scalar() or 0
         total_expenses = db.session.query(func.sum(Expense.amount)).filter_by(organization_id=org.id).scalar() or 0
-        total_funds = Fund.query.filter_by(organization_id=org.id, is_active=True).count()
-        
+
+        _fund_svc = FundService()
+        total_funds = _fund_svc.list_funds(org.id, active_only=True, per_page=1)['total']
+
         stats = {
             'organization': org,
             'beneficiary_count': beneficiary_count,

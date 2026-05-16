@@ -40,6 +40,65 @@ def _calendar_provider() -> InMemoryCalendarProvider:
     return provider
 
 
+@integrations_bp.post("/stripe/checkout")
+@login_required
+@roles_required("admin", "staff")
+def create_stripe_checkout_route():
+    """Create a Stripe Checkout session for a donation.
+
+    Request body (JSON):
+        campaign_name (str, required)
+        amount_cents  (int, required)   – amount in the smallest currency unit
+        currency      (str, default USD)
+        success_url   (str, required)
+        cancel_url    (str, required)
+        donor_id      (int, optional)
+        campaign_id   (int, optional)   – maps to project_id in the Donation model
+        donor_email   (str, optional)
+    """
+    from ngo_homesuite.services.payment_service import PaymentService, StripeNotConfigured
+
+    data = request.get_json(silent=True) or {}
+    required = ["campaign_name", "amount_cents", "success_url", "cancel_url"]
+    missing = [f for f in required if not data.get(f)]
+    if missing:
+        return jsonify({"error": f"Missing required fields: {missing}"}), 400
+
+    org_id = current_user.organization_id
+    if not org_id:
+        return jsonify({"error": "User has no associated organisation"}), 403
+
+    try:
+        amount_cents = int(data["amount_cents"])
+    except (ValueError, TypeError):
+        return jsonify({"error": "amount_cents must be an integer"}), 400
+
+    try:
+        result = PaymentService().create_checkout_session(
+            org_id=org_id,
+            donor_id=data.get("donor_id"),
+            campaign_id=data.get("campaign_id"),
+            amount_cents=amount_cents,
+            currency=data.get("currency", "USD"),
+            campaign_name=data["campaign_name"],
+            success_url=data["success_url"],
+            cancel_url=data["cancel_url"],
+            donor_email=data.get("donor_email"),
+        )
+    except StripeNotConfigured as exc:
+        return jsonify({"error": str(exc)}), 503
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    record_integration_event(
+        current_app,
+        kind="stripe_checkout",
+        status="created",
+        details={"session_id": result["session_id"], "org_id": org_id},
+    )
+    return jsonify(result), 201
+
+
 @integrations_bp.post("/webhooks/stripe")
 def stripe_webhook_route():
     payload = request.get_data() or b""
@@ -62,15 +121,25 @@ def stripe_webhook_route():
 
     event_type = str(event.get("type") or "unknown")
     if event_type == "checkout.session.completed":
+        from ngo_homesuite.services.payment_service import PaymentService, WebhookProcessingError
         session_obj = ((event.get("data") or {}).get("object") or {})
-        details = {
-            "event_id": eid,
-            "event_type": event_type,
-            "payment_status": session_obj.get("payment_status"),
-            "session_id": session_obj.get("id"),
-        }
-        record_integration_event(current_app, kind="stripe_webhook", status="processed", details=details)
-        return jsonify({"ok": True, "status": "processed", "event_id": eid}), 200
+        try:
+            donation = PaymentService().handle_checkout_completed(session_obj)
+            details = {
+                "event_id": eid,
+                "event_type": event_type,
+                "payment_status": session_obj.get("payment_status"),
+                "session_id": session_obj.get("id"),
+                "donation_id": donation.id,
+                "amount": donation.amount,
+                "currency": donation.currency,
+            }
+            record_integration_event(current_app, kind="stripe_webhook", status="processed", details=details)
+            return jsonify({"ok": True, "status": "processed", "event_id": eid, "donation_id": donation.id}), 200
+        except WebhookProcessingError as exc:
+            current_app.logger.warning("stripe webhook processing error: %s", exc)
+            record_integration_event(current_app, kind="stripe_webhook", status="error", details={"event_id": eid, "error": str(exc)})
+            return jsonify({"error": str(exc)}), 422
 
     record_integration_event(current_app, kind="stripe_webhook", status="ignored", details={"event_id": eid, "event_type": event_type})
     return jsonify({"ok": True, "status": "ignored", "event_id": eid}), 200
