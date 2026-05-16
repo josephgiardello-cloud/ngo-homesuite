@@ -1,0 +1,33 @@
+groups:
+  - name: ngo_homesuite_app_alerts
+    rules:
+      - alert: NgoHomeSuiteTargetDown
+        expr: up{job="ngo_homesuite_app"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "NGO HomeSuite target is down"
+          description: "Prometheus cannot scrape app:8000 for 2 minutes."
+
+      - alert: NgoHomeSuiteHttp5xxRateHigh
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(http_requests_total[5m])), 0.001)
+          > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High 5xx ratio"
+          description: "5xx responses exceed 5% for at least 5 minutes."
+
+      - alert: NgoHomeSuiteNoTrafficObserved
+        expr: sum(rate(http_requests_total[30m])) == 0
+        for: 30m
+        labels:
+          severity: info
+        annotations:
+          summary: "No traffic observed"
+          description: "No HTTP request metrics observed in the last 30 minutes."

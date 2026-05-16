@@ -45,6 +45,24 @@ jobs:
       run: |
         python -m ngo_homesuite.db.migrate --dry-run --verify-backup
 
+    - name: Verify observability deployment artifacts
+      run: |
+        python - <<'PY'
+        from pathlib import Path
+
+        required = [
+            "deploy/monitoring/prometheus.yml",
+            "deploy/monitoring/alerts.yml",
+            "deploy/monitoring/promtail-config.yml",
+            "deploy/monitoring/docker-compose.monitoring.yml",
+            "docs/observability_stack.md",
+        ]
+        missing = [path for path in required if not Path(path).exists()]
+        if missing:
+            raise SystemExit(f"Missing observability artifact(s): {missing}")
+        print("Observability artifact check passed")
+        PY
+
     - name: Run tests
       run: |
         pytest ngo_homesuite/ -v --tb=short --cov=ngo_homesuite --cov-report=xml
