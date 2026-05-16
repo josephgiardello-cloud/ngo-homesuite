@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from flask import Blueprint, Response, jsonify, render_template, request
 from flask_login import current_user, login_required
 
@@ -143,6 +145,8 @@ def p2p_embed_script(slug: str):
         return Response("window.ngoHomeSuiteP2PEmbedError='not found';", mimetype="application/javascript", status=404)
 
     src = request.url_root.rstrip("/") + f"/p2p/{page.public_slug}?embed=1"
+    safe_src = json.dumps(src)
+    safe_title = json.dumps((f"Fundraiser: {page.title}")[:180])
     script = f"""
 (function() {{
   var script = document.currentScript;
@@ -151,8 +155,8 @@ def p2p_embed_script(slug: str):
   var target = targetId ? document.getElementById(targetId) : script.parentNode;
   if (!target) return;
   var iframe = document.createElement('iframe');
-  iframe.src = {src!r};
-  iframe.title = 'Fundraiser: {page.title}'.slice(0, 180);
+    iframe.src = {safe_src};
+    iframe.title = {safe_title};
   iframe.width = '100%';
   iframe.height = script.getAttribute('data-height') || '560';
   iframe.style.border = '0';
@@ -170,7 +174,7 @@ def p2p_embed_script(slug: str):
 def leaderboard_route():
     from ngo_homesuite.services.p2p_service import leaderboard
 
-    limit = request.args.get("limit", 10, type=int)
-    offset = request.args.get("offset", 0, type=int)
+    limit = max(1, min(request.args.get("limit", 10, type=int) or 10, 100))
+    offset = max(0, request.args.get("offset", 0, type=int) or 0)
     campaign_slug = request.args.get("campaign_slug")
     return jsonify(leaderboard(_org_id(), campaign_slug=campaign_slug, limit=limit, offset=offset))

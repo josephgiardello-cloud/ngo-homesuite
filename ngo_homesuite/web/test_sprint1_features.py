@@ -148,6 +148,62 @@ def test_public_p2p_embed_script_endpoint(client, app):
     assert "/p2p/embed-fundraiser?embed=1" in body
 
 
+def test_public_p2p_embed_script_escapes_title_for_js_context(client, app):
+    with app.app_context():
+        org = Organization.query.filter_by(is_active=True).first()
+        donor = Donor(
+            organization_id=org.id,
+            name="P2P Embed Safe Donor",
+            email="p2p.embed.safe@example.org",
+            donor_type="individual",
+        )
+        db.session.add(donor)
+        db.session.flush()
+
+        page = P2PPage(
+            organization_id=org.id,
+            donor_id=donor.id,
+            title='Bad\"Title\';alert(1);//',
+            goal_amount=300.0,
+            public_slug="embed-fundraiser-safe",
+            status="active",
+        )
+        db.session.add(page)
+        db.session.commit()
+
+    rv = client.get("/p2p/embed-fundraiser-safe/embed.js")
+    assert rv.status_code == 200
+    assert rv.mimetype == "application/javascript"
+    body = rv.get_data(as_text=True)
+    title_line = next(line.strip() for line in body.splitlines() if "iframe.title =" in line)
+    assert title_line.startswith('iframe.title = "Fundraiser: ')
+    assert title_line.endswith('";')
+    assert "iframe.title = 'Fundraiser:" not in body
+    assert "alert(1);" not in body.split("iframe.title =", 1)[0]
+
+
+def test_p2p_leaderboard_clamps_limit_and_offset(client, app, monkeypatch):
+    _login_admin(client)
+
+    import ngo_homesuite.services.p2p_service as p2p_service
+
+    captured: dict[str, int | str | None] = {}
+
+    def fake_leaderboard(org_id: int, campaign_slug=None, limit: int = 10, offset: int = 0):
+        captured["org_id"] = org_id
+        captured["campaign_slug"] = campaign_slug
+        captured["limit"] = limit
+        captured["offset"] = offset
+        return []
+
+    monkeypatch.setattr(p2p_service, "leaderboard", fake_leaderboard)
+
+    rv = client.get("/p2p/leaderboard?limit=99999&offset=-7")
+    assert rv.status_code == 200
+    assert captured["limit"] == 100
+    assert captured["offset"] == 0
+
+
 def test_staff_p2p_manage_page_create_publish_close(client, app):
     _login_admin(client)
 
