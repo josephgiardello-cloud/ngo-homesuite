@@ -144,7 +144,8 @@ def p2p_embed_script(slug: str):
     if page is None or page.status != "active":
         return Response("window.ngoHomeSuiteP2PEmbedError='not found';", mimetype="application/javascript", status=404)
 
-    src = request.url_root.rstrip("/") + f"/p2p/{page.public_slug}?embed=1"
+    # Use an origin-relative path so untrusted Host headers can't taint embed output.
+    src = f"/p2p/{page.public_slug}?embed=1"
     safe_src = json.dumps(src)
     safe_title = json.dumps((f"Fundraiser: {page.title}")[:180])
     script = f"""

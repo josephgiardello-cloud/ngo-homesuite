@@ -182,6 +182,39 @@ def test_public_p2p_embed_script_escapes_title_for_js_context(client, app):
     assert "alert(1);" not in body.split("iframe.title =", 1)[0]
 
 
+def test_public_p2p_embed_script_ignores_host_header_in_iframe_src(client, app):
+    with app.app_context():
+        org = Organization.query.filter_by(is_active=True).first()
+        donor = Donor(
+            organization_id=org.id,
+            name="P2P Host Header Donor",
+            email="p2p.host.header@example.org",
+            donor_type="individual",
+        )
+        db.session.add(donor)
+        db.session.flush()
+
+        page = P2PPage(
+            organization_id=org.id,
+            donor_id=donor.id,
+            title="Host Header Safety",
+            goal_amount=300.0,
+            public_slug="embed-host-header-safety",
+            status="active",
+        )
+        db.session.add(page)
+        db.session.commit()
+
+    rv = client.get(
+        "/p2p/embed-host-header-safety/embed.js",
+        headers={"Host": "evil.example"},
+    )
+    assert rv.status_code == 200
+    body = rv.get_data(as_text=True)
+    assert 'iframe.src = "/p2p/embed-host-header-safety?embed=1";' in body
+    assert "evil.example" not in body
+
+
 def test_p2p_leaderboard_clamps_limit_and_offset(client, app, monkeypatch):
     _login_admin(client)
 
