@@ -59,6 +59,13 @@ class ActivityTimelineService:
     """Unified timeline across all constituent activity types."""
 
     @staticmethod
+    def _activity_numeric_id(activity_id: str) -> int | None:
+        try:
+            return int(str(activity_id).split(":", 1)[1])
+        except Exception:
+            return None
+
+    @staticmethod
     def _normalize_text(value: Any) -> str:
         if value is None:
             return ""
@@ -574,7 +581,11 @@ class ActivityTimelineService:
                     actor_id=created_by,
                     actor_name=actor_name,
                     summary=summary_text,
-                    metadata={"channel": channel},
+                    metadata={
+                        "channel": channel,
+                        "donor_name": donor_name,
+                        "interaction_id": ActivityTimelineService._activity_numeric_id(activity_id),
+                    },
                 )
             )
 
@@ -634,6 +645,8 @@ class ActivityTimelineService:
                         actor_name=actor_name,
                         summary=f"{lead}: Task ({status}) — {title}",
                         metadata={
+                            "task_id": ActivityTimelineService._activity_numeric_id(activity_id),
+                            "donor_name": donor_name,
                             "status": status,
                             "priority": priority,
                             "due_date": due_date,
@@ -680,7 +693,12 @@ class ActivityTimelineService:
                     actor_id=None,
                     actor_name=None,
                     summary=summary_text,
-                    metadata={"amount": amount, "amount_formatted": amount_dollars},
+                    metadata={
+                        "donor_name": donor_name,
+                        "donation_id": ActivityTimelineService._activity_numeric_id(activity_id),
+                        "amount": amount,
+                        "amount_formatted": amount_dollars,
+                    },
                 )
             )
 
@@ -724,7 +742,11 @@ class ActivityTimelineService:
                         actor_id=actor_id,
                         actor_name=actor_name,
                         summary=summary_text,
-                        metadata={"case_activity_type": case_activity_type},
+                        metadata={
+                            "beneficiary_name": beneficiary_name,
+                            "case_activity_id": ActivityTimelineService._activity_numeric_id(activity_id),
+                            "case_activity_type": case_activity_type,
+                        },
                     )
                 )
         except Exception:

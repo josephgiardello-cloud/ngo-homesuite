@@ -3,6 +3,47 @@
 
 {% block title %}Activity Feed - NGO HomeSuite{% endblock %}
 
+{% block extra_css %}
+<style>
+    .activity-card {
+        padding: 0.8rem 0.95rem;
+        border-radius: 10px;
+        background: var(--surface-soft);
+        border: 1px solid var(--border);
+    }
+
+    .activity-chip-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+        margin-top: 0.4rem;
+    }
+
+    .activity-chip {
+        display: inline-flex;
+        align-items: center;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 0.16rem 0.55rem;
+        font-size: 0.78rem;
+        color: var(--muted);
+        background: var(--surface);
+    }
+
+    .activity-actions {
+        margin-top: 0.55rem;
+        display: flex;
+        gap: 0.4rem;
+        flex-wrap: wrap;
+    }
+
+    .activity-actions a {
+        font-size: 0.8rem;
+        text-decoration: none;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem;">
     <div>
@@ -68,6 +109,56 @@ function buildQuery(params) {
     return sp.toString();
 }
 
+function formatLabel(value) {
+    return String(value || '').replace(/_/g, ' ').trim();
+}
+
+function activityContextLabel(item) {
+    const metadata = item.metadata || {};
+    if (item.entity_type === 'donor') {
+        return metadata.donor_name || `Donor #${item.entity_id}`;
+    }
+    if (item.entity_type === 'beneficiary') {
+        return metadata.beneficiary_name || `Beneficiary #${item.entity_id}`;
+    }
+    return 'Organization';
+}
+
+function activityTargetHref(item) {
+    if (item.entity_type === 'donor' && Number(item.entity_id) > 0) {
+        return `/donors/${item.entity_id}`;
+    }
+    if (item.entity_type === 'beneficiary' && Number(item.entity_id) > 0) {
+        return `/beneficiaries/${item.entity_id}`;
+    }
+    return '/tasks/board';
+}
+
+function buildContextChips(item) {
+    const chips = [];
+    const metadata = item.metadata || {};
+    chips.push(activityContextLabel(item));
+    chips.push(formatLabel(item.entity_type));
+
+    if (metadata.priority) {
+        chips.push(`Priority: ${formatLabel(metadata.priority)}`);
+    }
+    if (metadata.channel) {
+        chips.push(`Channel: ${formatLabel(metadata.channel)}`);
+    }
+    if (metadata.case_activity_type) {
+        chips.push(`Case: ${formatLabel(metadata.case_activity_type)}`);
+    }
+    if (metadata.amount_formatted) {
+        chips.push(`Amount: ${metadata.amount_formatted}`);
+    }
+    if (metadata.status) {
+        chips.push(`Status: ${formatLabel(metadata.status)}`);
+    }
+
+    return chips;
+}
+
 // Load activity feed from API
 async function loadActivityFeed() {
     try {
@@ -120,10 +211,7 @@ async function loadActivityFeed() {
             
             // Activity item card
             const card = document.createElement('div');
-            card.style.padding = '0.75rem 1rem';
-            card.style.borderRadius = '8px';
-            card.style.background = 'var(--background-secondary, rgba(0,0,0,0.02))';
-            card.style.border = '1px solid var(--border)';
+            card.className = 'activity-card';
             
             const typeColor = typeColors[item.activity_type] || '#9E9E9E';
             
@@ -162,6 +250,42 @@ async function loadActivityFeed() {
             summaryB.textContent = item.summary;
             summaryP.appendChild(summaryB);
             card.appendChild(summaryP);
+
+            const chips = buildContextChips(item);
+            if (chips.length) {
+                const chipRow = document.createElement('div');
+                chipRow.className = 'activity-chip-row';
+                chips.forEach(chip => {
+                    const chipEl = document.createElement('span');
+                    chipEl.className = 'activity-chip';
+                    chipEl.textContent = chip;
+                    chipRow.appendChild(chipEl);
+                });
+                card.appendChild(chipRow);
+            }
+
+            const actions = document.createElement('div');
+            actions.className = 'activity-actions';
+
+            const openLink = document.createElement('a');
+            openLink.className = 'btn btn-secondary';
+            openLink.href = activityTargetHref(item);
+            openLink.textContent = item.entity_type === 'organization' ? 'Open Task Board' : 'Open Profile';
+            actions.appendChild(openLink);
+
+            const filteredLink = document.createElement('a');
+            filteredLink.className = 'btn btn-secondary';
+            const quickQuery = buildQuery({
+                limit: 50,
+                entity_type: item.entity_type,
+                activity_type: item.activity_type,
+                q: (item.metadata && (item.metadata.donor_name || item.metadata.beneficiary_name)) || '',
+            });
+            filteredLink.href = `/activity?${quickQuery}`;
+            filteredLink.textContent = 'Filter Similar';
+            actions.appendChild(filteredLink);
+
+            card.appendChild(actions);
             
             itemDiv.appendChild(card);
             timelineDiv.appendChild(itemDiv);
@@ -204,6 +328,12 @@ function refreshActivityDashboard() {
 // Load activity when page loads
 document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('apply-filters')?.addEventListener('click', refreshActivityDashboard);
+    document.getElementById('activity-q')?.addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            refreshActivityDashboard();
+        }
+    });
     refreshActivityDashboard();
 });
 </script>

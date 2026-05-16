@@ -217,9 +217,28 @@ def test_v2_mutating_endpoints_reject_cross_tenant_references(client, app):
 def test_v2_activity_feed_and_insights_contract(client):
     _login_admin(client)
 
+    created = client.post(
+        "/api/v2/tasks",
+        json={"title": "Timeline contract task", "priority": "high"},
+    )
+    assert created.status_code == 201
+
     feed = client.get("/api/v2/activity/global?limit=20&entity_type=donor&q=donation")
     assert feed.status_code == 200
-    assert isinstance(feed.get_json(), list)
+    feed_payload = feed.get_json()
+    assert isinstance(feed_payload, list)
+
+    unfiltered = client.get("/api/v2/activity/global?limit=20")
+    assert unfiltered.status_code == 200
+    unfiltered_payload = unfiltered.get_json()
+    assert isinstance(unfiltered_payload, list)
+    assert unfiltered_payload
+
+    first = unfiltered_payload[0]
+    assert isinstance(first.get("metadata"), dict)
+    assert "activity_id" in first
+    assert "entity_type" in first
+    assert "entity_id" in first
 
     insights = client.get("/api/v2/activity/insights?limit=20&entity_type=donor")
     assert insights.status_code == 200
