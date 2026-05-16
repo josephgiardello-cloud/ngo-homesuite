@@ -6,6 +6,7 @@ from typing import List, Optional
 
 from sqlalchemy import and_, func, or_, select
 
+from ngo_homesuite.db.utils import audit
 from ngo_homesuite.models.core import Grant, GrantDisbursement, db
 
 
@@ -27,16 +28,25 @@ class InvalidGrantTransition(ValueError):
 
 # ---------------------------------------------------------------------------
 
-_VALID_GRANT_STATUSES = {"prospect", "in_progress", "submitted", "awarded", "declined", "closed", "reporting"}
+_VALID_GRANT_STATUSES = {"prospect", "in_progress", "submitted", "awarded", "active", "declined", "closed", "reporting"}
 _VALID_TRANSITIONS = {
     "prospect": {"in_progress", "submitted", "awarded", "declined", "closed"},
     "in_progress": {"submitted", "awarded", "declined", "closed"},
-    "submitted": {"awarded", "reporting", "declined", "closed"},
-    "awarded": {"reporting", "closed"},
+    "submitted": {"awarded", "declined", "closed"},
+    "awarded": {"active", "reporting", "closed"},
+    "active": {"reporting", "closed"},
     "reporting": {"closed"},
     "declined": set(),
     "closed": set(),
 }
+
+
+def _grant_disbursed_total(grant_id: int, organization_id: int) -> float:
+    stmt = select(func.coalesce(func.sum(GrantDisbursement.amount), 0)).where(
+        GrantDisbursement.grant_id == grant_id,
+        GrantDisbursement.organization_id == organization_id,
+    )
+    return float(db.session.scalar(stmt) or 0)
 
 
 def _validate_currency(code: str) -> str:
@@ -103,6 +113,16 @@ def create_grant(
     )
     db.session.add(grant)
     db.session.commit()
+    audit(
+        "grant.create",
+        entity_type="grant",
+        entity_id=int(grant.id),
+        details={
+            "organization_id": int(organization_id),
+            "status": grant.status,
+            "amount_requested": float(amount_requested or 0),
+        },
+    )
     return grant
 
 
@@ -140,6 +160,24 @@ def advance_grant_status(grant_id: int, organization_id: int, new_status: str, *
         raise InvalidGrantTransition(
             f"Cannot transition grant {grant_id} from '{grant.status}' to '{new_status}'. Allowed: {sorted(allowed)}"
         )
+
+    prior_status = grant.status
+
+    if new_status == "awarded":
+        if kwargs.get("amount_awarded") is None and (grant.amount_awarded is None or float(grant.amount_awarded) <= 0):
+            raise ValueError("amount_awarded is required when transitioning to awarded")
+
+    if new_status == "active" and not grant.amount_awarded and kwargs.get("amount_awarded") is None:
+        raise InvalidGrantTransition("Cannot transition to active before award amount is set")
+
+    if new_status == "closed" and grant.amount_awarded:
+        disbursed = _grant_disbursed_total(grant.id, organization_id)
+        awarded_amount = float(grant.amount_awarded or 0)
+        if disbursed + 1e-9 < awarded_amount:
+            raise InvalidGrantTransition(
+                f"Cannot close grant with outstanding restricted balance. awarded={awarded_amount:.2f}, disbursed={disbursed:.2f}"
+            )
+
     grant.status = new_status
     if new_status == "awarded" and kwargs.get("amount_awarded"):
         if float(kwargs["amount_awarded"]) < 0:
@@ -149,6 +187,16 @@ def advance_grant_status(grant_id: int, organization_id: int, new_status: str, *
     if new_status == "submitted":
         grant.submission_date = kwargs.get("submission_date", _today())
     db.session.commit()
+    audit(
+        "grant.status.transition",
+        entity_type="grant",
+        entity_id=int(grant.id),
+        details={
+            "organization_id": int(organization_id),
+            "from_status": prior_status,
+            "to_status": new_status,
+        },
+    )
     return grant
 
 
@@ -172,7 +220,22 @@ def update_grant(grant_id: int, organization_id: int, **fields) -> Grant:
             if k == "currency":
                 v = _validate_currency(str(v))
             setattr(grant, k, v)
+
+    if grant.status == "closed" and grant.amount_awarded:
+        disbursed = _grant_disbursed_total(grant.id, organization_id)
+        if disbursed + 1e-9 < float(grant.amount_awarded or 0):
+            raise ValueError("cannot set status=closed while restricted balance remains")
+
     db.session.commit()
+    audit(
+        "grant.update",
+        entity_type="grant",
+        entity_id=int(grant.id),
+        details={
+            "organization_id": int(organization_id),
+            "updated_fields": sorted([k for k in fields.keys() if k in allowed]),
+        },
+    )
     return grant
 
 
@@ -184,6 +247,12 @@ def delete_grant(grant_id: int, organization_id: int) -> None:
         raise GrantNotFound(grant_id)
     db.session.delete(grant)
     db.session.commit()
+    audit(
+        "grant.delete",
+        entity_type="grant",
+        entity_id=int(grant_id),
+        details={"organization_id": int(organization_id)},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +276,16 @@ def add_disbursement(
     ).first()
     if grant is None:
         raise GrantNotFound(grant_id)
+
+    if grant.status not in {"awarded", "active", "reporting"}:
+        raise ValueError("cannot disburse before grant is awarded/active/reporting")
+
+    if grant.amount_awarded is not None:
+        already_disbursed = _grant_disbursed_total(grant.id, organization_id)
+        projected_total = already_disbursed + float(amount)
+        if projected_total > float(grant.amount_awarded) + 1e-9:
+            raise ValueError("disbursement exceeds awarded amount")
+
     disbursement = GrantDisbursement(
         grant_id=grant.id,
         organization_id=organization_id,
@@ -218,6 +297,17 @@ def add_disbursement(
     )
     db.session.add(disbursement)
     db.session.commit()
+    audit(
+        "grant.disbursement.add",
+        entity_type="grant",
+        entity_id=int(grant.id),
+        details={
+            "organization_id": int(organization_id),
+            "disbursement_id": int(disbursement.id),
+            "amount": float(amount),
+            "received_date": received_date.isoformat(),
+        },
+    )
     return disbursement
 
 

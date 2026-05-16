@@ -19,7 +19,7 @@ Maturity scale:
 | P2P Staff workflow | Available | Operational | Dashboard create/publish/close flow plus service-level validation for title/goal/story edge cases; UX iteration still pending. |
 | Events management | Partial | Foundational | Data model and route scaffolding exist, full lifecycle UX still limited. |
 | Campaign management | Partial | Foundational | Campaign entities and relationships present; full end-to-end UI not complete. |
-| Grants workflows | Available | Foundational | API and workflow paths exist; real-world process depth still expanding. |
+| Grants workflows | Available | Foundational | Core lifecycle/disbursement guards and mutation audit events are in place, but budget-line accounting, approval gates, and full compliance workflows are still pending. |
 | Memberships | Partial | Operational | Role-gated membership management routes validated by route-policy and RBAC audits; admin UX polish remains. |
 | Volunteers | Partial | Operational | Role-gated volunteer accounting/workflow routes with explicit route-contract and RBAC audit coverage. |
 | Reporting exports/charts | Available | Operational | Export endpoints and chart/report paths are role-gated and now covered by route-policy and RBAC audit tests. |
