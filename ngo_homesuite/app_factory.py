@@ -11,7 +11,7 @@ import time
 import uuid
 
 from flask import Flask, g, request, session
-from flask_login import LoginManager
+from flask_login import LoginManager, current_user
 from flask_migrate import Migrate
 from flask_babel import Babel, lazy_gettext as _l
 from flask_limiter import Limiter
@@ -41,6 +41,15 @@ def create_app(config=None):
     """
     
     app = Flask(__name__, template_folder='web/templates')
+
+    def _latency_bucket(duration_ms: float) -> str:
+        if duration_ms < 50.0:
+            return "lt_50ms"
+        if duration_ms < 200.0:
+            return "50_to_199ms"
+        if duration_ms < 1000.0:
+            return "200_to_999ms"
+        return "gte_1000ms"
     # Load configuration
     if config is None:
         config = get_config()
@@ -190,16 +199,27 @@ def create_app(config=None):
             response.headers.setdefault("Access-Control-Allow-Origin", req_origin)
             response.headers.setdefault("Access-Control-Allow-Credentials", "true")
             response.headers.setdefault("Vary", "Origin")
+        status_family = f"{response.status_code // 100}xx"
+        actor_id = None
+        org_id = None
+        if current_user.is_authenticated:
+            actor_id = getattr(current_user, 'id', None)
+            org_id = getattr(current_user, 'organization_id', None)
+
         app.logger.info(
             'request_completed',
             extra={
                 'event_id': 'http.request.completed',
                 'extra_fields': {
                     'request_id': getattr(g, 'request_id', None),
+                    'org_id': org_id,
+                    'actor_id': actor_id,
                     'method': request.method,
                     'path': request.path,
+                    'status': status_family,
                     'status_code': response.status_code,
                     'duration_ms': round(duration_ms, 3),
+                    'latency_bucket': _latency_bucket(duration_ms),
                 },
             },
         )
