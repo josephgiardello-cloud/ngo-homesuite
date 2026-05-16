@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  release-verify:
+    name: Release Verify
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest openapi-spec-validator openapi-python-client gunicorn
+
+      - name: Migration preflight
+        env:
+          NGO_HOMESUITE_DB_KEY: ""
+        run: |
+          python -m ngo_homesuite.db.migrate --dry-run --verify-backup
+
+      - name: Run full tests
+        env:
+          NGO_HOMESUITE_DB_KEY: ""
+        run: |
+          pytest ngo_homesuite/ -v --maxfail=10 --tb=short
+
+      - name: Validate OpenAPI document
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import yaml
+          from openapi_spec_validator import validate_spec
+
+          spec = yaml.safe_load(Path("docs/openapi.yaml").read_text(encoding="utf-8"))
+          validate_spec(spec)
+          print("OpenAPI validation passed")
+          PY
+
+      - name: Generate Python client
+        run: |
+          rm -rf .openapi-client
+          openapi-python-client generate --path docs/openapi.yaml --meta none --output-path .openapi-client
+
+      - name: Start local release candidate
+        env:
+          SECRET_KEY: release-smoke-secret
+          DATABASE_URL: sqlite:///:memory:
+          FLASK_ENV: development
+          WTF_CSRF_ENABLED: "0"
+        run: |
+          python - <<'PY' &
+          from ngo_homesuite.app_factory import create_app
+          from ngo_homesuite.flask_config import TestingConfig
+
+          app = create_app(TestingConfig)
+          app.run(host="127.0.0.1", port=8765, use_reloader=False)
+          PY
+          sleep 5
+          python tools/load_test_smoke.py --base-url http://127.0.0.1:8765 --endpoint /health --endpoint / --endpoint /give --total-requests 45 --concurrency 5 --max-p95-ms 2000
+
+      - name: Upload generated OpenAPI client
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-python-client
+          path: .openapi-client
+
+  docker-scan:
+    name: Docker Build and Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t ngo-homesuite:release .
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ngo-homesuite:release
+          format: table
+          exit-code: 1
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH

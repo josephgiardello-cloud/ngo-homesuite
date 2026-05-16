@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 DEFAULT_DB_PATH = "data/homesuite.db"
 DEFAULT_BACKUP_DIR = "backups"
 DEFAULT_DATABASE_URL = "sqlite:///ngo_homesuite.db"
+ALLOW_SQLITE_IN_PRODUCTION_ENV = "NGO_HOMESUITE_ALLOW_SQLITE_IN_PRODUCTION"
 DEFAULT_CONFIG_CANDIDATES = (
     "ngo-homesuite.yaml",
     "ngo_homesuite.yaml",
@@ -424,6 +425,14 @@ def load_runtime_settings() -> RuntimeSettings:
         if not (os.environ.get("DATABASE_URL") or os.environ.get("DATABASE_URL_FILE")):
             raise RuntimeError(
                 "Invalid runtime configuration: production requires DATABASE_URL or DATABASE_URL_FILE to be explicitly set"
+            )
+        if (
+            settings.database_backend == "sqlite"
+            and not _parse_bool(os.environ.get(ALLOW_SQLITE_IN_PRODUCTION_ENV), False)
+        ):
+            raise RuntimeError(
+                "Invalid runtime configuration: production requires PostgreSQL/MySQL by default; "
+                f"set {ALLOW_SQLITE_IN_PRODUCTION_ENV}=1 only for explicitly accepted non-prod/demo deployments"
             )
 
     return settings

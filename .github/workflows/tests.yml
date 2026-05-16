@@ -179,7 +179,25 @@ jobs:
       env:
         NGO_HOMESUITE_DB_KEY: ""
       run: |
-        pytest ngo_homesuite/ai/test_ai_hardening.py ngo_homesuite/ai/test_copilot_routes.py ngo_homesuite/web/test_auth_security_routes.py -v --maxfail=10
+        pytest ngo_homesuite/ai/test_ai_hardening.py ngo_homesuite/ai/test_copilot_routes.py ngo_homesuite/web/test_auth_security_routes.py ngo_homesuite/web/test_public_smoke_paths.py ngo_homesuite/web/test_cross_tenant_boundaries.py ngo_homesuite/web/test_v2_route_contracts.py ngo_homesuite/web/test_rbac_tenant_route_audit.py ngo_homesuite/db/test_connection.py ngo_homesuite/db/test_connection_hardening.py -v --maxfail=10
+
+  container-security:
+    name: Container Security
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build image
+      run: docker build -t ngo-homesuite:ci .
+
+    - name: Scan image with Trivy
+      uses: aquasecurity/trivy-action@0.24.0
+      with:
+        image-ref: ngo-homesuite:ci
+        format: table
+        exit-code: 1
+        ignore-unfixed: true
+        severity: CRITICAL,HIGH
 
   db-policy:
     name: DB Policy (${{ matrix.mode }})
@@ -284,3 +302,40 @@ jobs:
       with:
         name: openapi-python-client
         path: .openapi-client
+
+  performance-smoke:
+    name: Performance Smoke
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Start local app
+      env:
+        SECRET_KEY: perf-smoke-secret
+        DATABASE_URL: sqlite:///:memory:
+        FLASK_ENV: development
+        WTF_CSRF_ENABLED: '0'
+      run: |
+        python - <<'PY' &
+        from ngo_homesuite.app_factory import create_app
+        from ngo_homesuite.flask_config import TestingConfig
+
+        app = create_app(TestingConfig)
+        app.run(host='127.0.0.1', port=8765, use_reloader=False)
+        PY
+        sleep 5
+
+    - name: Run load smoke
+      run: |
+        python tools/load_test_smoke.py --base-url http://127.0.0.1:8765 --endpoint /health --endpoint / --endpoint /give --total-requests 45 --concurrency 5 --max-p95-ms 2000

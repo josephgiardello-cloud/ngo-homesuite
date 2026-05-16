@@ -29,6 +29,7 @@ def _clear_runtime_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "SESSION_STORE_BACKEND",
         "REDIS_URL",
         "REDIS_KEY_PREFIX",
+        "NGO_HOMESUITE_ALLOW_SQLITE_IN_PRODUCTION",
     ]
     for key in keys:
         monkeypatch.delenv(key, raising=False)
@@ -117,6 +118,35 @@ def test_load_runtime_settings_production_requires_explicit_database_url(monkeyp
 
     with pytest.raises(RuntimeError, match="DATABASE_URL"):
         config.load_runtime_settings()
+
+
+def test_load_runtime_settings_production_rejects_sqlite_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+
+    monkeypatch.setenv("FLASK_ENV", "production")
+    monkeypatch.setenv("SECRET_KEY", "prod-secret")
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///prod.db")
+    monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
+
+    with pytest.raises(RuntimeError, match="requires PostgreSQL/MySQL"):
+        config.load_runtime_settings()
+
+
+def test_load_runtime_settings_production_allows_sqlite_only_with_explicit_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+
+    monkeypatch.setenv("FLASK_ENV", "production")
+    monkeypatch.setenv("SECRET_KEY", "prod-secret")
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///prod.db")
+    monkeypatch.setenv("NGO_HOMESUITE_ALLOW_SQLITE_IN_PRODUCTION", "1")
+    monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
+
+    settings = config.load_runtime_settings()
+    assert settings.database_backend == "sqlite"
 
 
 def test_load_runtime_settings_infers_postgres_backend(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -264,7 +294,7 @@ def test_load_runtime_settings_production_allows_file_based_secrets(
     secret_file = tmp_path / "prod-secret.txt"
     db_url_file = tmp_path / "prod-database-url.txt"
     secret_file.write_text("prod-file-secret\n", encoding="utf-8")
-    db_url_file.write_text("sqlite:///prod.db\n", encoding="utf-8")
+    db_url_file.write_text("postgresql://user:pass@localhost:5432/prod\n", encoding="utf-8")
 
     monkeypatch.setenv("FLASK_ENV", "production")
     monkeypatch.setenv("SECRET_KEY_FILE", str(secret_file))
@@ -274,4 +304,4 @@ def test_load_runtime_settings_production_allows_file_based_secrets(
     settings = config.load_runtime_settings()
     assert settings.flask_env == "production"
     assert settings.secret_key == "prod-file-secret"
-    assert settings.database_url == "sqlite:///prod.db"
+    assert settings.database_url == "postgresql://user:pass@localhost:5432/prod"
