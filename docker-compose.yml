@@ -15,7 +15,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: ngo-homesuite-app
-    command: gunicorn -w 3 -k gthread -b 0.0.0.0:8000 ngo_homesuite.wsgi:app
+    command: gunicorn -w 3 -k gthread --threads 4 --timeout 60 --graceful-timeout 20 --max-requests 1000 --max-requests-jitter 100 -b 0.0.0.0:8000 ngo_homesuite.wsgi:app
     env_file:
       - .env
     environment:
@@ -28,9 +28,17 @@ services:
       - ./data:/app/data
       - ./logs:/app/logs
       - ./backups:/app/backups
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).read()"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -45,7 +53,7 @@ services:
       dockerfile: Dockerfile
     container_name: ngo-homesuite-app-pg
     profiles: ["postgres"]
-    command: gunicorn -w 3 -k gthread -b 0.0.0.0:8000 ngo_homesuite.wsgi:app
+    command: gunicorn -w 3 -k gthread --threads 4 --timeout 60 --graceful-timeout 20 --max-requests 1000 --max-requests-jitter 100 -b 0.0.0.0:8000 ngo_homesuite.wsgi:app
     env_file:
       - .env
     environment:
@@ -62,12 +70,20 @@ services:
       - ./data:/app/data
       - ./logs:/app/logs
       - ./backups:/app/backups
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     depends_on:
       postgres:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).read()"]
       interval: 30s
       timeout: 10s
       retries: 3

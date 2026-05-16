@@ -55,6 +55,11 @@ main_bp = Blueprint('main', __name__)
 _SUPPORTED_LOCALES = {'en', 'es', 'fr'}
 
 
+@main_bp.route('/health', methods=['GET'])
+def health() -> Response:
+    return Response('ok', status=200, mimetype='text/plain')
+
+
 class DonorForm(FlaskForm):
     name = StringField('Name', validators=[DataRequired()])
     email = StringField('Email', validators=[WTOptional(), Email()])
