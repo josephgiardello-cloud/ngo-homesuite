@@ -109,6 +109,61 @@ def health() -> Response:
     )
 
 
+@main_bp.route('/health/live', methods=['GET'])
+def health_live() -> Response:
+    """Kubernetes liveness probe — returns 200 as long as the process is running."""
+    return Response(
+        json.dumps({"status": "live"}),
+        status=200,
+        mimetype="application/json",
+    )
+
+
+@main_bp.route('/health/ready', methods=['GET'])
+def health_ready() -> Response:
+    """Kubernetes readiness probe — 200 only when DB is up and migrations are current."""
+    from ngo_homesuite.models.core import db as _db
+    from pathlib import Path as _Path
+
+    db_ok = False
+    try:
+        _db.session.scalar(_db.text("SELECT 1"))
+        db_ok = True
+    except Exception:  # pragma: no cover
+        pass
+
+    migration_version: int | None = None
+    try:
+        if db_ok:
+            raw = _db.session.scalar(_db.text("SELECT MAX(version) FROM schema_version"))
+            migration_version = int(raw) if raw is not None else None
+    except Exception:  # pragma: no cover
+        pass
+
+    _migrations_dir = _Path(__file__).parent.parent / "migrations"
+    _sql_files = sorted(_migrations_dir.glob("[0-9]*.sql"))
+    expected_version: int = 0
+    if _sql_files:
+        try:
+            expected_version = int(_sql_files[-1].name.split("_")[0])
+        except ValueError:  # pragma: no cover
+            expected_version = 0
+
+    # Ready only when DB is up and migrations are at the expected version (or no SQL migrations exist)
+    migration_current = (migration_version == expected_version) or (expected_version == 0 and migration_version is None)
+    ready = db_ok and migration_current
+    payload = {
+        "status": "ready" if ready else "not_ready",
+        "db": "ok" if db_ok else "error",
+        "migration_current": migration_current,
+    }
+    return Response(
+        json.dumps(payload),
+        status=200 if ready else 503,
+        mimetype="application/json",
+    )
+
+
 class DonorForm(FlaskForm):
     name = StringField('Name', validators=[DataRequired()])
     email = StringField('Email', validators=[WTOptional(), Email()])

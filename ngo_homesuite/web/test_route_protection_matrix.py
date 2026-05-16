@@ -63,6 +63,8 @@ ROUTE_POLICY_MANIFEST: dict[str, RoutePolicy] = {
     "/grants/": RoutePolicy(access="authenticated"),
     "/grants/pipeline": RoutePolicy(access="authenticated"),
     "/health": RoutePolicy(access="public"),
+    "/health/live": RoutePolicy(access="probe"),
+    "/health/ready": RoutePolicy(access="probe"),
     "/help": RoutePolicy(access="public"),
     "/integrations/accounting/sync/logs": RoutePolicy(access="authenticated"),
     "/integrations/ops/jobs": RoutePolicy(access="authenticated"),
@@ -159,6 +161,12 @@ def test_anonymous_requests_follow_route_policy_manifest(client):
         if policy.access == "public":
             if rv.status_code != 200:
                 failures.append(f"{route} expected 200, got {rv.status_code}")
+            continue
+
+        if policy.access == "probe":
+            # Probes are public (no redirect to login) but may return 200 or 503
+            if rv.status_code not in (200, 503):
+                failures.append(f"{route} expected 200/503 for probe, got {rv.status_code}")
             continue
 
         if rv.status_code == 200:

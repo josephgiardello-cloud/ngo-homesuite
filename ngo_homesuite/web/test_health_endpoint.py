@@ -78,6 +78,62 @@ def test_health_uptime_seconds_is_non_negative(client):
     assert uptime >= 0.0
 
 
+# ---------------------------------------------------------------------------
+# Observability: X-Request-ID propagation
+# ---------------------------------------------------------------------------
+
+def test_health_response_carries_request_id_header(client):
+    rv = client.get("/health")
+    assert "X-Request-ID" in rv.headers
+    assert rv.headers["X-Request-ID"]  # non-empty
+
+
+def test_health_echoes_caller_provided_request_id(client):
+    rv = client.get("/health", headers={"X-Request-ID": "test-req-42"})
+    assert rv.headers.get("X-Request-ID") == "test-req-42"
+
+
+# ---------------------------------------------------------------------------
+# /health/live  — liveness probe
+# ---------------------------------------------------------------------------
+
+def test_health_live_returns_200(client):
+    rv = client.get("/health/live")
+    assert rv.status_code == 200
+
+
+def test_health_live_returns_json_with_live_status(client):
+    rv = client.get("/health/live")
+    body = rv.get_json()
+    assert body is not None
+    assert body.get("status") == "live"
+
+
+def test_health_live_is_public(client):
+    """Liveness probe must be accessible without authentication."""
+    rv = client.get("/health/live")
+    assert rv.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# /health/ready — readiness probe
+# ---------------------------------------------------------------------------
+
+def test_health_ready_returns_json(client):
+    rv = client.get("/health/ready")
+    body = rv.get_json()
+    assert body is not None
+    assert "status" in body
+    assert "db" in body
+    assert "migration_current" in body
+
+
+def test_health_ready_is_public(client):
+    """Readiness probe must be accessible without authentication."""
+    rv = client.get("/health/ready")
+    assert rv.status_code in (200, 503)
+
+
 def test_health_accessible_without_auth(client):
     """Health endpoint must work for unauthenticated liveness probes."""
     rv = client.get("/health", follow_redirects=False)

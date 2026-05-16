@@ -112,3 +112,108 @@ def test_security_headers_present_on_web_response(client):
     assert rv.headers.get("Cross-Origin-Opener-Policy") == "same-origin"
     assert rv.headers.get("Cross-Origin-Resource-Policy") == "same-origin"
     assert "Content-Security-Policy" in rv.headers
+
+
+# ---------------------------------------------------------------------------
+# Logout security
+# ---------------------------------------------------------------------------
+
+def test_logout_clears_session(client, app):
+    _ensure_user(app, "auth_logout_user", "AuthPass123!")
+
+    # Log in
+    client.post(
+        "/auth/login",
+        data={"username": "auth_logout_user", "password": "AuthPass123!"},
+        follow_redirects=False,
+    )
+    with client.session_transaction() as sess:
+        assert sess.get("_user_id") is not None
+
+    # Log out
+    rv = client.get("/auth/logout", follow_redirects=False)
+    assert rv.status_code == 302
+
+    with client.session_transaction() as sess:
+        assert sess.get("_user_id") is None
+
+
+def test_logout_redirects_to_index(client, app):
+    _ensure_user(app, "auth_logout_user2", "AuthPass123!")
+    client.post(
+        "/auth/login",
+        data={"username": "auth_logout_user2", "password": "AuthPass123!"},
+        follow_redirects=False,
+    )
+    rv = client.get("/auth/logout", follow_redirects=False)
+    assert rv.status_code == 302
+    location = rv.headers.get("Location", "")
+    assert location.endswith("/") or "/index" in location or location == "/"
+
+
+# ---------------------------------------------------------------------------
+# Registration validation
+# ---------------------------------------------------------------------------
+
+def test_register_happy_path_redirects_to_login(client, app):
+    rv = client.post(
+        "/auth/register",
+        data={
+            "username": "new_valid_user",
+            "email": "new_valid_user@example.com",
+            "password": "StrongPass1!",
+            "password_confirm": "StrongPass1!",
+        },
+        follow_redirects=False,
+    )
+    # Should redirect to login after successful registration
+    assert rv.status_code == 302
+    assert "/auth/login" in (rv.headers.get("Location") or "")
+
+
+def test_register_rejects_duplicate_username(client, app):
+    _ensure_user(app, "dup_username_user", "AuthPass123!")
+
+    rv = client.post(
+        "/auth/register",
+        data={
+            "username": "dup_username_user",
+            "email": "dup_unique@test.local",
+            "password": "StrongPass1!",
+            "password_confirm": "StrongPass1!",
+        },
+        follow_redirects=False,
+    )
+    # Form re-renders with validation error (200), does not redirect
+    assert rv.status_code == 200
+    assert b"already taken" in rv.data or b"Username" in rv.data
+
+
+def test_register_rejects_mismatched_passwords(client, app):
+    rv = client.post(
+        "/auth/register",
+        data={
+            "username": "mismatch_pw_user",
+            "email": "mismatch_pw@test.local",
+            "password": "StrongPass1!",
+            "password_confirm": "DifferentPass2!",
+        },
+        follow_redirects=False,
+    )
+    assert rv.status_code == 200
+    assert b"match" in rv.data.lower() or b"password" in rv.data.lower()
+
+
+def test_register_rejects_short_password(client, app):
+    rv = client.post(
+        "/auth/register",
+        data={
+            "username": "short_pw_user",
+            "email": "short_pw@test.local",
+            "password": "short",
+            "password_confirm": "short",
+        },
+        follow_redirects=False,
+    )
+    assert rv.status_code == 200
+    assert b"8" in rv.data or b"characters" in rv.data.lower() or b"password" in rv.data.lower()
