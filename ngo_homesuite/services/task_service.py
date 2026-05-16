@@ -70,24 +70,37 @@ def list_tasks(
     *,
     donor_id: Optional[int] = None,
     grant_id: Optional[int] = None,
+    project_id: Optional[int] = None,
+    donation_id: Optional[int] = None,
     assigned_to_id: Optional[int] = None,
+    task_type: Optional[str] = None,
     status: Optional[str] = None,
     priority: Optional[str] = None,
     overdue_only: bool = False,
+    due_within_days: Optional[int] = None,
 ) -> List[Task]:
     stmt = select(Task).where(Task.organization_id == organization_id)
     if donor_id is not None:
         stmt = stmt.where(Task.donor_id == donor_id)
     if grant_id is not None:
         stmt = stmt.where(Task.grant_id == grant_id)
+    if project_id is not None:
+        stmt = stmt.where(Task.project_id == project_id)
+    if donation_id is not None:
+        stmt = stmt.where(Task.donation_id == donation_id)
     if assigned_to_id is not None:
         stmt = stmt.where(Task.assigned_to_id == assigned_to_id)
+    if task_type:
+        stmt = stmt.where(Task.task_type == task_type)
     if status:
         stmt = stmt.where(Task.status == status)
     if priority:
         stmt = stmt.where(Task.priority == priority)
     if overdue_only:
         stmt = stmt.where(Task.due_date <= _utcnow(), Task.status.in_(["open", "in_progress"]))
+    if due_within_days is not None:
+        now = _utcnow()
+        stmt = stmt.where(Task.due_date.is_not(None), Task.due_date <= now + timedelta(days=max(0, due_within_days)))
     stmt = stmt.order_by(Task.due_date.asc().nullslast(), Task.created_at.desc())
     return list(db.session.scalars(stmt))
 
@@ -233,3 +246,68 @@ def overdue_task_summary(organization_id: int) -> dict:
     for t in overdue:
         by_priority[t.priority] = by_priority.get(t.priority, 0) + 1
     return {"total_overdue": len(overdue), "by_priority": by_priority}
+
+
+def task_board_snapshot(
+    organization_id: int,
+    *,
+    donor_id: Optional[int] = None,
+    grant_id: Optional[int] = None,
+    project_id: Optional[int] = None,
+    donation_id: Optional[int] = None,
+    assigned_to_id: Optional[int] = None,
+    status: Optional[str] = None,
+    priority: Optional[str] = None,
+) -> dict:
+    """Return a task board payload with summary metrics for operational triage."""
+    tasks = list_tasks(
+        organization_id,
+        donor_id=donor_id,
+        grant_id=grant_id,
+        project_id=project_id,
+        donation_id=donation_id,
+        assigned_to_id=assigned_to_id,
+        status=status,
+        priority=priority,
+    )
+
+    now = _utcnow()
+    by_status = {"open": 0, "in_progress": 0, "done": 0, "cancelled": 0}
+    by_priority = {"urgent": 0, "high": 0, "medium": 0, "low": 0}
+    due_buckets = {"overdue": 0, "today": 0, "next_7_days": 0, "later": 0, "no_due_date": 0}
+    linked = {"donor": 0, "grant": 0, "project": 0, "donation": 0}
+
+    for task in tasks:
+        by_status[task.status] = by_status.get(task.status, 0) + 1
+        by_priority[task.priority] = by_priority.get(task.priority, 0) + 1
+        if task.donor_id:
+            linked["donor"] += 1
+        if task.grant_id:
+            linked["grant"] += 1
+        if task.project_id:
+            linked["project"] += 1
+        if task.donation_id:
+            linked["donation"] += 1
+
+        if task.due_date is None:
+            due_buckets["no_due_date"] += 1
+        elif task.status in {"open", "in_progress"} and task.due_date < now:
+            due_buckets["overdue"] += 1
+        elif task.due_date.date() == now.date():
+            due_buckets["today"] += 1
+        elif task.due_date <= now + timedelta(days=7):
+            due_buckets["next_7_days"] += 1
+        else:
+            due_buckets["later"] += 1
+
+    return {
+        "tasks": tasks,
+        "summary": {
+            "total": len(tasks),
+            "open_total": by_status.get("open", 0) + by_status.get("in_progress", 0),
+            "by_status": by_status,
+            "by_priority": by_priority,
+            "due_buckets": due_buckets,
+            "linked_entities": linked,
+        },
+    }

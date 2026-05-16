@@ -359,6 +359,65 @@ def dispatch_overdue_task_reminders(organization_id: int) -> Dict[str, Any]:
     }
 
 
+def recommend_task_reminders(
+    organization_id: int,
+    *,
+    limit: int = 25,
+    task_ids: Optional[List[int]] = None,
+) -> List[Dict[str, Any]]:
+    """Return tasks that should receive reminders now (upcoming/overdue/escalation)."""
+    now = _utcnow()
+    upcoming_threshold = now + timedelta(hours=72)
+    last_reminded_within = now - timedelta(hours=12)
+
+    stmt = select(Task).where(
+        Task.organization_id == organization_id,
+        Task.status.in_(["open", "in_progress"]),
+        Task.assigned_to_id.is_not(None),
+        Task.due_date.is_not(None),
+        Task.due_date <= upcoming_threshold,
+        Task.reminder_channel != "none",
+    )
+    if task_ids:
+        stmt = stmt.where(Task.id.in_(task_ids))
+
+    stmt = stmt.where(
+        (Task.last_reminder_sent_at.is_(None)) | (Task.last_reminder_sent_at < last_reminded_within)
+    ).order_by(Task.due_date.asc())
+
+    tasks = list(db.session.scalars(stmt.limit(max(1, min(limit, 200)))))
+
+    payload: List[Dict[str, Any]] = []
+    for task in tasks:
+        if task.due_date is None:
+            continue
+
+        delta = task.due_date - now
+        hours_until_due = int(delta.total_seconds() // 3600)
+        days_overdue = (now - task.due_date).days
+
+        if task.due_date < now:
+            reminder_type = "escalation" if days_overdue > 2 else "overdue"
+        else:
+            reminder_type = "upcoming"
+
+        payload.append(
+            {
+                "task_id": task.id,
+                "title": task.title,
+                "status": task.status,
+                "priority": task.priority,
+                "due_date": task.due_date.isoformat(),
+                "assigned_to_id": task.assigned_to_id,
+                "reminder_channel": task.reminder_channel,
+                "reminder_type": reminder_type,
+                "hours_until_due": hours_until_due,
+                "days_overdue": max(0, days_overdue),
+            }
+        )
+    return payload
+
+
 def reminder_summary(
     organization_id: int,
 ) -> Dict[str, Any]:

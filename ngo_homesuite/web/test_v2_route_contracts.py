@@ -228,3 +228,25 @@ def test_v2_activity_feed_and_insights_contract(client):
     assert isinstance(payload.get("summary"), str)
     assert isinstance(payload.get("next_best_action"), str)
     assert isinstance(payload.get("recommended_actions"), list)
+
+
+def test_v2_task_board_and_reminder_candidates_contract(client):
+    _login_admin(client)
+
+    created = client.post(
+        "/api/v2/tasks",
+        json={"title": "Board contract task", "priority": "high"},
+    )
+    assert created.status_code == 201
+
+    board = client.get("/api/v2/tasks/board")
+    assert board.status_code == 200
+    payload = board.get_json()
+    assert isinstance(payload, dict)
+    assert isinstance(payload.get("summary"), dict)
+    assert isinstance(payload.get("tasks"), list)
+    assert isinstance(payload.get("reminder_candidates"), list)
+
+    candidates = client.get("/api/v2/tasks/reminder-candidates?limit=15")
+    assert candidates.status_code == 200
+    assert isinstance(candidates.get_json(), list)

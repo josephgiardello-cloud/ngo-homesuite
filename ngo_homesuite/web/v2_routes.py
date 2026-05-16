@@ -9,6 +9,9 @@ from typing import Any
 
 from flask import Blueprint, jsonify, request
 from flask_login import current_user, login_required
+from sqlalchemy import select
+
+from ngo_homesuite.models.core import Donor, Grant, User, db
 
 from ngo_homesuite.web.rbac import roles_required
 
@@ -143,10 +146,29 @@ def list_tasks():
     from ngo_homesuite.services.task_service import list_tasks as svc_list
     donor_id = request.args.get("donor_id", type=int)
     grant_id = request.args.get("grant_id", type=int)
+    project_id = request.args.get("project_id", type=int)
+    donation_id = request.args.get("donation_id", type=int)
+    assigned_to_id = request.args.get("assigned_to_id", type=int)
+    task_type = request.args.get("task_type")
     status = request.args.get("status")
+    priority = request.args.get("priority")
     overdue = request.args.get("overdue") == "1"
-    tasks = svc_list(_org_id(), donor_id=donor_id, grant_id=grant_id, status=status, overdue_only=overdue)
-    return jsonify([_task_dict(t) for t in tasks])
+    due_within_days = request.args.get("due_within_days", type=int)
+    tasks = svc_list(
+        _org_id(),
+        donor_id=donor_id,
+        grant_id=grant_id,
+        project_id=project_id,
+        donation_id=donation_id,
+        assigned_to_id=assigned_to_id,
+        task_type=task_type,
+        status=status,
+        priority=priority,
+        overdue_only=overdue,
+        due_within_days=due_within_days,
+    )
+    labels = _task_labels(_org_id(), tasks)
+    return jsonify([_task_dict(t, labels=labels) for t in tasks])
 
 
 @v2_bp.route("/tasks", methods=["POST"])
@@ -176,19 +198,112 @@ def overdue_summary():
     return jsonify(overdue_task_summary(_org_id()))
 
 
-def _task_dict(t) -> dict:
+@v2_bp.route("/tasks/board", methods=["GET"])
+@login_required
+def task_board():
+    from ngo_homesuite.services.reminder_service import recommend_task_reminders
+    from ngo_homesuite.services.task_service import task_board_snapshot
+
+    donor_id = request.args.get("donor_id", type=int)
+    grant_id = request.args.get("grant_id", type=int)
+    project_id = request.args.get("project_id", type=int)
+    donation_id = request.args.get("donation_id", type=int)
+    assigned_to_id = request.args.get("assigned_to_id", type=int)
+    status = request.args.get("status")
+    priority = request.args.get("priority")
+    reminders_limit = request.args.get("reminders_limit", 20, type=int)
+
+    board = task_board_snapshot(
+        _org_id(),
+        donor_id=donor_id,
+        grant_id=grant_id,
+        project_id=project_id,
+        donation_id=donation_id,
+        assigned_to_id=assigned_to_id,
+        status=status,
+        priority=priority,
+    )
+    tasks = board["tasks"]
+    labels = _task_labels(_org_id(), tasks)
+    reminders = recommend_task_reminders(
+        _org_id(),
+        limit=max(1, min(reminders_limit, 100)),
+        task_ids=[t.id for t in tasks],
+    )
+
+    return jsonify(
+        {
+            "summary": board["summary"],
+            "tasks": [_task_dict(t, labels=labels) for t in tasks],
+            "reminder_candidates": reminders,
+        }
+    )
+
+
+@v2_bp.route("/tasks/reminder-candidates", methods=["GET"])
+@login_required
+def task_reminder_candidates():
+    from ngo_homesuite.services.reminder_service import recommend_task_reminders
+
+    limit = request.args.get("limit", 25, type=int)
+    payload = recommend_task_reminders(_org_id(), limit=max(1, min(limit, 200)))
+    return jsonify(payload)
+
+
+def _task_labels(org_id: int, tasks) -> dict[str, dict[int, str]]:
+    donor_ids = sorted({int(t.donor_id) for t in tasks if t.donor_id})
+    grant_ids = sorted({int(t.grant_id) for t in tasks if t.grant_id})
+    user_ids = sorted({int(t.assigned_to_id) for t in tasks if t.assigned_to_id})
+
+    donor_map: dict[int, str] = {}
+    grant_map: dict[int, str] = {}
+    user_map: dict[int, str] = {}
+
+    if donor_ids:
+        for donor in db.session.scalars(select(Donor).where(Donor.organization_id == org_id, Donor.id.in_(donor_ids))):
+            donor_map[int(donor.id)] = donor.name
+
+    if grant_ids:
+        for grant in db.session.scalars(select(Grant).where(Grant.organization_id == org_id, Grant.id.in_(grant_ids))):
+            grant_map[int(grant.id)] = grant.title
+
+    if user_ids:
+        for user in db.session.scalars(select(User).where(User.id.in_(user_ids))):
+            display = ((user.first_name or "").strip() + " " + (user.last_name or "").strip()).strip() or user.username
+            user_map[int(user.id)] = display
+
+    return {
+        "donor": donor_map,
+        "grant": grant_map,
+        "user": user_map,
+    }
+
+
+def _task_dict(t, *, labels: dict[str, dict[int, str]] | None = None) -> dict:
+    labels = labels or {"donor": {}, "grant": {}, "user": {}}
     return {
         "id": t.id,
         "title": t.title,
+        "description": t.description,
         "task_type": t.task_type,
         "priority": t.priority,
         "status": t.status,
         "due_date": t.due_date.isoformat() if t.due_date else None,
         "completed_at": t.completed_at.isoformat() if t.completed_at else None,
         "donor_id": t.donor_id,
+        "donor_name": labels["donor"].get(int(t.donor_id)) if t.donor_id else None,
         "grant_id": t.grant_id,
+        "grant_title": labels["grant"].get(int(t.grant_id)) if t.grant_id else None,
+        "project_id": t.project_id,
         "donation_id": t.donation_id,
         "assigned_to_id": t.assigned_to_id,
+        "assigned_to_name": labels["user"].get(int(t.assigned_to_id)) if t.assigned_to_id else None,
+        "reminder_channel": t.reminder_channel,
+        "reminder_sent_count": t.reminder_sent_count,
+        "last_reminder_sent_at": t.last_reminder_sent_at.isoformat() if t.last_reminder_sent_at else None,
+        "last_reminder_error": t.last_reminder_error,
+        "created_at": t.created_at.isoformat() if t.created_at else None,
+        "updated_at": t.updated_at.isoformat() if t.updated_at else None,
         "notes": t.notes,
     }
 
