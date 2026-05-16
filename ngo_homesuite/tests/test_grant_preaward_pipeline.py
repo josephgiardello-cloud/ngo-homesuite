@@ -208,6 +208,16 @@ def test_convert_opportunity_to_grant_links_awarded_grant(ctx):
         probability=0.6,
     )
 
+    proposal = grant_service.create_proposal(
+        opp.id,
+        org.id,
+        narrative_summary="Award-track narrative",
+        amount_requested=26000,
+        document_ref="convert_v1.pdf",
+    )
+    grant_service.submit_proposal(proposal.id, org.id, submission_date=date(2026, 7, 20))
+    grant_service.set_proposal_outcome(proposal.id, org.id, outcome="awarded")
+
     grant = grant_service.convert_opportunity_to_grant(
         opp.id,
         org.id,
@@ -219,6 +229,93 @@ def test_convert_opportunity_to_grant_links_awarded_grant(ctx):
     assert refreshed_opp is not None
     assert refreshed_opp.status == "awarded"
     assert int(refreshed_opp.awarded_grant_id or 0) == int(grant.id)
+
+
+def test_set_proposal_outcome_awarded_requires_submitted_state(ctx):
+    org = _mk_org("PreAward Org M", "preaward-org-m")
+    opp = grant_service.create_opportunity(
+        organization_id=org.id,
+        funder_name="Funder M",
+        program_name="Program M",
+        title="Outcome State Gate",
+    )
+    proposal = grant_service.create_proposal(
+        opp.id,
+        org.id,
+        narrative_summary="Narrative M",
+        amount_requested=10000,
+        document_ref="m_v1.pdf",
+    )
+
+    with pytest.raises(ValueError, match="from submitted"):
+        grant_service.set_proposal_outcome(proposal.id, org.id, outcome="awarded")
+
+
+def test_convert_opportunity_to_grant_requires_awarded_opportunity_and_awarded_proposal(ctx):
+    org = _mk_org("PreAward Org N", "preaward-org-n")
+    opp = grant_service.create_opportunity(
+        organization_id=org.id,
+        funder_name="Funder N",
+        program_name="Program N",
+        title="Convert Gate",
+        amount_min=9000,
+        amount_max=11000,
+        probability=0.4,
+    )
+    proposal = grant_service.create_proposal(
+        opp.id,
+        org.id,
+        narrative_summary="Narrative N",
+        amount_requested=10000,
+        document_ref="n_v1.pdf",
+    )
+    grant_service.submit_proposal(proposal.id, org.id, submission_date=date(2026, 8, 5))
+    grant_service.set_proposal_outcome(proposal.id, org.id, outcome="declined")
+
+    with pytest.raises(ValueError, match="must be in awarded status"):
+        grant_service.convert_opportunity_to_grant(
+            opp.id,
+            org.id,
+            amount_awarded=10000,
+            award_date=date(2026, 9, 1),
+        )
+
+
+def test_convert_opportunity_to_grant_blocks_second_conversion(ctx):
+    org = _mk_org("PreAward Org O", "preaward-org-o")
+    opp = grant_service.create_opportunity(
+        organization_id=org.id,
+        funder_name="Funder O",
+        program_name="Program O",
+        title="Double Convert Guard",
+        amount_min=15000,
+        amount_max=17000,
+        probability=0.7,
+    )
+    proposal = grant_service.create_proposal(
+        opp.id,
+        org.id,
+        narrative_summary="Narrative O",
+        amount_requested=16000,
+        document_ref="o_v1.pdf",
+    )
+    grant_service.submit_proposal(proposal.id, org.id, submission_date=date(2026, 8, 10))
+    grant_service.set_proposal_outcome(proposal.id, org.id, outcome="awarded")
+
+    grant_service.convert_opportunity_to_grant(
+        opp.id,
+        org.id,
+        amount_awarded=16000,
+        award_date=date(2026, 9, 10),
+    )
+
+    with pytest.raises(ValueError, match="already linked"):
+        grant_service.convert_opportunity_to_grant(
+            opp.id,
+            org.id,
+            amount_awarded=16000,
+            award_date=date(2026, 9, 11),
+        )
 
 
 def test_opportunity_forecast_summary_includes_active_pipeline_only(ctx):

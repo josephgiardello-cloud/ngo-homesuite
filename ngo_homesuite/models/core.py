@@ -612,6 +612,66 @@ class GrantProposal(db.Model):
         return f'<GrantProposal opp={self.opportunity_id} v{self.version_number} [{self.outcome}]>'
 
 
+class GrantOutcomeTemplate(db.Model):
+    """Outcome metric definition for a grant, optionally tied to a program case type."""
+
+    __tablename__ = 'grant_outcome_templates'
+
+    id = db.Column(db.Integer, primary_key=True)
+    grant_id = db.Column(db.Integer, db.ForeignKey('grants.id'), nullable=False, index=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    metric_name = db.Column(db.String(120), nullable=False)
+    unit = db.Column(db.String(40), nullable=True)
+    target_value = db.Column(db.Float, nullable=False)
+    baseline_value = db.Column(db.Float, nullable=True)
+    program_case_type = db.Column(db.String(50), nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    version_id = db.Column(db.Integer, nullable=False, default=0)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
+
+    records = db.relationship('GrantOutcomeRecord', backref='template', cascade='all, delete-orphan')
+
+    __table_args__ = (
+        db.UniqueConstraint('grant_id', 'metric_name', name='uq_grant_outcome_template_grant_metric'),
+    )
+
+    __mapper_args__ = {
+        'version_id_col': version_id,
+    }
+
+    def __repr__(self):
+        return f'<GrantOutcomeTemplate grant={self.grant_id} metric={self.metric_name}>'
+
+
+class GrantOutcomeRecord(db.Model):
+    """Recorded progress for a grant outcome metric at a point in time."""
+
+    __tablename__ = 'grant_outcome_records'
+
+    id = db.Column(db.Integer, primary_key=True)
+    grant_id = db.Column(db.Integer, db.ForeignKey('grants.id'), nullable=False, index=True)
+    template_id = db.Column(db.Integer, db.ForeignKey('grant_outcome_templates.id'), nullable=False, index=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    program_case_id = db.Column(db.Integer, db.ForeignKey('program_cases.id'), nullable=True, index=True)
+    current_value = db.Column(db.Float, nullable=False)
+    recorded_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False, index=True)
+    note = db.Column(db.Text, nullable=True)
+    source = db.Column(db.String(40), nullable=False, default='manual')
+    version_id = db.Column(db.Integer, nullable=False, default=0)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+
+    program_case = db.relationship('ProgramCase', backref='grant_outcome_records')
+
+    __mapper_args__ = {
+        'version_id_col': version_id,
+    }
+
+    def __repr__(self):
+        return f'<GrantOutcomeRecord grant={self.grant_id} template={self.template_id} value={self.current_value}>'
+
+
 class MembershipTier(db.Model):
     """Configurable membership tier for an organization."""
 
@@ -1401,6 +1461,8 @@ __all__ = [
     'GrantExpenseAllocation',
     'GrantOpportunity',
     'GrantProposal',
+    'GrantOutcomeTemplate',
+    'GrantOutcomeRecord',
     'MembershipTier',
     'MembershipRecord',
     'StewardshipJourney',

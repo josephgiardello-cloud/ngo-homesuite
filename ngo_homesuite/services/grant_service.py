@@ -17,6 +17,7 @@ from ngo_homesuite.models.core import (
     GrantProposal,
     db,
 )
+from ngo_homesuite.services import grant_preaward_service
 
 
 # ---------------------------------------------------------------------------
@@ -471,12 +472,19 @@ def update_budget_line(
             GrantBudgetLine.id == budget_line_id,
             GrantBudgetLine.grant_id == grant_id,
             GrantBudgetLine.organization_id == organization_id,
-        ).limit(1)
+        ).with_for_update().limit(1)
     ).first()
     if budget_line is None:
         raise GrantAllocationError("budget line not found for grant/organization")
 
     _expected_version_check(int(budget_line.version_id), expected_version, entity="budget line")
+
+    before = {
+        "allocated_amount": float(budget_line.allocated_amount or 0),
+        "line_name": budget_line.line_name,
+        "notes": budget_line.notes,
+        "version_id": int(budget_line.version_id),
+    }
 
     current_spent = float(
         db.session.scalar(
@@ -534,8 +542,13 @@ def update_budget_line(
             "organization_id": int(organization_id),
             "budget_line_id": int(budget_line.id),
             "category": budget_line.category,
-            "allocated_amount": float(budget_line.allocated_amount),
-            "version_id": int(budget_line.version_id),
+            "before": before,
+            "after": {
+                "allocated_amount": float(budget_line.allocated_amount),
+                "line_name": budget_line.line_name,
+                "notes": budget_line.notes,
+                "version_id": int(budget_line.version_id),
+            },
         },
     )
     return budget_line
@@ -553,7 +566,7 @@ def delete_budget_line(
             GrantBudgetLine.id == budget_line_id,
             GrantBudgetLine.grant_id == grant_id,
             GrantBudgetLine.organization_id == organization_id,
-        ).limit(1)
+        ).with_for_update().limit(1)
     ).first()
     if budget_line is None:
         raise GrantAllocationError("budget line not found for grant/organization")
@@ -573,6 +586,11 @@ def delete_budget_line(
         raise GrantAllocationError("cannot delete budget line with existing allocations")
 
     category = budget_line.category
+    before = {
+        "category": budget_line.category,
+        "allocated_amount": float(budget_line.allocated_amount or 0),
+        "version_id": int(budget_line.version_id),
+    }
     db.session.delete(budget_line)
     db.session.commit()
     audit(
@@ -583,6 +601,7 @@ def delete_budget_line(
             "organization_id": int(organization_id),
             "budget_line_id": int(budget_line_id),
             "category": category,
+            "before": before,
         },
     )
 
@@ -597,7 +616,7 @@ def allocate_expense_to_budget_line(
     commit: bool = True,
 ) -> GrantExpenseAllocation:
     grant = db.session.scalars(
-        select(Grant).where(Grant.id == grant_id, Grant.organization_id == organization_id).limit(1)
+        select(Grant).where(Grant.id == grant_id, Grant.organization_id == organization_id).with_for_update().limit(1)
     ).first()
     if grant is None:
         raise GrantNotFound(grant_id)
@@ -614,7 +633,7 @@ def allocate_expense_to_budget_line(
             GrantBudgetLine.grant_id == grant_id,
             GrantBudgetLine.organization_id == organization_id,
             GrantBudgetLine.category == normalized_category,
-        ).limit(1)
+        ).with_for_update().limit(1)
     ).first()
     if budget_line is None:
         raise GrantAllocationError(f"no budget line configured for category '{normalized_category}'")
@@ -691,12 +710,18 @@ def update_allocation(
             GrantExpenseAllocation.id == allocation_id,
             GrantExpenseAllocation.grant_id == grant_id,
             GrantExpenseAllocation.organization_id == organization_id,
-        ).limit(1)
+        ).with_for_update().limit(1)
     ).first()
     if allocation is None:
         raise GrantAllocationError("allocation not found for grant/organization")
 
     _expected_version_check(int(allocation.version_id), expected_version, entity="allocation")
+
+    before = {
+        "amount": float(allocation.amount or 0),
+        "supporting_document_ref": allocation.supporting_document_ref,
+        "version_id": int(allocation.version_id),
+    }
 
     if amount is not None:
         new_amount = float(amount)
@@ -746,8 +771,12 @@ def update_allocation(
             "allocation_id": int(allocation.id),
             "budget_line_id": int(allocation.budget_line_id),
             "expense_id": int(allocation.expense_id),
-            "amount": float(allocation.amount),
-            "version_id": int(allocation.version_id),
+            "before": before,
+            "after": {
+                "amount": float(allocation.amount),
+                "supporting_document_ref": allocation.supporting_document_ref,
+                "version_id": int(allocation.version_id),
+            },
         },
     )
     return allocation
@@ -765,7 +794,7 @@ def delete_allocation(
             GrantExpenseAllocation.id == allocation_id,
             GrantExpenseAllocation.grant_id == grant_id,
             GrantExpenseAllocation.organization_id == organization_id,
-        ).limit(1)
+        ).with_for_update().limit(1)
     ).first()
     if allocation is None:
         raise GrantAllocationError("allocation not found for grant/organization")
@@ -774,6 +803,11 @@ def delete_allocation(
 
     expense_id = int(allocation.expense_id)
     budget_line_id = int(allocation.budget_line_id)
+    before = {
+        "amount": float(allocation.amount or 0),
+        "supporting_document_ref": allocation.supporting_document_ref,
+        "version_id": int(allocation.version_id),
+    }
     db.session.delete(allocation)
     db.session.commit()
     audit(
@@ -785,6 +819,7 @@ def delete_allocation(
             "allocation_id": int(allocation_id),
             "budget_line_id": budget_line_id,
             "expense_id": expense_id,
+            "before": before,
         },
     )
 
@@ -810,59 +845,22 @@ def create_opportunity(
     status: str = "identified",
     notes: Optional[str] = None,
 ) -> GrantOpportunity:
-    if not funder_name.strip():
-        raise ValueError("funder_name is required")
-    if not program_name.strip():
-        raise ValueError("program_name is required")
-    if not title.strip():
-        raise ValueError("title is required")
-    if status not in _VALID_OPPORTUNITY_STATUSES:
-        raise ValueError(f"invalid opportunity status '{status}'")
-    if amount_min is not None and float(amount_min) < 0:
-        raise ValueError("amount_min cannot be negative")
-    if amount_max is not None and float(amount_max) < 0:
-        raise ValueError("amount_max cannot be negative")
-    if amount_min is not None and amount_max is not None and float(amount_max) < float(amount_min):
-        raise ValueError("amount_max must be greater than or equal to amount_min")
-
-    probability_value = _validate_probability(probability)
-    weighted = _compute_probability_weighted_amount(amount_min, amount_max, probability_value)
-
-    opportunity = GrantOpportunity(
-        organization_id=organization_id,
-        funder_name=funder_name.strip(),
-        program_name=program_name.strip(),
-        title=title.strip(),
+    return grant_preaward_service.create_opportunity(
+        organization_id,
+        funder_name=funder_name,
+        program_name=program_name,
+        title=title,
         deadline=deadline,
-        amount_min=float(amount_min) if amount_min is not None else None,
-        amount_max=float(amount_max) if amount_max is not None else None,
-        probability=probability_value,
-        probability_weighted_amount=weighted,
+        amount_min=amount_min,
+        amount_max=amount_max,
+        probability=probability,
         status=status,
-        notes=(notes or "").strip() or None,
+        notes=notes,
     )
-    db.session.add(opportunity)
-    db.session.commit()
-    audit(
-        "grant.opportunity.create",
-        entity_type="grant_opportunity",
-        entity_id=int(opportunity.id),
-        details={
-            "organization_id": int(organization_id),
-            "status": opportunity.status,
-            "probability": float(opportunity.probability),
-            "probability_weighted_amount": float(opportunity.probability_weighted_amount),
-        },
-    )
-    return opportunity
 
 
 def list_opportunities(organization_id: int, *, status: Optional[str] = None) -> List[GrantOpportunity]:
-    stmt = select(GrantOpportunity).where(GrantOpportunity.organization_id == organization_id)
-    if status:
-        stmt = stmt.where(GrantOpportunity.status == status)
-    stmt = stmt.order_by(GrantOpportunity.deadline.asc().nullslast(), GrantOpportunity.created_at.desc())
-    return list(db.session.scalars(stmt))
+    return grant_preaward_service.list_opportunities(organization_id, status=status)
 
 
 def update_opportunity(
@@ -870,71 +868,10 @@ def update_opportunity(
     organization_id: int,
     **fields,
 ) -> GrantOpportunity:
-    opportunity = db.session.scalars(
-        select(GrantOpportunity).where(
-            GrantOpportunity.id == opportunity_id,
-            GrantOpportunity.organization_id == organization_id,
-        ).limit(1)
-    ).first()
-    if opportunity is None:
-        raise GrantAllocationError("opportunity not found for organization")
-
-    allowed = {
-        "funder_name", "program_name", "title", "deadline", "amount_min", "amount_max",
-        "probability", "status", "notes", "expected_version",
-    }
-    updates = {k: v for k, v in fields.items() if k in allowed}
-
-    _expected_version_check(int(opportunity.version_id), updates.get("expected_version"), entity="opportunity")
-
-    if "status" in updates and updates["status"] not in _VALID_OPPORTUNITY_STATUSES:
-        raise ValueError(f"invalid opportunity status '{updates['status']}'")
-    if "amount_min" in updates and updates["amount_min"] is not None and float(updates["amount_min"]) < 0:
-        raise ValueError("amount_min cannot be negative")
-    if "amount_max" in updates and updates["amount_max"] is not None and float(updates["amount_max"]) < 0:
-        raise ValueError("amount_max cannot be negative")
-
-    for key in ["funder_name", "program_name", "title", "deadline", "amount_min", "amount_max", "status", "notes"]:
-        if key in updates:
-            value = updates[key]
-            if key in {"funder_name", "program_name", "title"}:
-                clean = str(value or "").strip()
-                if not clean:
-                    raise ValueError(f"{key} is required")
-                setattr(opportunity, key, clean)
-            elif key == "notes":
-                opportunity.notes = str(value or "").strip() or None
-            elif key in {"amount_min", "amount_max"}:
-                setattr(opportunity, key, float(value) if value is not None else None)
-            else:
-                setattr(opportunity, key, value)
-
-    if opportunity.amount_min is not None and opportunity.amount_max is not None:
-        if float(opportunity.amount_max) < float(opportunity.amount_min):
-            raise ValueError("amount_max must be greater than or equal to amount_min")
-
-    if "probability" in updates:
-        opportunity.probability = _validate_probability(float(updates["probability"]))
-
-    opportunity.probability_weighted_amount = _compute_probability_weighted_amount(
-        opportunity.amount_min,
-        opportunity.amount_max,
-        float(opportunity.probability or 0),
-    )
-
-    db.session.commit()
-    audit(
-        "grant.opportunity.update",
-        entity_type="grant_opportunity",
-        entity_id=int(opportunity.id),
-        details={
-            "organization_id": int(organization_id),
-            "status": opportunity.status,
-            "probability": float(opportunity.probability or 0),
-            "version_id": int(opportunity.version_id),
-        },
-    )
-    return opportunity
+    try:
+        return grant_preaward_service.update_opportunity(opportunity_id, organization_id, **fields)
+    except LookupError as exc:
+        raise GrantAllocationError(str(exc)) from exc
 
 
 def create_proposal(
@@ -946,51 +883,17 @@ def create_proposal(
     document_ref: Optional[str] = None,
     notes: Optional[str] = None,
 ) -> GrantProposal:
-    opportunity = db.session.scalars(
-        select(GrantOpportunity).where(
-            GrantOpportunity.id == opportunity_id,
-            GrantOpportunity.organization_id == organization_id,
-        ).limit(1)
-    ).first()
-    if opportunity is None:
-        raise GrantAllocationError("opportunity not found for organization")
-
-    if amount_requested is not None and float(amount_requested) < 0:
-        raise ValueError("amount_requested cannot be negative")
-
-    next_version = int(
-        db.session.scalar(
-            select(func.coalesce(func.max(GrantProposal.version_number), 0)).where(
-                GrantProposal.opportunity_id == opportunity_id,
-                GrantProposal.organization_id == organization_id,
-            )
+    try:
+        return grant_preaward_service.create_proposal(
+            opportunity_id,
+            organization_id,
+            amount_requested=amount_requested,
+            narrative_summary=narrative_summary,
+            document_ref=document_ref,
+            notes=notes,
         )
-        or 0
-    ) + 1
-
-    proposal = GrantProposal(
-        opportunity_id=opportunity_id,
-        organization_id=organization_id,
-        version_number=next_version,
-        amount_requested=float(amount_requested) if amount_requested is not None else None,
-        narrative_summary=(narrative_summary or "").strip() or None,
-        document_ref=(document_ref or "").strip() or None,
-        notes=(notes or "").strip() or None,
-        outcome="draft",
-    )
-    db.session.add(proposal)
-    db.session.commit()
-    audit(
-        "grant.proposal.create",
-        entity_type="grant_proposal",
-        entity_id=int(proposal.id),
-        details={
-            "organization_id": int(organization_id),
-            "opportunity_id": int(opportunity_id),
-            "version_number": int(proposal.version_number),
-        },
-    )
-    return proposal
+    except LookupError as exc:
+        raise GrantAllocationError(str(exc)) from exc
 
 
 def submit_proposal(
@@ -1000,40 +903,15 @@ def submit_proposal(
     submission_date: date,
     document_ref: Optional[str] = None,
 ) -> GrantProposal:
-    proposal = db.session.scalars(
-        select(GrantProposal).where(
-            GrantProposal.id == proposal_id,
-            GrantProposal.organization_id == organization_id,
-        ).limit(1)
-    ).first()
-    if proposal is None:
-        raise GrantAllocationError("proposal not found for organization")
-
-    if not proposal.narrative_summary:
-        raise ValueError("cannot submit proposal without narrative_summary")
-    if proposal.amount_requested is None or float(proposal.amount_requested) <= 0:
-        raise ValueError("cannot submit proposal without amount_requested")
-
-    effective_doc_ref = (document_ref or proposal.document_ref or "").strip()
-    if not effective_doc_ref:
-        raise ValueError("cannot submit proposal without document_ref")
-
-    proposal.submission_date = submission_date
-    proposal.document_ref = effective_doc_ref
-    proposal.outcome = "submitted"
-    proposal.opportunity.status = "submitted"
-    db.session.commit()
-    audit(
-        "grant.proposal.submit",
-        entity_type="grant_proposal",
-        entity_id=int(proposal.id),
-        details={
-            "organization_id": int(organization_id),
-            "opportunity_id": int(proposal.opportunity_id),
-            "submission_date": submission_date.isoformat(),
-        },
-    )
-    return proposal
+    try:
+        return grant_preaward_service.submit_proposal(
+            proposal_id,
+            organization_id,
+            submission_date=submission_date,
+            document_ref=document_ref,
+        )
+    except LookupError as exc:
+        raise GrantAllocationError(str(exc)) from exc
 
 
 def set_proposal_outcome(
@@ -1042,35 +920,14 @@ def set_proposal_outcome(
     *,
     outcome: str,
 ) -> GrantProposal:
-    if outcome not in _VALID_PROPOSAL_OUTCOMES:
-        raise ValueError(f"invalid proposal outcome '{outcome}'")
-
-    proposal = db.session.scalars(
-        select(GrantProposal).where(
-            GrantProposal.id == proposal_id,
-            GrantProposal.organization_id == organization_id,
-        ).limit(1)
-    ).first()
-    if proposal is None:
-        raise GrantAllocationError("proposal not found for organization")
-
-    proposal.outcome = outcome
-    if outcome == "awarded":
-        proposal.opportunity.status = "awarded"
-    elif outcome == "declined":
-        proposal.opportunity.status = "declined"
-    db.session.commit()
-    audit(
-        "grant.proposal.outcome",
-        entity_type="grant_proposal",
-        entity_id=int(proposal.id),
-        details={
-            "organization_id": int(organization_id),
-            "opportunity_id": int(proposal.opportunity_id),
-            "outcome": outcome,
-        },
-    )
-    return proposal
+    try:
+        return grant_preaward_service.set_proposal_outcome(
+            proposal_id,
+            organization_id,
+            outcome=outcome,
+        )
+    except LookupError as exc:
+        raise GrantAllocationError(str(exc)) from exc
 
 
 def convert_opportunity_to_grant(
@@ -1082,85 +939,24 @@ def convert_opportunity_to_grant(
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
 ) -> Grant:
-    opportunity = db.session.scalars(
-        select(GrantOpportunity).where(
-            GrantOpportunity.id == opportunity_id,
-            GrantOpportunity.organization_id == organization_id,
-        ).limit(1)
-    ).first()
-    if opportunity is None:
-        raise GrantAllocationError("opportunity not found for organization")
-
-    if opportunity.awarded_grant_id is not None:
-        raise GrantAllocationError("opportunity already linked to awarded grant")
-    if float(amount_awarded) <= 0:
-        raise ValueError("amount_awarded must be positive")
-
-    grant = create_grant(
-        organization_id=organization_id,
-        funder_name=opportunity.funder_name,
-        title=opportunity.title,
-        amount_requested=opportunity.amount_max or opportunity.amount_min,
-        application_deadline=opportunity.deadline,
-        start_date=start_date,
-        end_date=end_date,
-        notes=opportunity.notes,
-    )
-    advance_grant_status(grant.id, organization_id, new_status="submitted")
-    advance_grant_status(
-        grant.id,
-        organization_id,
-        new_status="awarded",
-        amount_awarded=float(amount_awarded),
-        award_date=award_date or _today(),
-    )
-
-    opportunity.awarded_grant_id = int(grant.id)
-    opportunity.status = "awarded"
-    db.session.commit()
-    audit(
-        "grant.opportunity.convert",
-        entity_type="grant_opportunity",
-        entity_id=int(opportunity.id),
-        details={
-            "organization_id": int(organization_id),
-            "grant_id": int(grant.id),
-            "amount_awarded": float(amount_awarded),
-        },
-    )
-    return grant
+    try:
+        return grant_preaward_service.convert_opportunity_to_grant(
+            opportunity_id,
+            organization_id,
+            amount_awarded=amount_awarded,
+            award_date=award_date,
+            start_date=start_date,
+            end_date=end_date,
+            create_grant_fn=create_grant,
+            advance_grant_status_fn=advance_grant_status,
+            today_fn=_today,
+        )
+    except LookupError as exc:
+        raise GrantAllocationError(str(exc)) from exc
 
 
 def opportunity_forecast_summary(organization_id: int) -> dict:
-    active_statuses = ["identified", "qualified", "in_progress", "submitted"]
-    opportunities = list(
-        db.session.scalars(
-            select(GrantOpportunity)
-            .where(GrantOpportunity.organization_id == organization_id, GrantOpportunity.status.in_(active_statuses))
-            .order_by(GrantOpportunity.deadline.asc().nullslast())
-        )
-    )
-
-    pipeline_count = len(opportunities)
-    pipeline_amount = 0.0
-    weighted_amount = 0.0
-    for item in opportunities:
-        if item.amount_min is None and item.amount_max is None:
-            amount_basis = 0.0
-        elif item.amount_min is None:
-            amount_basis = float(item.amount_max or 0)
-        elif item.amount_max is None:
-            amount_basis = float(item.amount_min or 0)
-        else:
-            amount_basis = (float(item.amount_min) + float(item.amount_max)) / 2.0
-        pipeline_amount += amount_basis
-        weighted_amount += float(item.probability_weighted_amount or 0)
-
-    return {
-        "pipeline_count": pipeline_count,
-        "pipeline_amount": round(pipeline_amount, 2),
-        "probability_weighted_amount": round(weighted_amount, 2),
-    }
+    return grant_preaward_service.opportunity_forecast_summary(organization_id)
 
 
 def get_disbursements(grant_id: int, organization_id: int) -> List[GrantDisbursement]:
