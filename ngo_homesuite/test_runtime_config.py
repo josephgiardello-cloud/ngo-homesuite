@@ -124,6 +124,29 @@ def test_load_runtime_settings_infers_postgres_backend(monkeypatch: pytest.Monke
     assert settings.database_backend == "postgresql"
 
 
+def test_load_runtime_settings_normalizes_legacy_postgres_scheme(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_runtime_env(monkeypatch)
+
+    monkeypatch.setenv("SECRET_KEY", "postgres-scheme-secret")
+    monkeypatch.setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/ngo")
+    monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
+
+    settings = config.load_runtime_settings()
+    assert settings.database_url.startswith("postgresql://")
+    assert settings.database_backend == "postgresql"
+
+
+def test_load_runtime_settings_accepts_postgresql_psycopg_scheme(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_runtime_env(monkeypatch)
+
+    monkeypatch.setenv("SECRET_KEY", "postgres-psycopg-secret")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://user:pass@localhost:5432/ngo")
+    monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
+
+    settings = config.load_runtime_settings()
+    assert settings.database_backend == "postgresql"
+
+
 def test_load_runtime_settings_accepts_pool_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     _clear_runtime_env(monkeypatch)
 

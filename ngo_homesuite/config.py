@@ -18,6 +18,14 @@ DEFAULT_CONFIG_CANDIDATES = (
     "ngo_homesuite.yaml",
 )
 
+
+def _normalize_database_url(value: str) -> str:
+    raw = str(value).strip()
+    if raw.startswith("postgres://"):
+        # Many hosted providers still emit postgres://; SQLAlchemy expects postgresql://
+        return "postgresql://" + raw[len("postgres://") :]
+    return raw
+
 # DB connection pooling (internal)
 DB_POOL_SIZE: int = 2
 
@@ -150,15 +158,22 @@ class RuntimeSettings(BaseModel):
     @field_validator("database_url")
     @classmethod
     def _validate_database_url(cls, value: str) -> str:
-        raw = str(value).strip()
+        raw = _normalize_database_url(value)
         if raw == ":memory:":
             return raw
 
         parsed = urlparse(raw)
-        if parsed.scheme in {"sqlite", "postgresql", "postgresql+psycopg2", "mysql", "mysql+pymysql"}:
+        if parsed.scheme in {
+            "sqlite",
+            "postgresql",
+            "postgresql+psycopg",
+            "postgresql+psycopg2",
+            "mysql",
+            "mysql+pymysql",
+        }:
             return raw
         raise ValueError(
-            "database_url must use sqlite://, postgresql://, postgresql+psycopg2://, mysql://, or mysql+pymysql://"
+            "database_url must use sqlite://, postgresql://, postgresql+psycopg://, postgresql+psycopg2://, mysql://, or mysql+pymysql://"
         )
 
     @field_validator("database_backend")
@@ -271,6 +286,8 @@ def load_runtime_settings() -> RuntimeSettings:
             database_url = str(db_path)
         else:
             database_url = f"sqlite:///{db_path}"
+    else:
+        database_url = _normalize_database_url(database_url)
 
     database_backend = os.environ.get("DB_BACKEND")
     if not database_backend:

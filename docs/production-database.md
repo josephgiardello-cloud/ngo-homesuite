@@ -25,6 +25,12 @@ Examples:
 DATABASE_URL=postgresql://ngo_user:secret@db-host:5432/ngo_homesuite
 DB_BACKEND=postgresql
 
+# PostgreSQL with psycopg3 driver
+DATABASE_URL=postgresql+psycopg://ngo_user:secret@db-host:5432/ngo_homesuite
+
+# Legacy provider format is also accepted and normalized at runtime
+DATABASE_URL=postgres://ngo_user:secret@db-host:5432/ngo_homesuite
+
 # MySQL / MariaDB
 DATABASE_URL=mysql+pymysql://ngo_user:secret@db-host:3306/ngo_homesuite
 DB_BACKEND=mysql
