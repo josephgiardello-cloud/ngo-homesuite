@@ -232,3 +232,44 @@ def test_v1_workflow_event_rejects_role_spoofing(client, app):
     )
     assert spoof.status_code == 403
     assert "role" in spoof.get_json()["error"]
+
+
+def test_v1_workflow_trace_is_tenant_scoped(client, app):
+    _ensure_user(app, "v2_trace_admin", "v2_trace_admin@test.local", "admin", "v2_trace_admin_pass_123")
+    _ensure_user(app, "v2_trace_staff", "v2_trace_staff@test.local", "staff", "v2_trace_staff_pass_123")
+
+    with app.app_context():
+        org_a = Organization.query.filter_by(is_active=True).order_by(Organization.id.asc()).first()
+        org_b = Organization.query.filter_by(slug="trace-tenant-org").first()
+        if org_b is None:
+            org_b = Organization(name="Trace Tenant Org", slug="trace-tenant-org", is_active=True)
+            db.session.add(org_b)
+            db.session.flush()
+
+        owner = User.query.filter_by(username="v2_trace_admin").first()
+        other = User.query.filter_by(username="v2_trace_staff").first()
+        owner.organization_id = org_a.id
+        other.organization_id = org_b.id
+        db.session.commit()
+
+        org_a_id = str(org_a.id)
+
+    _login(client, "v2_trace_admin", "v2_trace_admin_pass_123")
+    create_instance = client.post(
+        "/api/v1/workflows/instances",
+        json={"org_id": org_a_id, "workflow_type": "case_intake"},
+    )
+    assert create_instance.status_code == 200
+    instance_id = create_instance.get_json()["instance"]["instance_id"]
+
+    submit = client.post(
+        f"/api/v1/workflows/instances/{instance_id}/events",
+        json={"org_id": org_a_id, "event_type": "intake_submit", "payload": {"case_id": "TRACE-001"}},
+    )
+    assert submit.status_code == 200
+
+    client.get("/auth/logout")
+    _login(client, "v2_trace_staff", "v2_trace_staff_pass_123")
+
+    blocked = client.get(f"/api/v1/workflows/instances/{instance_id}/trace")
+    assert blocked.status_code == 404

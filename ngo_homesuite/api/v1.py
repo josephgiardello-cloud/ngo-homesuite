@@ -149,6 +149,12 @@ def apply_workflow_event(instance_id: str):
 @api_v1_bp.get("/workflows/instances/<instance_id>/trace")
 @login_required
 def get_workflow_trace(instance_id: str):
+    user_org_id = getattr(current_user, "organization_id", None)
+    if user_org_id is not None:
+        scoped_instance = _container().workflow_repository.get(instance_id, org_id=str(user_org_id))
+        if scoped_instance is None:
+            return {"error": "Trace not found."}, 404
+
     trace = _container().tracer.get(instance_id)
     if trace is None:
         return {"error": "Trace not found."}, 404

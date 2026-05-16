@@ -108,6 +108,45 @@ def test_stripe_webhook_rejects_invalid_signature(client, monkeypatch):
     assert rv.status_code == 400
 
 
+def test_stripe_webhook_rejects_missing_event_id(client, monkeypatch):
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_test")
+
+    payload = {
+        "type": "checkout.session.completed",
+        "data": {"object": {"id": "cs_missing_event_id", "payment_status": "paid", "amount_total": 1000, "currency": "usd", "metadata": {"org_id": "1"}}},
+    }
+    raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    header = _stripe_header(raw, "whsec_test", int(time.time()))
+
+    rv = client.post(
+        "/integrations/webhooks/stripe",
+        data=raw,
+        headers={"Stripe-Signature": header},
+    )
+    assert rv.status_code == 400
+    assert "event id" in (rv.get_json() or {}).get("error", "").lower()
+
+
+def test_stripe_webhook_rejects_stale_timestamp(client, monkeypatch):
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_test")
+
+    payload = {
+        "id": "evt_stale_1",
+        "type": "checkout.session.completed",
+        "data": {"object": {"id": "cs_stale_1", "payment_status": "paid", "amount_total": 5000, "currency": "usd", "metadata": {"org_id": "1"}}},
+    }
+    raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    stale_ts = int(time.time()) - 1000
+    header = _stripe_header(raw, "whsec_test", stale_ts)
+
+    rv = client.post(
+        "/integrations/webhooks/stripe",
+        data=raw,
+        headers={"Stripe-Signature": header},
+    )
+    assert rv.status_code == 400
+
+
 
 def test_calendar_sync_and_ops_routes(client, app):
     org_id = _ensure_user(app, "integration_staff", "integration_staff@test.local", "staff", "integration_staff_pass_123")

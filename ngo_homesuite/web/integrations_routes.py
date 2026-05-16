@@ -102,6 +102,10 @@ def create_stripe_checkout_route():
 @integrations_bp.post("/webhooks/stripe")
 def stripe_webhook_route():
     payload = request.get_data() or b""
+    if len(payload) > 1024 * 1024:
+        record_integration_event(current_app, kind="stripe_webhook", status="payload_too_large")
+        return jsonify({"error": "Webhook payload too large."}), 413
+
     sig_header = request.headers.get("Stripe-Signature")
     secret = os.environ.get("STRIPE_WEBHOOK_SECRET")
 
@@ -115,6 +119,10 @@ def stripe_webhook_route():
         return jsonify({"error": "Invalid webhook signature."}), 400
 
     eid = event_id(event)
+    if not eid:
+        record_integration_event(current_app, kind="stripe_webhook", status="missing_event_id")
+        return jsonify({"error": "Missing event id."}), 400
+
     if _stripe_replay_guard().is_replay(eid):
         record_integration_event(current_app, kind="stripe_webhook", status="duplicate", details={"event_id": eid})
         return jsonify({"ok": True, "status": "duplicate", "event_id": eid}), 200
