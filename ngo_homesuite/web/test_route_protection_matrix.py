@@ -44,7 +44,6 @@ ROUTE_POLICY_MANIFEST: dict[str, RoutePolicy] = {
     "/api/v2/tasks": RoutePolicy(access="authenticated"),
     "/api/v2/tasks/overdue-summary": RoutePolicy(access="authenticated"),
     "/auth/login": RoutePolicy(access="public"),
-    "/auth/logout": RoutePolicy(access="authenticated"),
     "/auth/register": RoutePolicy(access="public"),
     "/beneficiaries": RoutePolicy(access="authenticated"),
     "/beneficiaries/new": RoutePolicy(access="authenticated"),
@@ -130,7 +129,7 @@ def _login(client, username: str, password: str) -> None:
 
 
 def _logout(client) -> None:
-    client.get("/auth/logout")
+    client.post("/auth/logout")
 
 
 def _static_get_routes(app) -> Iterable[str]:

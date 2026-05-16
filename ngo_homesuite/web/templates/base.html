@@ -743,7 +743,9 @@
             {% if current_user.is_authenticated %}
                 <span>Welcome, {{ current_user.first_name or current_user.username }}</span>
                 <button type="button" class="theme-toggle" id="themeToggle">Toggle Theme</button>
-                <a href="{{ url_for('auth.logout') }}">Logout</a>
+                <form method="post" action="{{ url_for('auth.logout') }}" style="display:inline; margin:0;">
+                    <button type="submit" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font:inherit; text-decoration:underline;">Logout</button>
+                </form>
             {% else %}
                 <a href="{{ url_for('main.public_give') }}">Donate</a>
                 <a href="{{ url_for('auth.login') }}">Login</a>

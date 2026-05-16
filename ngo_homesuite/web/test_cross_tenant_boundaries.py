@@ -69,7 +69,7 @@ def _login(client, username: str, password: str) -> None:
 
 
 def _logout(client) -> None:
-    client.get("/auth/logout")
+    client.post("/auth/logout")
 
 
 # ---------------------------------------------------------------------------

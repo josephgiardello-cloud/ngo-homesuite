@@ -115,7 +115,7 @@ def test_copilot_reindex_admin_only(client, app, monkeypatch):
     _login(client, "copilot_viewer", "viewer_pass_123")
     rv = client.post("/ai/copilot/reindex", json={"user_summaries": ["summary"]})
     assert rv.status_code == 403
-    client.get("/auth/logout")
+    client.post("/auth/logout")
 
     _ensure_user(app, "copilot_admin2", "copilot_admin2@test.local", "admin", "admin2_pass_123")
     _login(client, "copilot_admin2", "admin2_pass_123")

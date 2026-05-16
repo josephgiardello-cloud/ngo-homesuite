@@ -268,7 +268,7 @@ def test_v1_workflow_trace_is_tenant_scoped(client, app):
     )
     assert submit.status_code == 200
 
-    client.get("/auth/logout")
+    client.post("/auth/logout")
     _login(client, "v2_trace_staff", "v2_trace_staff_pass_123")
 
     blocked = client.get(f"/api/v1/workflows/instances/{instance_id}/trace")

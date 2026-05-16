@@ -99,7 +99,7 @@ def test_successful_login_resets_failure_counter(client, app):
         assert user.locked_until is None
 
     # Logout
-    client.get("/auth/logout")
+    client.post("/auth/logout")
 
 
 def test_locked_account_shows_lockout_message(client, app):
@@ -136,7 +136,7 @@ def test_expired_lockout_allows_login(client, app):
     rv = _attempt_login(client, "lock_test_user4", "CorrectPass123!")
     assert rv.status_code == 302
     assert "/dashboard" in rv.headers.get("Location", "")
-    client.get("/auth/logout")
+    client.post("/auth/logout")
 
 
 def test_failed_login_for_nonexistent_user_does_not_crash(client, app):

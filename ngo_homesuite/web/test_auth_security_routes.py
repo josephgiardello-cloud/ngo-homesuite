@@ -131,7 +131,7 @@ def test_logout_clears_session(client, app):
         assert sess.get("_user_id") is not None
 
     # Log out
-    rv = client.get("/auth/logout", follow_redirects=False)
+    rv = client.post("/auth/logout", follow_redirects=False)
     assert rv.status_code == 302
 
     with client.session_transaction() as sess:
@@ -145,10 +145,21 @@ def test_logout_redirects_to_index(client, app):
         data={"username": "auth_logout_user2", "password": "AuthPass123!"},
         follow_redirects=False,
     )
-    rv = client.get("/auth/logout", follow_redirects=False)
+    rv = client.post("/auth/logout", follow_redirects=False)
     assert rv.status_code == 302
     location = rv.headers.get("Location", "")
     assert location.endswith("/") or "/index" in location or location == "/"
+
+
+def test_logout_get_is_not_allowed(client, app):
+    _ensure_user(app, "auth_logout_user3", "AuthPass123!")
+    client.post(
+        "/auth/login",
+        data={"username": "auth_logout_user3", "password": "AuthPass123!"},
+        follow_redirects=False,
+    )
+    rv = client.get("/auth/logout", follow_redirects=False)
+    assert rv.status_code == 405
 
 
 # ---------------------------------------------------------------------------
