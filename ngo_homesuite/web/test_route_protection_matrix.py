@@ -96,6 +96,7 @@ ROUTE_POLICY_MANIFEST: dict[str, RoutePolicy] = {
     "/reports/trends/giving": RoutePolicy(access="authenticated"),
     "/reports/trends/retention": RoutePolicy(access="authenticated"),
     "/smart-groups/": RoutePolicy(access="authenticated"),
+    "/tasks/board": RoutePolicy(access="authenticated"),
     "/tasks/": RoutePolicy(access="authenticated"),
     "/tasks/overdue": RoutePolicy(access="authenticated"),
     "/volunteers": RoutePolicy(access="authenticated"),

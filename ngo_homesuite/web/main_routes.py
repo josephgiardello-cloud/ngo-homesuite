@@ -1080,6 +1080,27 @@ def activity_feed():
     )
 
 
+@main_bp.route('/tasks/board')
+@login_required
+def task_board():
+    """Operational task board powered by v2 task + reminder APIs."""
+    org = _current_org()
+    if not org:
+        flash('No organization found for your account.', 'error')
+        return redirect(url_for('main.dashboard'))
+
+    ai_context = {
+        'active_page': 'task_board',
+        'organization': org.name,
+    }
+    return render_template(
+        'task_board.html',
+        active_page='task_board',
+        organization_name=org.name,
+        ai_context=ai_context,
+    )
+
+
 @main_bp.route('/mobile/intake', methods=['GET', 'POST'])
 @login_required
 @roles_required('admin', 'staff', 'volunteer')

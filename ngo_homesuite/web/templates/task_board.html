@@ -1,0 +1,446 @@
+{% extends "base.html" %}
+
+{% block title %}Task Board - NGO HomeSuite{% endblock %}
+
+{% block extra_css %}
+<style>
+    .board-shell {
+        display: grid;
+        gap: 1rem;
+    }
+
+    .board-filters {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 0.6rem;
+        align-items: end;
+    }
+
+    .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+        gap: 0.65rem;
+    }
+
+    .summary-card {
+        padding: 0.7rem 0.85rem;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface-soft);
+    }
+
+    .summary-label {
+        font-size: 0.83rem;
+        color: var(--muted);
+        margin-bottom: 0.2rem;
+    }
+
+    .summary-value {
+        font-size: 1.2rem;
+        font-weight: 700;
+    }
+
+    .kanban-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 0.8rem;
+    }
+
+    .kanban-column {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--surface-soft);
+        min-height: 260px;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .kanban-header {
+        padding: 0.65rem 0.8rem;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .kanban-title {
+        font-weight: 700;
+        font-size: 0.9rem;
+    }
+
+    .kanban-count {
+        font-size: 0.8rem;
+        padding: 0.15rem 0.45rem;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: var(--surface);
+    }
+
+    .kanban-body {
+        padding: 0.65rem;
+        display: grid;
+        gap: 0.55rem;
+    }
+
+    .task-card {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface);
+        padding: 0.55rem 0.65rem;
+    }
+
+    .task-title {
+        font-weight: 600;
+        margin-bottom: 0.25rem;
+    }
+
+    .task-meta {
+        color: var(--muted);
+        font-size: 0.82rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+        margin-bottom: 0.45rem;
+    }
+
+    .pill {
+        display: inline-flex;
+        align-items: center;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 0.15rem 0.5rem;
+        font-size: 0.76rem;
+        line-height: 1;
+        background: var(--surface-soft);
+    }
+
+    .pill.priority-urgent,
+    .pill.reminder-escalation {
+        border-color: #f0c2c2;
+        color: #9e1f1f;
+        background: #fff1f1;
+    }
+
+    .pill.priority-high,
+    .pill.reminder-overdue {
+        border-color: #f0d2b1;
+        color: #9b4d11;
+        background: #fff6eb;
+    }
+
+    .pill.reminder-upcoming {
+        border-color: #b9d7f2;
+        color: #205f96;
+        background: #eef7ff;
+    }
+
+    .task-actions {
+        display: flex;
+        gap: 0.45rem;
+        flex-wrap: wrap;
+    }
+
+    .task-actions button {
+        font-size: 0.78rem;
+        padding: 0.25rem 0.55rem;
+    }
+
+    .reminder-list {
+        display: grid;
+        gap: 0.45rem;
+    }
+
+    .reminder-item {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface-soft);
+        padding: 0.5rem 0.65rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div style="display:flex;justify-content:space-between;align-items:center;gap:0.8rem;flex-wrap:wrap;margin-bottom:1rem;">
+    <div>
+        <h1 style="margin:0;">Task Board</h1>
+        <p class="text-muted" style="margin:0.3rem 0 0 0;">Daily operations board for assignments, due risk, and reminder triage.</p>
+    </div>
+    <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+        <a href="{{ url_for('main.activity_feed') }}" class="btn btn-secondary">Activity Feed</a>
+        <a href="{{ url_for('main.dashboard') }}" class="btn btn-secondary">Dashboard</a>
+    </div>
+</div>
+
+<div class="board-shell">
+    <div class="card">
+        <h3 style="margin-bottom:0.7rem;">Filters</h3>
+        <div class="board-filters">
+            <div>
+                <label for="status-filter">Status</label>
+                <select id="status-filter">
+                    <option value="">All</option>
+                    <option value="open">Open</option>
+                    <option value="in_progress">In Progress</option>
+                    <option value="done">Done</option>
+                    <option value="cancelled">Cancelled</option>
+                </select>
+            </div>
+            <div>
+                <label for="priority-filter">Priority</label>
+                <select id="priority-filter">
+                    <option value="">All</option>
+                    <option value="urgent">Urgent</option>
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
+                </select>
+            </div>
+            <div>
+                <label for="reminder-limit">Reminder Candidates</label>
+                <input id="reminder-limit" type="number" min="5" max="50" value="20" />
+            </div>
+            <div>
+                <button id="refresh-board" type="button" class="btn btn-primary" style="width:100%;">Refresh Board</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3 style="margin-bottom:0.7rem;">Operational Summary</h3>
+        <div id="summary-grid" class="summary-grid">
+            <div class="summary-card"><div class="summary-label">Total Tasks</div><div class="summary-value">-</div></div>
+            <div class="summary-card"><div class="summary-label">Open + In Progress</div><div class="summary-value">-</div></div>
+            <div class="summary-card"><div class="summary-label">Overdue</div><div class="summary-value">-</div></div>
+            <div class="summary-card"><div class="summary-label">Due Next 7 Days</div><div class="summary-value">-</div></div>
+        </div>
+    </div>
+
+    <div class="kanban-grid" id="kanban-grid">
+        <section class="kanban-column" data-column="open">
+            <div class="kanban-header"><span class="kanban-title">Open</span><span class="kanban-count">0</span></div>
+            <div class="kanban-body"></div>
+        </section>
+        <section class="kanban-column" data-column="in_progress">
+            <div class="kanban-header"><span class="kanban-title">In Progress</span><span class="kanban-count">0</span></div>
+            <div class="kanban-body"></div>
+        </section>
+        <section class="kanban-column" data-column="done">
+            <div class="kanban-header"><span class="kanban-title">Done</span><span class="kanban-count">0</span></div>
+            <div class="kanban-body"></div>
+        </section>
+    </div>
+
+    <div class="card">
+        <h3 style="margin-bottom:0.7rem;">Reminder Candidates</h3>
+        <div id="reminder-candidates" class="reminder-list">
+            <p class="text-muted" style="margin:0;">Loading reminder candidates...</p>
+        </div>
+    </div>
+</div>
+
+<script>
+function boardFilters() {
+    return {
+        status: (document.getElementById('status-filter')?.value || '').trim(),
+        priority: (document.getElementById('priority-filter')?.value || '').trim(),
+        reminders_limit: Number(document.getElementById('reminder-limit')?.value || 20),
+    };
+}
+
+function buildQuery(params) {
+    const searchParams = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => {
+        if (v !== null && v !== undefined && String(v).trim() !== '') {
+            searchParams.set(k, v);
+        }
+    });
+    return searchParams.toString();
+}
+
+function dueText(task) {
+    if (!task.due_date) return 'No due date';
+    const due = String(task.due_date).slice(0, 10);
+    return `Due ${due}`;
+}
+
+function linkText(task) {
+    const refs = [];
+    if (task.donor_name) refs.push(`Donor: ${task.donor_name}`);
+    if (task.grant_title) refs.push(`Grant: ${task.grant_title}`);
+    if (task.project_id) refs.push(`Project #${task.project_id}`);
+    if (task.assigned_to_name) refs.push(`Assignee: ${task.assigned_to_name}`);
+    return refs.join(' · ');
+}
+
+function renderSummary(summary) {
+    const grid = document.getElementById('summary-grid');
+    if (!grid || !summary) return;
+
+    const overdue = Number(summary.due_buckets?.overdue || 0);
+    const next7 = Number(summary.due_buckets?.next_7_days || 0);
+
+    grid.innerHTML = `
+        <div class="summary-card"><div class="summary-label">Total Tasks</div><div class="summary-value">${summary.total || 0}</div></div>
+        <div class="summary-card"><div class="summary-label">Open + In Progress</div><div class="summary-value">${summary.open_total || 0}</div></div>
+        <div class="summary-card"><div class="summary-label">Overdue</div><div class="summary-value">${overdue}</div></div>
+        <div class="summary-card"><div class="summary-label">Due Next 7 Days</div><div class="summary-value">${next7}</div></div>
+    `;
+}
+
+async function completeTask(taskId) {
+    const response = await fetch(`/api/v2/tasks/${taskId}/complete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notes: 'Completed from Task Board UI' }),
+    });
+    if (!response.ok) {
+        throw new Error('Task completion failed');
+    }
+}
+
+async function remindTask(taskId) {
+    const response = await fetch(`/api/v2/tasks/${taskId}/remind`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+    });
+    if (!response.ok) {
+        throw new Error('Task reminder dispatch failed');
+    }
+}
+
+function renderTaskColumns(tasks) {
+    const columns = {
+        open: [],
+        in_progress: [],
+        done: [],
+    };
+
+    (tasks || []).forEach(task => {
+        const key = task.status === 'in_progress' ? 'in_progress' : (task.status === 'done' ? 'done' : 'open');
+        columns[key].push(task);
+    });
+
+    ['open', 'in_progress', 'done'].forEach(key => {
+        const col = document.querySelector(`section[data-column="${key}"]`);
+        if (!col) return;
+
+        const body = col.querySelector('.kanban-body');
+        const count = col.querySelector('.kanban-count');
+        const tasksForColumn = columns[key] || [];
+        if (count) count.textContent = String(tasksForColumn.length);
+
+        if (!body) return;
+        if (tasksForColumn.length === 0) {
+            body.innerHTML = '<p class="text-muted" style="margin:0;">No tasks in this lane.</p>';
+            return;
+        }
+
+        body.innerHTML = '';
+        tasksForColumn.forEach(task => {
+            const card = document.createElement('article');
+            card.className = 'task-card';
+
+            const linkLine = linkText(task);
+            card.innerHTML = `
+                <div class="task-title">${task.title}</div>
+                <div class="task-meta">
+                    <span class="pill priority-${task.priority}">${task.priority || 'medium'}</span>
+                    <span class="pill">${task.task_type || 'general'}</span>
+                    <span>${dueText(task)}</span>
+                </div>
+                ${linkLine ? `<div class="task-meta" style="margin-top:-0.1rem;">${linkLine}</div>` : ''}
+                <div class="task-actions">
+                    ${task.status !== 'done' ? `<button type="button" class="btn btn-secondary" data-complete-id="${task.id}">Mark Done</button>` : ''}
+                    ${task.status !== 'done' ? `<button type="button" class="btn btn-secondary" data-remind-id="${task.id}">Send Reminder</button>` : ''}
+                </div>
+            `;
+            body.appendChild(card);
+        });
+    });
+}
+
+function renderReminderCandidates(candidates) {
+    const root = document.getElementById('reminder-candidates');
+    if (!root) return;
+
+    if (!Array.isArray(candidates) || candidates.length === 0) {
+        root.innerHTML = '<p class="text-muted" style="margin:0;">No reminder candidates right now.</p>';
+        return;
+    }
+
+    root.innerHTML = '';
+    candidates.forEach(candidate => {
+        const item = document.createElement('div');
+        item.className = 'reminder-item';
+        const due = String(candidate.due_date || '').slice(0, 10);
+        item.innerHTML = `
+            <div style="display:flex;justify-content:space-between;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+                <strong>${candidate.title}</strong>
+                <span class="pill reminder-${candidate.reminder_type}">${candidate.reminder_type}</span>
+            </div>
+            <div class="task-meta" style="margin-top:0.35rem;">
+                <span>Due ${due}</span>
+                <span>Priority: ${candidate.priority || 'medium'}</span>
+                <span>Channel: ${candidate.reminder_channel || 'auto'}</span>
+            </div>
+        `;
+        root.appendChild(item);
+    });
+}
+
+async function loadBoard() {
+    const filters = boardFilters();
+    const query = buildQuery(filters);
+
+    const response = await fetch(`/api/v2/tasks/board?${query}`);
+    if (!response.ok) {
+        throw new Error('Failed to load task board');
+    }
+
+    const payload = await response.json();
+    renderSummary(payload.summary || {});
+    renderTaskColumns(payload.tasks || []);
+    renderReminderCandidates(payload.reminder_candidates || []);
+}
+
+async function refreshBoardWithFallback() {
+    try {
+        await loadBoard();
+    } catch (error) {
+        console.error('Task board load failed:', error);
+        const root = document.getElementById('reminder-candidates');
+        if (root) {
+            root.innerHTML = '<p class="text-muted" style="margin:0;">Task board failed to load. Try refreshing again.</p>';
+        }
+    }
+}
+
+document.addEventListener('click', async (event) => {
+    const completeId = event.target?.getAttribute?.('data-complete-id');
+    if (completeId) {
+        try {
+            await completeTask(Number(completeId));
+            await refreshBoardWithFallback();
+        } catch (error) {
+            console.error(error);
+        }
+        return;
+    }
+
+    const remindId = event.target?.getAttribute?.('data-remind-id');
+    if (remindId) {
+        try {
+            await remindTask(Number(remindId));
+            await refreshBoardWithFallback();
+        } catch (error) {
+            console.error(error);
+        }
+    }
+});
+
+document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('refresh-board')?.addEventListener('click', refreshBoardWithFallback);
+    refreshBoardWithFallback();
+});
+</script>
+{% endblock %}

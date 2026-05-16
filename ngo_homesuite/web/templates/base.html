@@ -784,6 +784,7 @@
                     <li><a href="{{ url_for('main.projects_dashboard') }}" class="{{ 'active' if active_page == 'projects' else '' }}">Projects</a></li>
                     <li><a href="{{ url_for('main.funds_list') }}" class="{{ 'active' if active_page == 'funds' else '' }}">Funds</a></li>
                     <li><a href="{{ url_for('main.mobile_intake') }}" class="{{ 'active' if active_page == 'mobile_intake' else '' }}">Mobile Intake</a></li>
+                    <li><a href="{{ url_for('main.task_board') }}" class="{{ 'active' if active_page == 'task_board' else '' }}">Task Board</a></li>
                     <li><a href="{{ url_for('main.p2p_manage') }}" class="{{ 'active' if active_page == 'p2p' else '' }}">P2P</a></li>
                     <li><a href="{{ url_for('main.reports_page') }}" class="{{ 'active' if active_page == 'reports' else '' }}">Reports</a></li>
                 </ul>
@@ -877,6 +878,7 @@
                     'expenses':   ['Summarize spending categories', 'Are there unusual expense patterns?', 'Suggest cost-saving measures'],
                     'projects':   ['Summarize active project status', 'How can we improve project outcomes?', 'Draft a project progress update'],
                     'funds':      ['How are our funds allocated?', 'Draft a fund performance summary', 'Suggest fund diversification'],
+                    'task_board': ['Which tasks should we escalate this week?', 'Summarize overdue operational risk', 'Recommend assignee rebalance actions'],
                     'reports':    ['Write an impact summary for stakeholders', 'Interpret this financial data', 'Draft a quarterly report introduction'],
                 };
 

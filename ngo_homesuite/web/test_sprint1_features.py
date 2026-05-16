@@ -300,6 +300,17 @@ def test_staff_p2p_manage_page_create_publish_close(client, app):
         assert page.status == "closed"
 
 
+def test_task_board_page_renders_for_authenticated_user(client):
+    _login_admin(client)
+
+    rv = client.get('/tasks/board')
+    assert rv.status_code == 200
+
+    body = rv.get_data(as_text=True)
+    assert 'Task Board' in body
+    assert 'Reminder Candidates' in body
+
+
 def test_donor_merge_relinks_donations(client, app):
     _login_admin(client)
 
