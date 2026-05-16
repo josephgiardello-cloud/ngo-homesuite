@@ -5,8 +5,12 @@ from datetime import datetime, timezone
 import pytest
 from werkzeug.exceptions import NotFound
 
+from ngo_homesuite.grants.facade import GrantsFacade
 from ngo_homesuite.models.core import Donation, Organization, Task, db
-from ngo_homesuite.services import grant_service, task_service
+from ngo_homesuite.services import task_service
+
+
+grant_service = GrantsFacade()
 
 
 @pytest.fixture(scope="module")

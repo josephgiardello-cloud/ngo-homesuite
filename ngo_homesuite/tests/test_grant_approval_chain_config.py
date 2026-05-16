@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from ngo_homesuite.grants.facade import GrantsFacade
 from ngo_homesuite.models.core import GrantApprovalRequest, Organization, db
-from ngo_homesuite.services import grant_service
+
+
+grant_service = GrantsFacade()
 
 
 def _now_naive() -> datetime:

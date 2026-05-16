@@ -4,8 +4,12 @@ from datetime import date
 
 import pytest
 
+from ngo_homesuite.grants.exceptions import InvalidGrantTransition
+from ngo_homesuite.grants.facade import GrantsFacade
 from ngo_homesuite.models.core import Organization, db
-from ngo_homesuite.services import grant_service
+
+
+grant_service = GrantsFacade()
 
 
 @pytest.fixture(scope="module")
@@ -94,7 +98,7 @@ def test_close_blocked_until_restricted_balance_is_zero(ctx):
         amount_awarded=1000,
     )
 
-    with pytest.raises(grant_service.InvalidGrantTransition, match="outstanding restricted balance"):
+    with pytest.raises(InvalidGrantTransition, match="outstanding restricted balance"):
         grant_service.advance_grant_status(grant.id, org.id, new_status="closed")
 
     grant_service.add_disbursement(

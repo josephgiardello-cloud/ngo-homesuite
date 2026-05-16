@@ -4,8 +4,11 @@ from datetime import date
 
 import pytest
 
+from ngo_homesuite.grants.facade import GrantsFacade
 from ngo_homesuite.models.core import GrantOpportunity, GrantProposal, Organization, db
-from ngo_homesuite.services import grant_service
+
+
+grant_service = GrantsFacade()
 
 
 @pytest.fixture(scope="module")

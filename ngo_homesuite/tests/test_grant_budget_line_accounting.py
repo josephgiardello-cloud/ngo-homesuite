@@ -4,9 +4,14 @@ from datetime import date
 
 import pytest
 
+from ngo_homesuite.grants.exceptions import GrantAllocationError
+from ngo_homesuite.grants.exceptions import InvalidGrantTransition
+from ngo_homesuite.grants.facade import GrantsFacade
 from ngo_homesuite.models.core import Organization, db
-from ngo_homesuite.services import grant_service
 from ngo_homesuite.services.expense_service import ExpenseService
+
+
+grant_service = GrantsFacade()
 
 
 @pytest.fixture(scope="module")
@@ -80,7 +85,7 @@ def test_budget_lines_and_allocation_flow_enforces_line_balance(ctx):
     )
     assert expense.id is not None
 
-    with pytest.raises(grant_service.GrantAllocationError, match="remaining budget line balance"):
+    with pytest.raises(GrantAllocationError, match="remaining budget line balance"):
         ExpenseService().create_expense(
             org.id,
             project_id=None,
@@ -105,7 +110,7 @@ def test_allocation_rejects_unknown_category(ctx):
         allocated_amount=500.0,
     )
 
-    with pytest.raises(grant_service.GrantAllocationError, match="no budget line configured"):
+    with pytest.raises(GrantAllocationError, match="no budget line configured"):
         ExpenseService().create_expense(
             org.id,
             project_id=None,
@@ -148,7 +153,7 @@ def test_closeout_with_budget_lines_requires_zero_remaining(ctx):
         expense_category="direct_services",
     )
 
-    with pytest.raises(grant_service.InvalidGrantTransition, match="outstanding restricted balance"):
+    with pytest.raises(InvalidGrantTransition, match="outstanding restricted balance"):
         grant_service.advance_grant_status(grant.id, org.id, new_status="closed")
 
     ExpenseService().create_expense(
@@ -189,7 +194,7 @@ def test_cross_tenant_expense_allocation_is_blocked(ctx):
         description="Cross-tenant allocation test",
     )
 
-    with pytest.raises(grant_service.GrantAllocationError, match="expense not found"):
+    with pytest.raises(GrantAllocationError, match="expense not found"):
         grant_service.allocate_expense_to_budget_line(
             grant_id=grant.id,
             organization_id=org_a.id,
