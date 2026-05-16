@@ -15,6 +15,31 @@
 </div>
 
 <div class="card" style="margin-bottom: 1rem;">
+    <h3 style="margin-bottom: 0.75rem;">Filters</h3>
+    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0.5rem; margin-bottom: 1rem;">
+        <input id="activity-q" type="search" placeholder="Search timeline...">
+        <select id="activity-entity">
+            <option value="">All entities</option>
+            <option value="donor">Donors</option>
+            <option value="beneficiary">Beneficiaries</option>
+            <option value="organization">Organization</option>
+        </select>
+        <select id="activity-type">
+            <option value="">All activity types</option>
+            <option value="interaction">Interactions</option>
+            <option value="donation">Donations</option>
+            <option value="task">Tasks</option>
+            <option value="case_note">Case notes</option>
+            <option value="service_log">Service logs</option>
+        </select>
+        <button id="apply-filters" class="btn btn-secondary" type="button">Apply</button>
+    </div>
+
+    <h3 style="margin-bottom: 0.75rem;">AI Copilot Summary</h3>
+    <div id="activity-insights" style="padding:0.75rem 1rem; border:1px solid var(--border); border-radius:8px; margin-bottom:1rem;">
+        <p class="text-muted" style="margin:0;">Loading activity summary...</p>
+    </div>
+
     <h3 style="margin-bottom: 1rem;">Recent Activity</h3>
     <div id="activity-feed">
         {# Activity will be loaded via HTMX or JavaScript #}
@@ -25,10 +50,30 @@
 </div>
 
 <script>
+function currentFilters() {
+    return {
+        q: (document.getElementById('activity-q')?.value || '').trim(),
+        entity_type: document.getElementById('activity-entity')?.value || '',
+        activity_type: document.getElementById('activity-type')?.value || '',
+    };
+}
+
+function buildQuery(params) {
+    const sp = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+        if (value !== null && value !== undefined && String(value).trim() !== '') {
+            sp.set(key, value);
+        }
+    });
+    return sp.toString();
+}
+
 // Load activity feed from API
 async function loadActivityFeed() {
     try {
-        const response = await fetch('/api/v2/activity/global?limit=50');
+        const filters = currentFilters();
+        const query = buildQuery({ limit: 50, ...filters });
+        const response = await fetch(`/api/v2/activity/global?${query}`);
         if (!response.ok) throw new Error('Failed to load activity');
         
         const items = await response.json();
@@ -129,8 +174,38 @@ async function loadActivityFeed() {
     }
 }
 
+async function loadActivityInsights() {
+    const insights = document.getElementById('activity-insights');
+    if (!insights) return;
+    try {
+        const filters = currentFilters();
+        const query = buildQuery({ limit: 40, ...filters });
+        const response = await fetch(`/api/v2/activity/insights?${query}`);
+        if (!response.ok) throw new Error('Failed to load activity insights');
+
+        const payload = await response.json();
+        const actions = payload.recommended_actions || [];
+        insights.innerHTML = `
+            <p style="margin:0 0 0.5rem 0;"><strong>${payload.summary || 'No summary available.'}</strong></p>
+            <p style="margin:0 0 0.5rem 0;"><strong>Next Best Action:</strong> ${payload.next_best_action || 'No action suggested.'}</p>
+            ${actions.length ? `<ul style="margin:0.35rem 0 0 1.1rem;">${actions.map(a => `<li>${a}</li>`).join('')}</ul>` : ''}
+        `;
+    } catch (error) {
+        console.error('Error loading activity insights:', error);
+        insights.innerHTML = '<p class="text-muted" style="margin:0;">Failed to load AI summary.</p>';
+    }
+}
+
+function refreshActivityDashboard() {
+    loadActivityFeed();
+    loadActivityInsights();
+}
+
 // Load activity when page loads
-document.addEventListener('DOMContentLoaded', loadActivityFeed);
+document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('apply-filters')?.addEventListener('click', refreshActivityDashboard);
+    refreshActivityDashboard();
+});
 </script>
 
 {% endblock %}

@@ -7,12 +7,12 @@ beneficiary) for both profile-scoped and organization-wide views.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Literal
 
-from sqlalchemy import and_, desc, func, or_, select, text
+from sqlalchemy import select, text
 
-from ngo_homesuite.models.core import Donation, Donor, Beneficiary, User, db
+from ngo_homesuite.models.core import User, db
 
 
 ActivityType = Literal[
@@ -59,6 +59,31 @@ class ActivityTimelineService:
     """Unified timeline across all constituent activity types."""
 
     @staticmethod
+    def _normalize_text(value: Any) -> str:
+        if value is None:
+            return ""
+        return str(value).strip().lower()
+
+    @staticmethod
+    def _item_matches_query(item: ActivityFeedItem, search_query: str | None) -> bool:
+        query = ActivityTimelineService._normalize_text(search_query)
+        if not query:
+            return True
+
+        haystack_parts = [
+            item.summary,
+            item.activity_type,
+            item.entity_type,
+            item.actor_name or "",
+        ]
+        for key, value in (item.metadata or {}).items():
+            haystack_parts.append(str(key))
+            haystack_parts.append(str(value))
+
+        haystack = " ".join(ActivityTimelineService._normalize_text(part) for part in haystack_parts)
+        return query in haystack
+
+    @staticmethod
     def _user_name(user_id: int | None) -> str | None:
         """Fetch user display name."""
         if user_id is None:
@@ -79,6 +104,7 @@ class ActivityTimelineService:
         *,
         limit: int = 100,
         offset: int = 0,
+        search_query: str | None = None,
     ) -> list[ActivityFeedItem]:
         """Fetch unified timeline for a donor.
 
@@ -101,23 +127,51 @@ class ActivityTimelineService:
         items: list[ActivityFeedItem] = []
 
         # Query 1: Donor interactions
-        donor_interactions = db.session.execute(
-            text("""
-                SELECT
-                    'interaction:' || id AS activity_id,
-                    occurred_at,
-                    channel,
-                    summary,
-                    next_action,
-                    follow_up_due,
-                    completed_at,
-                    created_by_user_id
-                FROM donor_interactions
-                WHERE donor_id = :donor_id
-                ORDER BY occurred_at DESC
-            """),
-            {"donor_id": donor_id},
-        ).fetchall()
+        donor_interactions: list[tuple[Any, ...]] = []
+        try:
+            donor_interactions = db.session.execute(
+                text("""
+                    SELECT
+                        'interaction:' || di.id AS activity_id,
+                        di.occurred_at,
+                        di.channel,
+                        di.summary,
+                        di.next_action,
+                        di.follow_up_due,
+                        di.completed_at,
+                        di.created_by_user_id
+                    FROM donor_interactions di
+                    JOIN donors d ON d.id = di.donor_id
+                    WHERE di.donor_id = :donor_id
+                      AND d.organization_id = :org_id
+                    ORDER BY di.occurred_at DESC
+                """),
+                {"donor_id": donor_id, "org_id": organization_id},
+            ).fetchall()
+        except Exception:
+            # Legacy fallback schema uses `interactions` instead of `donor_interactions`.
+            try:
+                donor_interactions = db.session.execute(
+                    text("""
+                        SELECT
+                            'interaction:' || i.id AS activity_id,
+                            COALESCE(i.updated_at, i.created_at) AS occurred_at,
+                            COALESCE(i.type, 'other') AS channel,
+                            COALESCE(i.subject, i.notes, 'Interaction logged') AS summary,
+                            NULL AS next_action,
+                            i.due_date AS follow_up_due,
+                            i.completed_at,
+                            NULL AS created_by_user_id
+                        FROM interactions i
+                        JOIN donors d ON d.id = i.donor_id
+                        WHERE i.donor_id = :donor_id
+                          AND d.organization_id = :org_id
+                        ORDER BY COALESCE(i.updated_at, i.created_at) DESC
+                    """),
+                    {"donor_id": donor_id, "org_id": organization_id},
+                ).fetchall()
+            except Exception:
+                donor_interactions = []
 
         for row in donor_interactions:
             activity_id, occurred_at, channel, summary, next_action, follow_up_due, completed_at, created_by = row
@@ -149,21 +203,22 @@ class ActivityTimelineService:
         donations = db.session.execute(
             text("""
                 SELECT
-                    'donation:' || id AS activity_id,
-                    donation_date,
-                    amount,
-                    COALESCE(fund_id, 0) AS fund_id,
-                    COALESCE(project_id, 0) AS project_id
-                FROM donations
-                WHERE donor_id = :donor_id
-                ORDER BY donation_date DESC
+                    'donation:' || don.id AS activity_id,
+                    don.donation_date,
+                    don.amount,
+                    COALESCE(don.fund_id, 0) AS fund_id,
+                    COALESCE(don.project_id, 0) AS project_id
+                FROM donations don
+                WHERE don.donor_id = :donor_id
+                  AND don.organization_id = :org_id
+                ORDER BY don.donation_date DESC
             """),
-            {"donor_id": donor_id},
+            {"donor_id": donor_id, "org_id": organization_id},
         ).fetchall()
 
         for row in donations:
             activity_id, donation_date, amount, fund_id, project_id = row
-            amount_dollars = f"${amount / 100:.2f}" if amount else "$0.00"
+            amount_dollars = f"${float(amount or 0):,.2f}"
             summary_text = f"Donation received — {amount_dollars}"
 
             items.append(
@@ -185,11 +240,68 @@ class ActivityTimelineService:
                 )
             )
 
+        # Query 3: Donor-linked tasks
+        try:
+            donor_tasks = db.session.execute(
+                text("""
+                    SELECT
+                        'task:' || t.id AS activity_id,
+                        COALESCE(t.completed_at, t.due_date, t.created_at) AS occurred_at,
+                        t.title,
+                        t.status,
+                        t.priority,
+                        t.due_date,
+                        t.completed_at,
+                        t.assigned_to_id
+                    FROM tasks t
+                    WHERE t.organization_id = :org_id
+                      AND t.donor_id = :donor_id
+                    ORDER BY COALESCE(t.completed_at, t.due_date, t.created_at) DESC
+                """),
+                {"org_id": organization_id, "donor_id": donor_id},
+            ).fetchall()
+
+            for row in donor_tasks:
+                (
+                    activity_id,
+                    occurred_at,
+                    title,
+                    status,
+                    priority,
+                    due_date,
+                    completed_at,
+                    assigned_to_id,
+                ) = row
+                actor_name = ActivityTimelineService._user_name(assigned_to_id)
+                items.append(
+                    ActivityFeedItem(
+                        activity_id=activity_id,
+                        activity_type="task",
+                        occurred_at=occurred_at,
+                        entity_type="donor",
+                        entity_id=donor_id,
+                        actor_id=assigned_to_id,
+                        actor_name=actor_name,
+                        summary=f"Task ({status}) — {title}",
+                        metadata={
+                            "status": status,
+                            "priority": priority,
+                            "due_date": due_date,
+                            "completed": completed_at is not None,
+                        },
+                    )
+                )
+        except Exception:
+            pass
+
         # Sort by occurred_at descending (newest first)
         items.sort(key=lambda x: x.occurred_at, reverse=True)
 
+        # Optional lightweight search for profile timelines
+        if search_query:
+            items = [item for item in items if ActivityTimelineService._item_matches_query(item, search_query)]
+
         # Apply pagination
-        total = len(items)
         paginated = items[offset : offset + limit]
 
         return paginated
@@ -201,6 +313,7 @@ class ActivityTimelineService:
         *,
         limit: int = 100,
         offset: int = 0,
+        search_query: str | None = None,
     ) -> list[ActivityFeedItem]:
         """Fetch unified timeline for a beneficiary.
 
@@ -221,68 +334,73 @@ class ActivityTimelineService:
         """
         items: list[ActivityFeedItem] = []
 
-        # Query 1: Case service logs (if program module tables exist)
+        # Query 1: Structured beneficiary service logs
         try:
             service_logs = db.session.execute(
                 text("""
                     SELECT
-                        'service_log:' || id AS activity_id,
-                        created_at,
-                        COALESCE(description, 'Service log entry'),
-                        created_by_user_id
-                    FROM service_logs
-                    WHERE case_id IN (
-                        SELECT id FROM cases
-                        WHERE beneficiary_id = :beneficiary_id
-                    )
-                    ORDER BY created_at DESC
+                        'service_log:' || bsl.id AS activity_id,
+                        bsl.service_date,
+                        bsl.service_type,
+                        bsl.outcome_note,
+                        bsl.staff_user_id
+                    FROM beneficiary_service_logs bsl
+                    WHERE bsl.organization_id = :org_id
+                      AND bsl.beneficiary_id = :beneficiary_id
+                    ORDER BY bsl.service_date DESC
                 """),
-                {"beneficiary_id": beneficiary_id},
+                {"beneficiary_id": beneficiary_id, "org_id": organization_id},
             ).fetchall()
 
             for row in service_logs:
-                activity_id, created_at, description, created_by = row
-                actor_name = ActivityTimelineService._user_name(created_by)
+                activity_id, service_date, service_type, outcome_note, staff_user_id = row
+                actor_name = ActivityTimelineService._user_name(staff_user_id)
+                detail = outcome_note or "Service log entry"
 
                 items.append(
                     ActivityFeedItem(
                         activity_id=activity_id,
                         activity_type="service_log",
-                        occurred_at=created_at,
+                        occurred_at=service_date,
                         entity_type="beneficiary",
                         entity_id=beneficiary_id,
-                        actor_id=created_by,
+                        actor_id=staff_user_id,
                         actor_name=actor_name,
-                        summary=description,
-                        metadata={},
+                        summary=f"{service_type} — {detail}",
+                        metadata={"service_type": service_type},
                     )
                 )
         except Exception:
-            # If service_logs table doesn't exist, skip gracefully
             pass
 
-        # Query 2: Case status changes (from audit log if available)
+        # Query 2: Case activity stream (notes, status changes, calls, emails)
         try:
             case_events = db.session.execute(
                 text("""
                     SELECT
-                        'case_event:' || audit_log.id AS activity_id,
-                        audit_log.created_at,
-                        'Case status changed',
-                        audit_log.changed_by
-                    FROM audit_log
-                    JOIN cases ON cases.id = CAST(audit_log.row_id AS INTEGER)
-                    WHERE cases.beneficiary_id = :beneficiary_id
-                        AND audit_log.table_name = 'cases'
-                        AND audit_log.operation IN ('UPDATE')
-                    ORDER BY audit_log.created_at DESC
+                        'case_activity:' || ca.id AS activity_id,
+                        ca.created_at,
+                        ca.activity_type,
+                        COALESCE(ca.content, ''),
+                        ca.previous_status,
+                        ca.new_status,
+                        ca.actor_id
+                    FROM case_activities ca
+                    JOIN program_cases pc ON pc.id = ca.case_id
+                    WHERE pc.organization_id = :org_id
+                      AND pc.beneficiary_id = :beneficiary_id
+                    ORDER BY ca.created_at DESC
                 """),
-                {"beneficiary_id": beneficiary_id},
+                {"beneficiary_id": beneficiary_id, "org_id": organization_id},
             ).fetchall()
 
             for row in case_events:
-                activity_id, created_at, summary, changed_by = row
-                actor_name = ActivityTimelineService._user_name(changed_by)
+                activity_id, created_at, activity_type, content, previous_status, new_status, actor_id = row
+                actor_name = ActivityTimelineService._user_name(actor_id)
+
+                summary = content or f"Case activity: {activity_type}"
+                if activity_type == "status_change":
+                    summary = f"Case status changed: {previous_status or '-'} -> {new_status or '-'}"
 
                 items.append(
                     ActivityFeedItem(
@@ -291,18 +409,69 @@ class ActivityTimelineService:
                         occurred_at=created_at,
                         entity_type="beneficiary",
                         entity_id=beneficiary_id,
-                        actor_id=changed_by,
+                        actor_id=actor_id,
                         actor_name=actor_name,
                         summary=summary,
-                        metadata={},
+                        metadata={
+                            "case_activity_type": activity_type,
+                            "previous_status": previous_status,
+                            "new_status": new_status,
+                        },
                     )
                 )
         except Exception:
-            # If audit_log or cases table structure differs, skip gracefully
+            pass
+
+        # Query 3: Program case tasks linked to beneficiary
+        try:
+            case_tasks = db.session.execute(
+                text("""
+                    SELECT
+                        'program_case_task:' || pct.id AS activity_id,
+                        COALESCE(pct.completed_at, pct.due_date, pct.created_at) AS occurred_at,
+                        pct.title,
+                        pct.status,
+                        pct.priority,
+                        pct.due_date,
+                        pct.assigned_to_user_id
+                    FROM program_case_tasks pct
+                    JOIN program_cases pc ON pc.id = pct.case_id
+                    WHERE pct.organization_id = :org_id
+                      AND pc.beneficiary_id = :beneficiary_id
+                    ORDER BY COALESCE(pct.completed_at, pct.due_date, pct.created_at) DESC
+                """),
+                {"org_id": organization_id, "beneficiary_id": beneficiary_id},
+            ).fetchall()
+
+            for row in case_tasks:
+                activity_id, occurred_at, title, status, priority, due_date, assigned_to_user_id = row
+                actor_name = ActivityTimelineService._user_name(assigned_to_user_id)
+
+                items.append(
+                    ActivityFeedItem(
+                        activity_id=activity_id,
+                        activity_type="task",
+                        occurred_at=occurred_at,
+                        entity_type="beneficiary",
+                        entity_id=beneficiary_id,
+                        actor_id=assigned_to_user_id,
+                        actor_name=actor_name,
+                        summary=f"Case task ({status}) — {title}",
+                        metadata={
+                            "status": status,
+                            "priority": priority,
+                            "due_date": due_date,
+                        },
+                    )
+                )
+        except Exception:
             pass
 
         # Sort by occurred_at descending (newest first)
         items.sort(key=lambda x: x.occurred_at, reverse=True)
+
+        if search_query:
+            items = [item for item in items if ActivityTimelineService._item_matches_query(item, search_query)]
 
         # Apply pagination
         paginated = items[offset : offset + limit]
@@ -316,6 +485,8 @@ class ActivityTimelineService:
         limit: int = 50,
         offset: int = 0,
         entity_type_filter: str | None = None,
+        activity_type_filter: str | None = None,
+        search_query: str | None = None,
     ) -> list[ActivityFeedItem]:
         """Fetch organization-wide recent activity feed.
 
@@ -334,24 +505,48 @@ class ActivityTimelineService:
         items: list[ActivityFeedItem] = []
 
         # Query 1: Recent interactions
-        recent_interactions = db.session.execute(
-            text("""
-                SELECT
-                    'interaction:' || di.id AS activity_id,
-                    di.occurred_at,
-                    di.donor_id,
-                    di.channel,
-                    di.summary,
-                    di.created_by_user_id,
-                    d.name
-                FROM donor_interactions di
-                JOIN donors d ON d.id = di.donor_id
-                WHERE d.organization_id = :org_id
-                ORDER BY di.occurred_at DESC
-                LIMIT :limit
-            """),
-            {"org_id": organization_id, "limit": limit},
-        ).fetchall()
+        recent_interactions: list[tuple[Any, ...]] = []
+        try:
+            recent_interactions = db.session.execute(
+                text("""
+                    SELECT
+                        'interaction:' || di.id AS activity_id,
+                        di.occurred_at,
+                        di.donor_id,
+                        di.channel,
+                        di.summary,
+                        di.created_by_user_id,
+                        d.name
+                    FROM donor_interactions di
+                    JOIN donors d ON d.id = di.donor_id
+                    WHERE d.organization_id = :org_id
+                    ORDER BY di.occurred_at DESC
+                    LIMIT :limit
+                """),
+                {"org_id": organization_id, "limit": limit},
+            ).fetchall()
+        except Exception:
+            try:
+                recent_interactions = db.session.execute(
+                    text("""
+                        SELECT
+                            'interaction:' || i.id AS activity_id,
+                            COALESCE(i.updated_at, i.created_at) AS occurred_at,
+                            i.donor_id,
+                            COALESCE(i.type, 'other') AS channel,
+                            COALESCE(i.subject, i.notes, 'Interaction logged') AS summary,
+                            NULL AS created_by_user_id,
+                            d.name
+                        FROM interactions i
+                        JOIN donors d ON d.id = i.donor_id
+                        WHERE d.organization_id = :org_id
+                        ORDER BY COALESCE(i.updated_at, i.created_at) DESC
+                        LIMIT :limit
+                    """),
+                    {"org_id": organization_id, "limit": limit},
+                ).fetchall()
+            except Exception:
+                recent_interactions = []
 
         for row in recent_interactions:
             (
@@ -383,6 +578,72 @@ class ActivityTimelineService:
                 )
             )
 
+        # Query 1b: Recent donor-linked tasks
+        try:
+            recent_tasks = db.session.execute(
+                text("""
+                    SELECT
+                        'task:' || t.id AS activity_id,
+                        COALESCE(t.completed_at, t.due_date, t.created_at) AS occurred_at,
+                        t.donor_id,
+                        t.title,
+                        t.status,
+                        t.priority,
+                        t.due_date,
+                        t.completed_at,
+                        t.assigned_to_id,
+                        d.name
+                    FROM tasks t
+                    LEFT JOIN donors d ON d.id = t.donor_id
+                    WHERE t.organization_id = :org_id
+                    ORDER BY COALESCE(t.completed_at, t.due_date, t.created_at) DESC
+                    LIMIT :limit
+                """),
+                {"org_id": organization_id, "limit": limit},
+            ).fetchall()
+
+            for row in recent_tasks:
+                (
+                    activity_id,
+                    occurred_at,
+                    donor_id,
+                    title,
+                    status,
+                    priority,
+                    due_date,
+                    completed_at,
+                    assigned_to_id,
+                    donor_name,
+                ) = row
+
+                entity_type = "donor" if donor_id else "organization"
+                entity_id = int(donor_id or 0)
+                if entity_type_filter and entity_type_filter != entity_type:
+                    continue
+
+                actor_name = ActivityTimelineService._user_name(assigned_to_id)
+                lead = donor_name if donor_name else "Org"
+                items.append(
+                    ActivityFeedItem(
+                        activity_id=activity_id,
+                        activity_type="task",
+                        occurred_at=occurred_at,
+                        entity_type=entity_type,
+                        entity_id=entity_id,
+                        actor_id=assigned_to_id,
+                        actor_name=actor_name,
+                        summary=f"{lead}: Task ({status}) — {title}",
+                        metadata={
+                            "status": status,
+                            "priority": priority,
+                            "due_date": due_date,
+                            "completed": completed_at is not None,
+                        },
+                    )
+                )
+        except Exception:
+            pass
+
         # Query 2: Recent donations
         recent_donations = db.session.execute(
             text("""
@@ -406,7 +667,7 @@ class ActivityTimelineService:
             if entity_type_filter and entity_type_filter != "donor":
                 continue
 
-            amount_dollars = f"${amount / 100:.2f}" if amount else "$0.00"
+            amount_dollars = f"${float(amount or 0):,.2f}"
             summary_text = f"{donor_name}: Donation received — {amount_dollars}"
 
             items.append(
@@ -422,6 +683,58 @@ class ActivityTimelineService:
                     metadata={"amount": amount, "amount_formatted": amount_dollars},
                 )
             )
+
+        # Query 3: Recent case activities tied to beneficiaries
+        try:
+            recent_case_activity = db.session.execute(
+                text("""
+                    SELECT
+                        'case_activity:' || ca.id AS activity_id,
+                        ca.created_at,
+                        pc.beneficiary_id,
+                        b.first_name,
+                        b.last_name,
+                        ca.activity_type,
+                        COALESCE(ca.content, ''),
+                        ca.actor_id
+                    FROM case_activities ca
+                    JOIN program_cases pc ON pc.id = ca.case_id
+                    LEFT JOIN beneficiaries b ON b.id = pc.beneficiary_id
+                    WHERE ca.organization_id = :org_id
+                    ORDER BY ca.created_at DESC
+                    LIMIT :limit
+                """),
+                {"org_id": organization_id, "limit": limit},
+            ).fetchall()
+
+            for row in recent_case_activity:
+                activity_id, created_at, beneficiary_id, first_name, last_name, case_activity_type, content, actor_id = row
+                if entity_type_filter and entity_type_filter != "beneficiary":
+                    continue
+                beneficiary_name = f"{(first_name or '').strip()} {(last_name or '').strip()}".strip() or "Beneficiary"
+                actor_name = ActivityTimelineService._user_name(actor_id)
+                summary_text = content or f"{beneficiary_name}: Case activity ({case_activity_type})"
+                items.append(
+                    ActivityFeedItem(
+                        activity_id=activity_id,
+                        activity_type="case_note",
+                        occurred_at=created_at,
+                        entity_type="beneficiary",
+                        entity_id=int(beneficiary_id or 0),
+                        actor_id=actor_id,
+                        actor_name=actor_name,
+                        summary=summary_text,
+                        metadata={"case_activity_type": case_activity_type},
+                    )
+                )
+        except Exception:
+            pass
+
+        if activity_type_filter:
+            items = [item for item in items if item.activity_type == activity_type_filter]
+
+        if search_query:
+            items = [item for item in items if ActivityTimelineService._item_matches_query(item, search_query)]
 
         # Sort by occurred_at descending (newest first) and apply pagination
         items.sort(key=lambda x: x.occurred_at, reverse=True)

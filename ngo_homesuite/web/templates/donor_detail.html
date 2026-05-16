@@ -81,6 +81,23 @@
     {% endif %}
 </div>
 
+<div class="card" style="margin-bottom: 1rem;">
+    <h3 style="margin-bottom: 0.75rem;">Search Activity Timeline</h3>
+    <form method="get" style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+        <input
+            type="search"
+            name="activity_q"
+            value="{{ activity_query or '' }}"
+            placeholder="Search notes, channel, task, status..."
+            style="flex:1; min-width: 220px;"
+        >
+        <button type="submit" class="btn btn-secondary">Filter</button>
+        {% if activity_query %}
+        <a href="{{ url_for('main.donor_detail', donor_id=donor.id) }}" class="btn btn-secondary">Clear</a>
+        {% endif %}
+    </form>
+</div>
+
 {% include '_activity_timeline.html' with context %}
 
 <div class="card" style="margin-bottom: 1rem;">

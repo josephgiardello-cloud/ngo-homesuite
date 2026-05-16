@@ -63,6 +63,19 @@ def test_summarize_donor_returns_risk_and_next_action(registry):
     assert isinstance(payload["risk_flags"], list)
 
 
+def test_summarize_activity_timeline_returns_summary_and_actions(registry):
+    payload = registry.execute(
+        "summarize_activity_timeline",
+        {"limit": 20, "entity_type": "donor"},
+        _runtime_ctx(),
+    )
+
+    assert isinstance(payload["summary"], str) and payload["summary"]
+    assert isinstance(payload["next_best_action"], str) and payload["next_best_action"]
+    assert isinstance(payload["recommended_actions"], list)
+    assert isinstance(payload["activity_totals"], dict)
+
+
 def test_find_similar_donors_returns_ranked_matches(registry):
     payload = registry.execute("find_similar_donors", {"donor_id": 1, "limit": 3}, _runtime_ctx())
 

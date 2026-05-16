@@ -212,3 +212,19 @@ def test_v2_mutating_endpoints_reject_cross_tenant_references(client, app):
         json={"new_status": "closed"},
     )
     assert advance_foreign_case.status_code == 404
+
+
+def test_v2_activity_feed_and_insights_contract(client):
+    _login_admin(client)
+
+    feed = client.get("/api/v2/activity/global?limit=20&entity_type=donor&q=donation")
+    assert feed.status_code == 200
+    assert isinstance(feed.get_json(), list)
+
+    insights = client.get("/api/v2/activity/insights?limit=20&entity_type=donor")
+    assert insights.status_code == 200
+    payload = insights.get_json()
+    assert isinstance(payload, dict)
+    assert isinstance(payload.get("summary"), str)
+    assert isinstance(payload.get("next_best_action"), str)
+    assert isinstance(payload.get("recommended_actions"), list)

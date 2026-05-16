@@ -126,6 +126,40 @@
 </div>
 {% endif %}
 
+<div class="card" style="margin-top:1rem; margin-bottom:1rem;">
+    <h3>AI Activity Insights</h3>
+    {% if beneficiary_ai_insights %}
+    <p style="margin-bottom:0.75rem;">{{ beneficiary_ai_insights.summary }}</p>
+    <p><strong>Next Best Action:</strong> {{ beneficiary_ai_insights.next_best_action }}</p>
+    {% if beneficiary_ai_insights.recommended_actions %}
+    <ul style="margin-top:0.5rem;">
+        {% for action in beneficiary_ai_insights.recommended_actions %}
+        <li>{{ action }}</li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+    {% else %}
+    <p class="text-muted">AI insights are currently unavailable for this beneficiary.</p>
+    {% endif %}
+</div>
+
+<div class="card" style="margin-bottom: 1rem;">
+    <h3 style="margin-bottom: 0.75rem;">Search Activity Timeline</h3>
+    <form method="get" style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+        <input
+            type="search"
+            name="activity_q"
+            value="{{ activity_query or '' }}"
+            placeholder="Search notes, activity type, task status..."
+            style="flex:1; min-width: 220px;"
+        >
+        <button type="submit" class="btn btn-secondary">Filter</button>
+        {% if activity_query %}
+        <a href="{{ url_for('main.beneficiary_detail', beneficiary_id=beneficiary.id) }}" class="btn btn-secondary">Clear</a>
+        {% endif %}
+    </form>
+</div>
+
 {% include '_activity_timeline.html' with context %}
 
 <style>

@@ -514,12 +514,19 @@ def get_donor_activity_timeline(donor_id: int):
 
     limit = request.args.get("limit", 100, type=int)
     offset = request.args.get("offset", 0, type=int)
+    search_query = (request.args.get("q") or "").strip() or None
 
     # Validate pagination bounds
     limit = min(limit, 500)
     offset = max(offset, 0)
 
-    items = ActivityTimelineService.get_donor_timeline(_org_id(), donor_id, limit=limit, offset=offset)
+    items = ActivityTimelineService.get_donor_timeline(
+        _org_id(),
+        donor_id,
+        limit=limit,
+        offset=offset,
+        search_query=search_query,
+    )
     return jsonify([item.to_dict() for item in items])
 
 
@@ -531,12 +538,19 @@ def get_beneficiary_activity_timeline(beneficiary_id: int):
 
     limit = request.args.get("limit", 100, type=int)
     offset = request.args.get("offset", 0, type=int)
+    search_query = (request.args.get("q") or "").strip() or None
 
     # Validate pagination bounds
     limit = min(limit, 500)
     offset = max(offset, 0)
 
-    items = ActivityTimelineService.get_beneficiary_timeline(_org_id(), beneficiary_id, limit=limit, offset=offset)
+    items = ActivityTimelineService.get_beneficiary_timeline(
+        _org_id(),
+        beneficiary_id,
+        limit=limit,
+        offset=offset,
+        search_query=search_query,
+    )
     return jsonify([item.to_dict() for item in items])
 
 
@@ -549,6 +563,8 @@ def get_organization_activity_feed():
     limit = request.args.get("limit", 50, type=int)
     offset = request.args.get("offset", 0, type=int)
     entity_type = request.args.get("entity_type")  # Optional: "donor", "beneficiary", etc.
+    activity_type = request.args.get("activity_type")
+    search_query = (request.args.get("q") or "").strip() or None
 
     # Validate pagination bounds
     limit = min(limit, 500)
@@ -559,8 +575,37 @@ def get_organization_activity_feed():
         limit=limit,
         offset=offset,
         entity_type_filter=entity_type,
+        activity_type_filter=activity_type,
+        search_query=search_query,
     )
     return jsonify([item.to_dict() for item in items])
+
+
+@v2_bp.route("/activity/insights", methods=["GET"])
+@login_required
+def get_activity_insights():
+    """AI Copilot summary + suggested next actions for the current activity feed context."""
+    from ngo_homesuite.ai.copilot_tools import CopilotToolRegistry
+
+    limit = request.args.get("limit", 40, type=int)
+    entity_type = request.args.get("entity_type")
+    activity_type = request.args.get("activity_type")
+    search_query = (request.args.get("q") or "").strip() or None
+
+    payload = CopilotToolRegistry().execute(
+        "summarize_activity_timeline",
+        {
+            "limit": max(1, min(limit, 100)),
+            "entity_type": entity_type,
+            "activity_type": activity_type,
+            "query": search_query,
+        },
+        {
+            "organization_id": _org_id(),
+            "actor": getattr(current_user, "username", "web"),
+        },
+    )
+    return jsonify(payload)
 
 
 # ------------------------------------------------------------------ #

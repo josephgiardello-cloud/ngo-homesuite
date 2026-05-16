@@ -76,6 +76,21 @@ class CopilotToolRegistry:
                 },
                 handler=self._summarize_donor,
             ),
+            "summarize_activity_timeline": CopilotTool(
+                name="summarize_activity_timeline",
+                description="Summarize a unified activity feed and recommend next actions for staff.",
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "entity_type": {"type": "string", "enum": ["donor", "beneficiary", "volunteer", "organization"]},
+                        "entity_id": {"type": "integer", "minimum": 1},
+                        "activity_type": {"type": "string"},
+                        "query": {"type": "string"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 40},
+                    },
+                },
+                handler=self._summarize_activity_timeline,
+            ),
             "find_similar_donors": CopilotTool(
                 name="find_similar_donors",
                 description="Find donors with similar giving behavior and profile signals to a reference donor.",
@@ -634,6 +649,101 @@ class CopilotToolRegistry:
             "next_best_action": actions[0] if actions else "Send a stewardship update and confirm next engagement milestone.",
             "recommended_actions": actions,
             "signals": metrics["predictions"],
+        }
+
+    def _summarize_activity_timeline(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
+        org_id = self._org_filter(runtime_ctx)
+        if org_id is None:
+            return {"error": "organization_id is required in runtime context"}
+
+        from ngo_homesuite.services.activity_timeline_service import ActivityTimelineService
+
+        entity_type = (str(args.get("entity_type") or "").strip().lower() or None)
+        entity_id = int(args.get("entity_id", 0) or 0)
+        activity_type = (str(args.get("activity_type") or "").strip().lower() or None)
+        query = (str(args.get("query") or "").strip() or None)
+        limit = max(1, min(int(args.get("limit", 40) or 40), 100))
+
+        if entity_type == "donor" and entity_id > 0:
+            items = ActivityTimelineService.get_donor_timeline(
+                org_id,
+                entity_id,
+                limit=limit,
+                offset=0,
+                search_query=query,
+            )
+        elif entity_type == "beneficiary" and entity_id > 0:
+            items = ActivityTimelineService.get_beneficiary_timeline(
+                org_id,
+                entity_id,
+                limit=limit,
+                offset=0,
+                search_query=query,
+            )
+        else:
+            items = ActivityTimelineService.get_organization_activity(
+                org_id,
+                limit=limit,
+                offset=0,
+                entity_type_filter=entity_type,
+                activity_type_filter=activity_type,
+                search_query=query,
+            )
+
+        by_type: dict[str, int] = {}
+        by_entity: dict[str, int] = {}
+        overdue_tasks = 0
+        open_followups = 0
+        now = datetime.now(timezone.utc).date().isoformat()
+
+        for item in items:
+            by_type[item.activity_type] = by_type.get(item.activity_type, 0) + 1
+            by_entity[item.entity_type] = by_entity.get(item.entity_type, 0) + 1
+
+            if item.activity_type == "task":
+                status = str((item.metadata or {}).get("status") or "").lower()
+                due_date = str((item.metadata or {}).get("due_date") or "")
+                if status not in {"done", "cancelled"} and due_date and due_date[:10] < now:
+                    overdue_tasks += 1
+
+            if item.activity_type == "interaction":
+                completed = bool((item.metadata or {}).get("completed"))
+                follow_up_due = str((item.metadata or {}).get("follow_up_due") or "")
+                if not completed and follow_up_due and follow_up_due[:10] < now:
+                    open_followups += 1
+
+        recommendations: list[str] = []
+        if overdue_tasks > 0:
+            recommendations.append(f"Resolve {overdue_tasks} overdue task(s) first to prevent service and stewardship slippage.")
+        if open_followups > 0:
+            recommendations.append(f"Close or reschedule {open_followups} overdue follow-up interaction(s).")
+        if by_type.get("donation", 0) > 0 and by_type.get("interaction", 0) == 0:
+            recommendations.append("Add stewardship interactions after recent donations to preserve relationship momentum.")
+        if not recommendations:
+            recommendations.append("Timeline is healthy; continue logging interactions and keep task due dates current.")
+
+        summary = (
+            f"Reviewed {len(items)} activity item(s). Top categories: "
+            + ", ".join(f"{k}={v}" for k, v in sorted(by_type.items(), key=lambda pair: pair[1], reverse=True)[:4])
+        )
+
+        return {
+            "summary": summary,
+            "recommended_actions": recommendations,
+            "next_best_action": recommendations[0],
+            "activity_totals": {
+                "total": len(items),
+                "by_type": by_type,
+                "by_entity": by_entity,
+                "overdue_tasks": overdue_tasks,
+                "overdue_followups": open_followups,
+            },
+            "scope": {
+                "entity_type": entity_type,
+                "entity_id": entity_id if entity_id > 0 else None,
+                "activity_type": activity_type,
+                "query": query,
+            },
         }
 
     def _find_similar_donors(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:

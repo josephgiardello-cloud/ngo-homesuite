@@ -1081,10 +1081,17 @@ def donor_detail(donor_id: int):
     except Exception:
         donor_ai_insights = None
 
+    activity_query = (request.args.get('activity_q') or '').strip()
+
     # Fetch unified activity timeline
     timeline_items = []
     try:
-        timeline_items = ActivityTimelineService.get_donor_timeline(org.id, donor_id, limit=25)
+        timeline_items = ActivityTimelineService.get_donor_timeline(
+            org.id,
+            donor_id,
+            limit=25,
+            search_query=activity_query or None,
+        )
     except Exception:
         # If timeline fetch fails, continue without it
         timeline_items = []
@@ -1100,6 +1107,7 @@ def donor_detail(donor_id: int):
         recent_donations=donor_summary['recent_donations'],
         recurring_plans=donor_summary['recurring_plans'],
         timeline_items=timeline_items,
+        activity_query=activity_query,
         active_page='donors',
         ai_context=ai_context,
         donor_ai_insights=donor_ai_insights,
@@ -2081,13 +2089,40 @@ def beneficiary_detail(beneficiary_id: int):
 
     cases = list_cases(org.id, beneficiary_id=beneficiary_id)
 
+    activity_query = (request.args.get('activity_q') or '').strip()
+
     # Fetch unified activity timeline
     timeline_items = []
     try:
-        timeline_items = ActivityTimelineService.get_beneficiary_timeline(org.id, beneficiary_id, limit=25)
+        timeline_items = ActivityTimelineService.get_beneficiary_timeline(
+            org.id,
+            beneficiary_id,
+            limit=25,
+            search_query=activity_query or None,
+        )
     except Exception:
         # If timeline fetch fails, continue without it
         timeline_items = []
+
+    beneficiary_ai_insights = None
+    try:
+        beneficiary_ai_insights = CopilotToolRegistry().execute(
+            'summarize_activity_timeline',
+            {
+                'entity_type': 'beneficiary',
+                'entity_id': beneficiary.id,
+                'limit': 25,
+                'query': activity_query or None,
+            },
+            {
+                'organization_id': org.id,
+                'actor': getattr(current_user, 'username', 'web'),
+            },
+        )
+        if isinstance(beneficiary_ai_insights, dict) and beneficiary_ai_insights.get('error'):
+            beneficiary_ai_insights = None
+    except Exception:
+        beneficiary_ai_insights = None
 
     ai_context = {
         'active_page': 'beneficiaries',
@@ -2101,6 +2136,8 @@ def beneficiary_detail(beneficiary_id: int):
         beneficiary=beneficiary,
         cases=cases,
         timeline_items=timeline_items,
+        activity_query=activity_query,
+        beneficiary_ai_insights=beneficiary_ai_insights,
         active_page='beneficiaries',
         ai_context=ai_context,
     )

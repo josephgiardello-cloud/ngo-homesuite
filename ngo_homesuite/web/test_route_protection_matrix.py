@@ -33,6 +33,7 @@ ROUTE_POLICY_MANIFEST: dict[str, RoutePolicy] = {
     "/api/v1/metrics": RoutePolicy(access="authenticated"),
     "/api/v1/workflows": RoutePolicy(access="authenticated"),
     "/api/v2/activity/global": RoutePolicy(access="authenticated"),
+    "/api/v2/activity/insights": RoutePolicy(access="authenticated"),
     "/api/v2/tasks/my": RoutePolicy(access="authenticated"),
         "/api/v2/tasks/reminders": RoutePolicy(access="authenticated"),
     "/api/v2/cases": RoutePolicy(access="authenticated"),
