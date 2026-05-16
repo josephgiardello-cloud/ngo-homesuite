@@ -7,7 +7,7 @@ Date: 2026-05-16
 The grant bounded context now has a dedicated package:
 
 - `ngo_homesuite/grants/`
-  - `models.py`: canonical grant model imports for domain usage
+  - `models.py`: canonical grant model definitions and ownership point
   - `exceptions.py`: grant-specific exception access
   - `types.py`: grant value types/enums
   - `audit.py`: grant audit payload helpers
@@ -31,6 +31,11 @@ Suggested CI grep gate (follow-up):
 - Fail build if `ngo_homesuite/web/**/*.py` contains `from ngo_homesuite.services.grant_`.
 
 ## Current Service Ownership Boundaries
+
+Model ownership note:
+
+- Grant-domain SQLAlchemy classes now live in `ngo_homesuite/grants/models.py`.
+- `ngo_homesuite/models/core.py` re-exports those classes for backward-compatible imports.
 
 - `ngo_homesuite/services/grant_service.py`
   - Aggregate facade for grant lifecycle transitions, budget lines, allocations, disbursements, and reporting utilities.
