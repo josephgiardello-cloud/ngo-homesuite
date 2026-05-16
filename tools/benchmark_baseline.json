@@ -1,0 +1,11 @@
+{
+  "overall": {
+    "p95_ms": 150.0
+  },
+  "endpoints": {
+    "/health": {"p95_ms": 180.0},
+    "/": {"p95_ms": 180.0},
+    "/give": {"p95_ms": 220.0},
+    "/p2p/leaderboard": {"p95_ms": 260.0}
+  }
+}

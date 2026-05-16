@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import sqlite3
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from ..auth.session import CURRENT_USER, require_role
 from ..config import DEFAULT_EXPORT_DIR
@@ -14,8 +14,9 @@ from ..prompts import prompt_optional, utc_now_compact
 
 def _export_query_to_csv(cur: Any, sql: str, params: tuple[Any, ...], out_path: Path) -> None:
     cur.execute(sql, params)
-    rows = cur.fetchall() or []
-    headers = [d[0] for d in (cur.description or [])]
+    rows = cast(list[tuple[Any, ...]], cur.fetchall() or [])
+    description = cast(list[tuple[Any, ...]], cur.description or [])
+    headers: list[str] = [str(d[0]) for d in description]
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -25,7 +26,7 @@ def _export_query_to_csv(cur: Any, sql: str, params: tuple[Any, ...], out_path: 
 
 def _table_has_column(cur: Any, table_name: str, column_name: str) -> bool:
     cur.execute(f"PRAGMA table_info({table_name})")
-    rows = cur.fetchall() or []
+    rows = cast(list[tuple[Any, ...]], cur.fetchall() or [])
     return any(str(row[1]) == column_name for row in rows if len(row) > 1)
 
 

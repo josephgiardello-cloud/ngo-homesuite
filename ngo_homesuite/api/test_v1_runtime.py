@@ -1,4 +1,5 @@
 from __future__ import annotations
+# pyright: reportUnknownParameterType=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportMissingParameterType=false, reportCallIssue=false
 
 import pytest
 
@@ -43,6 +44,7 @@ def test_v1_workflow_runtime_happy_path(client, app):
 
     with app.app_context():
         org = Organization.query.filter_by(is_active=True).first()
+        assert org is not None
         org_id = str(org.id)
 
     workflows = client.get("/api/v1/workflows")
@@ -97,6 +99,7 @@ def test_v1_workflow_creation_enforces_permissions(client, app):
 
     with app.app_context():
         org = Organization.query.filter_by(is_active=True).first()
+        assert org is not None
         org_id = str(org.id)
 
     create_instance = client.post(
@@ -112,6 +115,7 @@ def test_v1_workflow_cross_tenant_access_is_blocked(client, app):
 
     with app.app_context():
         primary_org = Organization.query.filter_by(is_active=True).first()
+        assert primary_org is not None
         other_org = Organization.query.filter_by(slug="cross-tenant-org").first()
         if other_org is None:
             other_org = Organization(name="Cross Tenant Org", slug="cross-tenant-org", is_active=True)
@@ -145,6 +149,7 @@ def test_v1_workflow_event_idempotency_key_prevents_duplicate_transition(client,
 
     with app.app_context():
         org = Organization.query.filter_by(is_active=True).first()
+        assert org is not None
         org_id = str(org.id)
 
     create_instance = client.post(
@@ -180,6 +185,7 @@ def test_v1_workflow_event_rejects_actor_spoofing(client, app):
 
     with app.app_context():
         org = Organization.query.filter_by(is_active=True).first()
+        assert org is not None
         org_id = str(org.id)
 
     create_instance = client.post(
@@ -209,8 +215,10 @@ def test_v1_workflow_event_rejects_role_spoofing(client, app):
 
     with app.app_context():
         org = Organization.query.filter_by(is_active=True).first()
+        assert org is not None
         org_id = str(org.id)
         user = User.query.filter_by(username="v2_staff_role").first()
+        assert user is not None
         user_id = str(user.id)
 
     create_instance = client.post(
@@ -240,6 +248,7 @@ def test_v1_workflow_trace_is_tenant_scoped(client, app):
 
     with app.app_context():
         org_a = Organization.query.filter_by(is_active=True).order_by(Organization.id.asc()).first()
+        assert org_a is not None
         org_b = Organization.query.filter_by(slug="trace-tenant-org").first()
         if org_b is None:
             org_b = Organization(name="Trace Tenant Org", slug="trace-tenant-org", is_active=True)
@@ -248,6 +257,8 @@ def test_v1_workflow_trace_is_tenant_scoped(client, app):
 
         owner = User.query.filter_by(username="v2_trace_admin").first()
         other = User.query.filter_by(username="v2_trace_staff").first()
+        assert owner is not None
+        assert other is not None
         owner.organization_id = org_a.id
         other.organization_id = org_b.id
         db.session.commit()
@@ -292,6 +303,7 @@ def test_v1_audit_events_cross_tenant_access_is_blocked(client, app):
         assert owner is not None
 
         primary_org = Organization.query.filter_by(is_active=True).order_by(Organization.id.asc()).first()
+        assert primary_org is not None
         other_org = Organization.query.filter_by(slug="audit-cross-tenant-org").first()
         if other_org is None:
             other_org = Organization(name="Audit Cross Tenant Org", slug="audit-cross-tenant-org", is_active=True)

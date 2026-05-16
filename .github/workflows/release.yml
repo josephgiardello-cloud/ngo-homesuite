@@ -38,6 +38,12 @@ jobs:
         run: |
           pytest ngo_homesuite/ -v --maxfail=10 --tb=short
 
+      - name: Run tenant boundary gate
+        env:
+          NGO_HOMESUITE_DB_KEY: ""
+        run: |
+          pytest ngo_homesuite/web/test_cross_tenant_boundaries.py ngo_homesuite/web/test_v2_route_contracts.py ngo_homesuite/web/test_rbac_tenant_route_audit.py ngo_homesuite/api/test_v1_runtime.py -v --maxfail=10
+
       - name: Validate OpenAPI document
         run: |
           python - <<'PY'
@@ -58,7 +64,7 @@ jobs:
       - name: Start local release candidate
         env:
           SECRET_KEY: release-smoke-secret
-          DATABASE_URL: sqlite:///:memory:
+          DATABASE_URL: 'sqlite:///:memory:'
           FLASK_ENV: development
           WTF_CSRF_ENABLED: "0"
         run: |
@@ -89,7 +95,7 @@ jobs:
         run: docker build -t ngo-homesuite:release .
 
       - name: Scan image with Trivy
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
         with:
           image-ref: ngo-homesuite:release
           format: table

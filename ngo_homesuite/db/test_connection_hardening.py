@@ -1,8 +1,9 @@
+# pyright: reportUnknownParameterType=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportMissingParameterType=false, reportPrivateUsage=false
+
 import os
 import tempfile
 import pytest
 import sqlite3
-import stat
 from pathlib import Path
 from ngo_homesuite.db import connection
 from ngo_homesuite.db.connection import FatalDBError

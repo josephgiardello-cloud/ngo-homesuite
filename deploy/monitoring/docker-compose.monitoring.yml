@@ -11,6 +11,7 @@ services:
     volumes:
       - ./deploy/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./deploy/monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - ${PROMETHEUS_SCRAPE_PASSWORD_FILE:?Set PROMETHEUS_SCRAPE_PASSWORD_FILE to a readable secret file path}:/run/secrets/prometheus_scrape_password:ro
       - prometheus_data:/prometheus
     ports:
       - "9090:9090"
@@ -27,7 +28,9 @@ services:
   promtail:
     image: grafana/promtail:3.1.1
     container_name: ngo-homesuite-promtail
-    command: -config.file=/etc/promtail/config.yml
+    command:
+      - -config.file=/etc/promtail/config.yml
+      - -config.expand-env=true
     volumes:
       - ./deploy/monitoring/promtail-config.yml:/etc/promtail/config.yml:ro
       - ./logs:/var/log/ngo_homesuite:ro

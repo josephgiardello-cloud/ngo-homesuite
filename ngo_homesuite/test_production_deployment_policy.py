@@ -51,13 +51,20 @@ def test_runtime_monitoring_and_compose_artifacts_enforce_production_policy() ->
     promtail_service = monitoring["services"]["promtail"]
     promtail_volumes = "\n".join(promtail_service["volumes"])
     assert "./logs:/var/log/ngo_homesuite:ro" in promtail_volumes
-    assert promtail["clients"][0]["url"] == "http://loki:3100/loki/api/v1/push"
+
+    prometheus_service = monitoring["services"]["prometheus"]
+    prometheus_volumes = "\n".join(prometheus_service["volumes"])
+    assert "/run/secrets/prometheus_scrape_password:ro" in prometheus_volumes
+
+    assert promtail["clients"][0]["url"] == "${LOKI_PUSH_URL:-http://loki:3100/loki/api/v1/push}"
     scrape = promtail["scrape_configs"][0]["static_configs"][0]["labels"]
     assert scrape["__path__"] == "/var/log/ngo_homesuite/*.log"
 
     app_scrape = prometheus["scrape_configs"][0]
     assert app_scrape["metrics_path"] == "/api/v1/metrics"
     assert app_scrape["basic_auth"]["username"] == "observability"
+    assert app_scrape["basic_auth"]["password_file"] == "/run/secrets/prometheus_scrape_password"
+    assert "password" not in app_scrape["basic_auth"]
 
 
 def test_dockerfile_runs_non_root_with_healthcheck() -> None:

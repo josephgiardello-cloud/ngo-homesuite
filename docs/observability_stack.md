@@ -12,10 +12,13 @@ This project ships baseline observability deployment artifacts under `deploy/mon
 ## Quick Start
 
 1. Ensure the app container is running as `app:8000` in your network.
-2. Update credentials in `deploy/monitoring/prometheus.yml`.
-3. Start monitoring stack:
+2. Create a file containing the Prometheus scrape password and export `PROMETHEUS_SCRAPE_PASSWORD_FILE` to that absolute path.
+3. Optionally set `LOKI_PUSH_URL` to forward logs to an external Loki-compatible endpoint.
+4. Start monitoring stack:
 
 ```bash
+export PROMETHEUS_SCRAPE_PASSWORD_FILE=/absolute/path/to/prometheus_scrape_password.txt
+export LOKI_PUSH_URL=https://<external-loki-host>/loki/api/v1/push
 docker compose -f deploy/monitoring/docker-compose.monitoring.yml up -d
 ```
 
@@ -34,6 +37,7 @@ The baseline rules alert on:
 
 ## Production Notes
 
-- Replace placeholder auth values with secret-manager injected values.
+- Keep scrape passwords in mounted secret files; avoid inline secrets in Prometheus config.
+- Set `LOKI_PUSH_URL` through deployment automation when forwarding logs to managed backends.
 - Keep alert thresholds tuned for your real traffic profile.
 - Route alerts to your incident channel/on-call destination.

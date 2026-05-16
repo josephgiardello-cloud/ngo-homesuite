@@ -35,6 +35,8 @@ Use this checklist before production deployment.
 
 - Run full test suite in CI on release branch.
 - Add smoke tests for public donation and P2P paths.
+- Run DAST smoke checks and store artifacts for each release candidate.
+- Run scalability benchmark regression checks against baseline thresholds.
 - Configure process supervisor with restart policy and liveness checks.
 - Confirm backup job schedule and retention policy.
 

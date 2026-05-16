@@ -36,3 +36,9 @@ def test_promtail_config_points_to_application_logs() -> None:
     content = _read("deploy/monitoring/promtail-config.yml")
     assert "__path__: /var/log/ngo_homesuite/*.log" in content
     assert "/loki/api/v1/push" in content
+    assert "${LOKI_PUSH_URL:-http://loki:3100/loki/api/v1/push}" in content
+
+
+def test_monitoring_compose_enables_promtail_env_expansion() -> None:
+    content = _read("deploy/monitoring/docker-compose.monitoring.yml")
+    assert "-config.expand-env=true" in content

@@ -1,0 +1,27 @@
+{
+  "base_url": "http://127.0.0.1:8765",
+  "duration_ms": 91.0,
+  "results": [
+    {
+      "name": "security_headers_root",
+      "passed": true,
+      "detail": "status=200"
+    },
+    {
+      "name": "logout_get_blocked",
+      "passed": true,
+      "detail": "status=405"
+    },
+    {
+      "name": "register_for_open_redirect_probe",
+      "passed": true,
+      "detail": "status=200"
+    },
+    {
+      "name": "login_open_redirect_blocked",
+      "passed": true,
+      "detail": "status=200 location="
+    }
+  ],
+  "passed": true
+}

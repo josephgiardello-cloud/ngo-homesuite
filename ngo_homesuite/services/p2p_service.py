@@ -30,6 +30,8 @@ def _slugify(text: str) -> str:
 
 def _unique_slug(base: str) -> str:
     slug = _slugify(base)
+    if not slug:
+        slug = "fundraiser"
     existing = db.session.scalars(select(P2PPage).where(P2PPage.public_slug == slug).limit(1)).first()
     if existing is None:
         return slug
@@ -66,13 +68,27 @@ def create_page(
     if donor is None:
         raise ValueError("invalid resource reference")
 
-    public_slug = _unique_slug(slug or title)
+    normalized_title = (title or "").strip()
+    if not normalized_title:
+        raise ValueError("invalid fundraiser title")
+    if len(normalized_title) > 180:
+        raise ValueError("invalid fundraiser title")
+
+    normalized_goal = float(goal_amount or 0.0)
+    if normalized_goal < 0:
+        raise ValueError("invalid fundraiser goal")
+
+    normalized_story = (story or "").strip() or None
+    if normalized_story and len(normalized_story) > 5000:
+        raise ValueError("invalid fundraiser story")
+
+    public_slug = _unique_slug(slug or normalized_title)
     page = P2PPage(
         organization_id=organization_id,
         donor_id=donor_id,
-        title=title,
-        story=story,
-        goal_amount=goal_amount or 0.0,
+        title=normalized_title,
+        story=normalized_story,
+        goal_amount=normalized_goal,
         campaign_slug=campaign_slug,
         public_slug=public_slug,
         status="draft",

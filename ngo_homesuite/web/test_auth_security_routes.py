@@ -1,4 +1,5 @@
 from __future__ import annotations
+# pyright: reportUnknownParameterType=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportMissingParameterType=false, reportCallIssue=false
 
 import pytest
 

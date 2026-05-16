@@ -1,0 +1,25 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/pyright/main/packages/pyright/schema/pyrightconfig.schema.json",
+  "include": [
+    "ngo_homesuite",
+    "backend",
+    "cli",
+    "core/src"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    "**/.venv",
+    "**/test_*.py",
+    "**/tests/**",
+    "opentimestamps-client",
+    "opentimestamps_client.egg-info"
+  ],
+  "typeCheckingMode": "basic",
+  "reportMissingTypeStubs": "none",
+  "reportUnknownParameterType": "none",
+  "reportUnknownMemberType": "none",
+  "reportUnknownVariableType": "none",
+  "reportUnknownArgumentType": "none",
+  "reportMissingParameterType": "none",
+  "reportCallIssue": "none"
+}

@@ -112,6 +112,16 @@ def test_v2_p2p_link_rejects_cross_tenant_donation(client, app):
     assert (rv.get_json() or {}).get("error") == "Invalid resource reference"
 
 
+def test_v2_p2p_create_rejects_invalid_goal_input(client):
+    _login_admin(client)
+
+    rv = client.post(
+        "/api/v2/p2p/pages",
+        json={"donor_id": 1, "title": "Invalid Goal Page", "goal_amount": -5},
+    )
+    assert rv.status_code == 400
+
+
 def test_v2_mutating_endpoints_reject_cross_tenant_references(client, app):
     _login_admin(client)
 

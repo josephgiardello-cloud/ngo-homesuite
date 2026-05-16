@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime, timedelta, timezone
-from typing import Optional
+from typing import Optional, Any, TypeVar, cast
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -31,6 +31,14 @@ _VALID_TRANSITIONS: dict[str, set[str]] = {
 }
 
 _VALID_STATUSES = set(_VALID_TRANSITIONS)
+
+_T = TypeVar("_T")
+
+
+def _model_create(model_cls: type[_T], **kwargs: Any) -> _T:
+    """Create SQLAlchemy model instances while keeping strict type-checkers quiet."""
+    ctor = cast(Any, model_cls)
+    return cast(_T, ctor(**kwargs))
 
 
 def _utcnow() -> datetime:
@@ -72,7 +80,7 @@ class DonationService:
         status: Optional[str] = None,
         page: int = 1,
         per_page: int = 50,
-    ) -> dict:
+    ) -> dict[str, object]:
         """Return a paginated list of donations for the organisation.
 
         Returns:
@@ -157,7 +165,8 @@ class DonationService:
         if amount <= 0:
             raise ValueError("Recurring amount must be positive")
 
-        plan = RecurringDonationPlan(
+        plan = _model_create(
+            RecurringDonationPlan,
             organization_id=org_id,
             donor_id=donor.id,
             amount=float(amount),
@@ -211,7 +220,8 @@ class DonationService:
                 failed += 1
                 continue
 
-            donation = Donation(
+            donation = _model_create(
+                Donation,
                 organization_id=org_id,
                 donor_id=donor.id,
                 donor_name=donor.name,
@@ -236,7 +246,8 @@ class DonationService:
             if receipt is None:
                 receipt_number = f"RCP-{org_id}-{donation.id}-{uuid.uuid4().hex[:8].upper()}"
                 db.session.add(
-                    DonationReceipt(
+                    _model_create(
+                        DonationReceipt,
                         donation_id=donation.id,
                         receipt_number=receipt_number,
                         status="generated",
@@ -314,7 +325,8 @@ class DonationService:
             if donor is None:
                 raise ValueError(f"Donor {donor_id} not found in org {org_id}")
 
-        donation = Donation(
+        donation = _model_create(
+            Donation,
             organization_id=org_id,
             donor_name=donor_name.strip(),
             amount=float(amount),
@@ -350,7 +362,7 @@ class DonationService:
         donation_id: int,
         org_id: int,
         actor_id: Optional[int] = None,
-        **fields,
+        **fields: object,
     ) -> Donation:
         """Update mutable fields on a donation (not status — use update_status for that).
 
@@ -466,7 +478,8 @@ class DonationService:
             return existing
 
         receipt_number = f"RCP-{org_id}-{donation_id}-{uuid.uuid4().hex[:8].upper()}"
-        receipt = DonationReceipt(
+        receipt = _model_create(
+            DonationReceipt,
             donation_id=donation_id,
             receipt_number=receipt_number,
             status="generated",

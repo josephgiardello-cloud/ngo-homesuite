@@ -24,8 +24,13 @@ This project uses a lightweight release process to keep rapid changes safe and t
 - Verify migrations preflight: `python -m ngo_homesuite.db.migrate --dry-run --verify-backup`
 - Run backup/restore drill in non-prod: `python -m ngo_homesuite.db.backup_restore_drill --db data/homesuite.db --output-dir backups/drills`
 - Run key-rotation drill in non-prod per `docs/key_rotation_drill.md`
+- Run DAST smoke probe and archive report: `python tools/dast_smoke.py --base-url http://127.0.0.1:8765 --report-json artifacts/dast-smoke-report.json`
+- Run scalability benchmark and archive report: `python tools/scalability_benchmark.py --base-url http://127.0.0.1:8765 --endpoint /health --endpoint / --endpoint /give --endpoint /p2p/leaderboard --total-requests 300 --concurrency 20 --max-overall-p95-ms 2200 --report-json artifacts/scalability-benchmark.json`
 - Run HTTP load smoke against release candidate: `python tools/load_test_smoke.py --base-url http://127.0.0.1:8765 --endpoint /health --endpoint / --endpoint /give`
 - Verify container image passes Docker vulnerability scan in CI
+
+Security testing procedure reference: `docs/security_pentest_playbook.md`
+P2P operational procedure reference: `docs/p2p_operations_runbook.md`
 
 3. Prepare changelog summary in release notes:
 - Security hardening

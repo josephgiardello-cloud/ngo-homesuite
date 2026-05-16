@@ -15,8 +15,8 @@ Maturity scale:
 | Donors CRUD + profiles | Available | Operational | Web list/detail/create/edit/delete, dedupe/merge, donor insights in UI. |
 | Donations + receipts + recurring | Available | Operational | Public give flow, recurring plans, receipt PDFs, export paths. |
 | Peer Fundraising (P2P) API | Available | Operational | Tenant checks, audit events, aggregated leaderboard, pagination. |
-| Peer Fundraising (P2P) Web (public) | Available | Operational | Public page, thermometer, leaderboard, embeddable widget script. |
-| P2P Staff workflow | Available | Foundational | New dashboard flow for create/publish/close; needs broader field validation and UX iteration. |
+| Peer Fundraising (P2P) Web (public) | Available | Operational | Public page, thermometer, leaderboard, embeddable widget script, and DAST smoke probes in CI. |
+| P2P Staff workflow | Available | Operational | Dashboard create/publish/close flow plus service-level validation for title/goal/story edge cases; UX iteration still pending. |
 | Events management | Partial | Foundational | Data model and route scaffolding exist, full lifecycle UX still limited. |
 | Campaign management | Partial | Foundational | Campaign entities and relationships present; full end-to-end UI not complete. |
 | Grants workflows | Available | Foundational | API and workflow paths exist; real-world process depth still expanding. |

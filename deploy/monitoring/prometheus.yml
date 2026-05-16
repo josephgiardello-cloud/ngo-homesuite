@@ -15,4 +15,4 @@ scrape_configs:
     # Provide credentials via deployment automation/secrets manager.
     basic_auth:
       username: observability
-      password: CHANGE_ME
+      password_file: /run/secrets/prometheus_scrape_password

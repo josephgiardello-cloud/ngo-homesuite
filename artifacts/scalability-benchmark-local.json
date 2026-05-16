@@ -1,0 +1,38 @@
+{
+  "base_url": "http://127.0.0.1:8765",
+  "overall": {
+    "avg_ms": 24.4,
+    "p95_ms": 62.2,
+    "max_ms": 110.9,
+    "requests": 120,
+    "failures": 0,
+    "duration_ms": 278.6
+  },
+  "endpoints": {
+    "/health": {
+      "requests": 30,
+      "avg_ms": 23.5,
+      "p95_ms": 99.0,
+      "max_ms": 103.8
+    },
+    "/": {
+      "requests": 30,
+      "avg_ms": 19.5,
+      "p95_ms": 86.0,
+      "max_ms": 100.9
+    },
+    "/give": {
+      "requests": 30,
+      "avg_ms": 22.0,
+      "p95_ms": 61.0,
+      "max_ms": 92.8
+    },
+    "/p2p/leaderboard": {
+      "requests": 30,
+      "avg_ms": 32.6,
+      "p95_ms": 62.2,
+      "max_ms": 110.9
+    }
+  },
+  "sample_failure": ""
+}

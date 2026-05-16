@@ -339,6 +339,28 @@ class TestP2PFundraising:
         db.session.rollback()
         assert page1.public_slug != page2.public_slug
 
+    def test_create_page_fallback_slug_when_title_has_no_slug_chars(self, ctx):
+        from ngo_homesuite.services.p2p_service import create_page
+
+        d = _make_donor(name="Slugless Donor")
+        page = create_page(1, d.id, "!!!")
+        db.session.rollback()
+
+        assert page.public_slug.startswith("fundraiser")
+
+    def test_create_page_rejects_negative_goal_and_overlong_story(self, ctx):
+        from ngo_homesuite.services.p2p_service import create_page
+
+        d = _make_donor(name="Validation Donor")
+
+        with pytest.raises(ValueError, match="invalid fundraiser goal"):
+            create_page(1, d.id, "Goal Check", goal_amount=-1)
+
+        with pytest.raises(ValueError, match="invalid fundraiser story"):
+            create_page(1, d.id, "Story Check", story="x" * 5001)
+
+        db.session.rollback()
+
     def test_link_donation_and_progress(self, ctx):
         from ngo_homesuite.services.p2p_service import create_page, publish_page, link_donation, get_progress
         d = _make_donor(name="P2P Donor")
