@@ -2,6 +2,25 @@
 
 Date: 2026-05-16
 
+## Domain Module Structure (Implemented)
+
+The grant bounded context now has a dedicated package:
+
+- `ngo_homesuite/grants/`
+  - `models.py`: canonical grant model imports for domain usage
+  - `exceptions.py`: grant-specific exception access
+  - `types.py`: grant value types/enums
+  - `audit.py`: grant audit payload helpers
+  - `invariants.py`: cross-service invariants
+  - `services/`
+    - `facade.py`: `GrantsFacade` thin orchestrator entrypoint
+    - `preaward.py`, `outcomes.py`, `approval.py`, `accounting.py`: domain service adapters
+
+Facade-only policy for new call-sites:
+
+- Preferred entrypoint: `ngo_homesuite.grants.services.GrantsFacade`
+- Avoid calling grant sub-services directly from routes.
+
 ## Current Service Ownership Boundaries
 
 - `ngo_homesuite/services/grant_service.py`
@@ -46,10 +65,10 @@ Date: 2026-05-16
 
 ## Immediate Cleanup Tasks
 
-1. Add route-level guardrails so grant mutations use `grant_service` facade only.
+1. Migrate route handlers to `GrantsFacade` as sole grant-domain entrypoint.
 2. Introduce transaction helper conventions for approval-gated financial operations.
 3. Add concurrency tests for conflicting approve/execute operations.
-4. Add mutation-level docstrings to `grant_service` wrappers that identify owning sub-service.
+4. Add mutation-level docstrings to facade wrappers that identify owning sub-service.
 
 ## Compliance Gap Snapshot
 
