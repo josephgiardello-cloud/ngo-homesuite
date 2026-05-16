@@ -44,6 +44,8 @@ class Config:
     # Login
     REMEMBER_COOKIE_DURATION = timedelta(days=30)
     REMEMBER_COOKIE_HTTPONLY = True
+    REMEMBER_COOKIE_SECURE = _RUNTIME_SETTINGS.session_cookie_secure
+    REMEMBER_COOKIE_SAMESITE = _RUNTIME_SETTINGS.session_cookie_samesite
     
     # Flask-WTF
     WTF_CSRF_ENABLED = True

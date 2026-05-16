@@ -4,13 +4,14 @@ Authentication blueprint for NGO HomeSuite.
 Handles user login, registration, logout, and password management.
 """
 
-from flask import Blueprint, render_template, redirect, url_for, flash, request, session
+from flask import Blueprint, render_template, redirect, url_for, flash, request, session, abort
 from flask_login import login_user, logout_user, login_required, current_user
 from wtforms import StringField, PasswordField, BooleanField, SubmitField
 from wtforms.validators import DataRequired, Email, EqualTo, ValidationError, Length
 from datetime import datetime, timezone, timedelta
 from flask_wtf import FlaskForm
 from sqlalchemy import select
+from urllib.parse import urlparse
 from ngo_homesuite.models.core import db, User
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
@@ -29,6 +30,27 @@ def _is_safe_next_path(next_page: str | None) -> bool:
     # Block scheme-relative and backslash-prefixed values that can trigger external redirects.
     if value.startswith('//') or value.startswith('/\\'):
         return False
+    return True
+
+
+def _same_origin(a: str, b: str) -> bool:
+    pa = urlparse(a)
+    pb = urlparse(b)
+    if not pa.scheme or not pa.netloc or not pb.scheme or not pb.netloc:
+        return False
+    return (pa.scheme.lower(), pa.netloc.lower()) == (pb.scheme.lower(), pb.netloc.lower())
+
+
+def _is_same_origin_request() -> bool:
+    """Best-effort CSRF guard for logout when global CSRF middleware is not active."""
+    host = request.host_url
+    origin = (request.headers.get("Origin") or "").strip()
+    if origin:
+        return _same_origin(origin, host)
+    referer = (request.headers.get("Referer") or "").strip()
+    if referer:
+        return _same_origin(referer, host)
+    # Allow clients that don't send Origin/Referer (e.g., CLI/tests/legacy agents).
     return True
 
 
@@ -164,6 +186,8 @@ def register():
 @login_required
 def logout():
     """User logout."""
+    if not _is_same_origin_request():
+        abort(403)
     logout_user()
     flash('You have been logged out.', 'info')
     return redirect(url_for('main.index'))

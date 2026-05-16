@@ -162,6 +162,49 @@ def test_logout_get_is_not_allowed(client, app):
     assert rv.status_code == 405
 
 
+def test_logout_rejects_cross_site_origin_and_keeps_session(client, app):
+    _ensure_user(app, "auth_logout_user4", "AuthPass123!")
+    client.post(
+        "/auth/login",
+        data={"username": "auth_logout_user4", "password": "AuthPass123!"},
+        follow_redirects=False,
+    )
+
+    rv = client.post(
+        "/auth/logout",
+        headers={"Origin": "https://evil.example"},
+        follow_redirects=False,
+    )
+    assert rv.status_code == 403
+
+    with client.session_transaction() as sess:
+        assert sess.get("_user_id") is not None
+
+
+def test_login_response_sets_cookie_security_attributes(client, app):
+    _ensure_user(app, "auth_cookie_user", "AuthPass123!")
+
+    rv = client.post(
+        "/auth/login",
+        data={"username": "auth_cookie_user", "password": "AuthPass123!", "remember_me": "y"},
+        follow_redirects=False,
+    )
+    assert rv.status_code == 302
+
+    set_cookie_headers = rv.headers.getlist("Set-Cookie")
+    assert set_cookie_headers, "Expected Set-Cookie headers on login"
+
+    session_cookie = next((h for h in set_cookie_headers if h.startswith("session=")), "")
+    assert session_cookie
+    assert "HttpOnly" in session_cookie
+    assert "SameSite=" in session_cookie
+
+    remember_cookie = next((h for h in set_cookie_headers if h.startswith("remember_token=")), "")
+    assert remember_cookie
+    assert "HttpOnly" in remember_cookie
+    assert "SameSite=" in remember_cookie
+
+
 # ---------------------------------------------------------------------------
 # Registration validation
 # ---------------------------------------------------------------------------
