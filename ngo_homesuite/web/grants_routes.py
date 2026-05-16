@@ -61,7 +61,7 @@ def create_grant_route():
 @login_required
 @roles_required("admin", "staff")
 def advance_grant_route(grant_id: int):
-    from ngo_homesuite.services.grant_service import advance_grant_status
+    from ngo_homesuite.services.grant_service import advance_grant_status, GrantNotFound, InvalidGrantTransition
 
     data = request.get_json(silent=True) or {}
     new_status = data.get("new_status")
@@ -70,6 +70,10 @@ def advance_grant_route(grant_id: int):
 
     try:
         grant = advance_grant_status(grant_id, _org_id(), new_status=new_status, **{k: v for k, v in data.items() if k != "new_status"})
+    except GrantNotFound as exc:
+        return jsonify({"error": str(exc)}), 404
+    except InvalidGrantTransition as exc:
+        return jsonify({"error": str(exc)}), 422
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify({"id": grant.id, "status": grant.status})
@@ -79,7 +83,7 @@ def advance_grant_route(grant_id: int):
 @login_required
 @roles_required("admin", "staff")
 def disburse_grant_route(grant_id: int):
-    from ngo_homesuite.services.grant_service import add_disbursement
+    from ngo_homesuite.services.grant_service import add_disbursement, GrantNotFound
 
     data = request.get_json(silent=True) or {}
     if data.get("amount") is None or data.get("received_date") is None:
@@ -93,6 +97,8 @@ def disburse_grant_route(grant_id: int):
 
     try:
         disb = add_disbursement(grant_id, _org_id(), **payload)
+    except GrantNotFound as exc:
+        return jsonify({"error": str(exc)}), 404
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify({"id": disb.id, "amount": disb.amount}), 201

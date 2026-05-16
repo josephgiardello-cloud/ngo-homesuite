@@ -477,5 +477,11 @@ class DonationService:
         if donation.status == "processed":
             donation.status = "receipted"
 
-        db.session.commit()
+        try:
+            db.session.commit()
+        except StaleDataError as exc:
+            db.session.rollback()
+            raise DonationConcurrencyError(
+                f"Concurrent update detected for donation {donation_id} during receipt generation; please reload and retry."
+            ) from exc
         return receipt

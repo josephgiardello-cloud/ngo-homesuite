@@ -1437,15 +1437,19 @@ def expense_create():
     form.fund_id.choices = fund_options
 
     if form.validate_on_submit():
-        ExpenseService().create_expense(
-            org.id,
-            project_id=form.project_id.data or None,
-            fund_id=form.fund_id.data or None,
-            amount=form.amount.data,
-            currency=form.currency.data,
-            payee=form.payee.data,
-            description=form.description.data,
-        )
+        try:
+            ExpenseService().create_expense(
+                org.id,
+                project_id=form.project_id.data or None,
+                fund_id=form.fund_id.data or None,
+                amount=form.amount.data,
+                currency=form.currency.data,
+                payee=form.payee.data,
+                description=form.description.data,
+            )
+        except ValueError as exc:
+            flash(f'Could not record expense: {exc}', 'error')
+            return render_template('expense_form.html', form=form, active_page='expenses')
         flash('Expense recorded successfully.', 'success')
         return redirect(url_for('main.expenses_list'))
 

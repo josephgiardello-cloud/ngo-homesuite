@@ -41,13 +41,16 @@ class ExpenseService:
     ) -> Expense:
         if amount <= 0:
             raise ValueError("Expense amount must be positive")
+        clean_currency = (currency or "USD").strip().upper()
+        if len(clean_currency) != 3:
+            raise ValueError("currency must be a 3-letter ISO code")
 
         expense = Expense(
             organization_id=org_id,
             project_id=project_id,
             fund_id=fund_id,
             amount=float(amount),
-            currency=(currency or "USD").upper(),
+            currency=clean_currency,
             payee=(payee or "").strip() or None,
             description=(description or "").strip() or None,
         )

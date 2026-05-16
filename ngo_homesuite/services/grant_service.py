@@ -5,10 +5,27 @@ from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional
 
 from sqlalchemy import and_, func, or_, select
-from werkzeug.exceptions import NotFound
 
 from ngo_homesuite.models.core import Grant, GrantDisbursement, db
 
+
+# ---------------------------------------------------------------------------
+# Domain exceptions
+# ---------------------------------------------------------------------------
+
+class GrantNotFound(Exception):
+    """Raised when a grant cannot be found for the given org."""
+
+    def __init__(self, grant_id: int):
+        super().__init__(f"Grant {grant_id} not found.")
+        self.grant_id = grant_id
+
+
+class InvalidGrantTransition(ValueError):
+    """Raised when a requested grant status transition is not permitted."""
+
+
+# ---------------------------------------------------------------------------
 
 _VALID_GRANT_STATUSES = {"prospect", "in_progress", "submitted", "awarded", "declined", "closed", "reporting"}
 _VALID_TRANSITIONS = {
@@ -109,10 +126,10 @@ def advance_grant_status(grant_id: int, organization_id: int, new_status: str, *
         select(Grant).where(Grant.id == grant_id, Grant.organization_id == organization_id).limit(1)
     ).first()
     if grant is None:
-        raise NotFound()
+        raise GrantNotFound(grant_id)
     allowed = _VALID_TRANSITIONS.get(grant.status, set())
     if new_status not in allowed:
-        raise ValueError(
+        raise InvalidGrantTransition(
             f"Cannot transition grant {grant_id} from '{grant.status}' to '{new_status}'. Allowed: {sorted(allowed)}"
         )
     grant.status = new_status
@@ -132,7 +149,7 @@ def update_grant(grant_id: int, organization_id: int, **fields) -> Grant:
         select(Grant).where(Grant.id == grant_id, Grant.organization_id == organization_id).limit(1)
     ).first()
     if grant is None:
-        raise NotFound()
+        raise GrantNotFound(grant_id)
     allowed = {
         "funder_name", "funder_type", "funder_contact", "funder_email",
         "title", "description", "amount_requested", "amount_awarded",
@@ -156,7 +173,7 @@ def delete_grant(grant_id: int, organization_id: int) -> None:
         select(Grant).where(Grant.id == grant_id, Grant.organization_id == organization_id).limit(1)
     ).first()
     if grant is None:
-        raise NotFound()
+        raise GrantNotFound(grant_id)
     db.session.delete(grant)
     db.session.commit()
 
@@ -181,7 +198,7 @@ def add_disbursement(
         select(Grant).where(Grant.id == grant_id, Grant.organization_id == organization_id).limit(1)
     ).first()
     if grant is None:
-        raise NotFound()
+        raise GrantNotFound(grant_id)
     disbursement = GrantDisbursement(
         grant_id=grant.id,
         organization_id=organization_id,

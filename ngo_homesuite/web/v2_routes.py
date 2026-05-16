@@ -73,7 +73,7 @@ def get_grant(grant_id: int):
 @login_required
 @roles_required("admin", "staff")
 def advance_grant(grant_id: int):
-    from ngo_homesuite.services.grant_service import advance_grant_status
+    from ngo_homesuite.services.grant_service import advance_grant_status, GrantNotFound, InvalidGrantTransition
     data = _json_or_400(required=["new_status"])
     try:
         grant = advance_grant_status(
@@ -82,6 +82,10 @@ def advance_grant(grant_id: int):
             new_status=data["new_status"],
             **{k: v for k, v in data.items() if k != "new_status"},
         )
+    except GrantNotFound as exc:
+        return jsonify({"error": str(exc)}), 404
+    except InvalidGrantTransition as exc:
+        return jsonify({"error": str(exc)}), 422
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify(_grant_dict(grant))
@@ -91,7 +95,7 @@ def advance_grant(grant_id: int):
 @login_required
 @roles_required("admin", "staff")
 def add_disbursement(grant_id: int):
-    from ngo_homesuite.services.grant_service import add_disbursement as svc_add
+    from ngo_homesuite.services.grant_service import add_disbursement as svc_add, GrantNotFound
     data = _json_or_400(required=["amount", "received_date"])
     payload = dict(data)
     try:
@@ -100,6 +104,8 @@ def add_disbursement(grant_id: int):
         return jsonify({"error": "received_date must be ISO format YYYY-MM-DD"}), 400
     try:
         disb = svc_add(grant_id, _org_id(), **payload)
+    except GrantNotFound as exc:
+        return jsonify({"error": str(exc)}), 404
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify({"id": disb.id, "amount": float(disb.amount), "received_date": str(disb.received_date)}), 201
