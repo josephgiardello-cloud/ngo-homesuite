@@ -23,7 +23,7 @@ services:
       RATE_LIMIT_ENABLED: "True"
       LOG_LEVEL: INFO
       DATABASE_BACKEND: postgresql
-      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-ngohs}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-ngo_homesuite}
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-ngohs}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-ngo_homesuite}
       DB_POOL_SIZE: "10"
       DB_MAX_OVERFLOW: "20"
     ports:
@@ -40,6 +40,13 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    pids_limit: 256
+    mem_limit: 1024m
+    cpus: 1.5
+    ulimits:
+      nofile:
+        soft: 4096
+        hard: 8192
     depends_on:
       postgres:
         condition: service_healthy
@@ -60,12 +67,15 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-ngo_homesuite}
       POSTGRES_USER: ${POSTGRES_USER:-ngohs}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
+    pids_limit: 256
+    mem_limit: 1024m
+    cpus: 1.5
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ngohs} -d ${POSTGRES_DB:-ngo_homesuite}"]
@@ -83,6 +93,9 @@ services:
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     ports:
       - "6379:6379"
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 0.5
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -106,6 +119,9 @@ services:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 0.5
     restart: unless-stopped
 
 volumes:
