@@ -10,8 +10,6 @@ from ngo_homesuite.db.utils import audit
 from ngo_homesuite.models.core import (
     Expense,
     Grant,
-    GrantApprovalDecision,
-    GrantApprovalRequest,
     GrantBudgetLine,
     GrantDisbursement,
     GrantExpenseAllocation,
@@ -19,6 +17,8 @@ from ngo_homesuite.models.core import (
     GrantProposal,
     db,
 )
+from ngo_homesuite.services import grant_accounting_policy_service
+from ngo_homesuite.services import grant_approval_service
 from ngo_homesuite.services import grant_preaward_service
 from ngo_homesuite.services import grant_outcomes_service
 
@@ -43,8 +43,7 @@ class GrantAllocationError(ValueError):
     """Raised when grant expense allocation violates budget or tenant constraints."""
 
 
-class GrantApprovalError(ValueError):
-    """Raised when grant action approval workflow constraints are violated."""
+GrantApprovalError = grant_approval_service.GrantApprovalError
 
 
 # ---------------------------------------------------------------------------
@@ -62,12 +61,6 @@ _VALID_TRANSITIONS = {
 }
 _VALID_OPPORTUNITY_STATUSES = {"identified", "qualified", "in_progress", "submitted", "awarded", "declined", "archived"}
 _VALID_PROPOSAL_OUTCOMES = {"draft", "submitted", "awarded", "declined", "withdrawn"}
-_VALID_APPROVAL_ACTIONS = {
-    "proposal_submit",
-    "disbursement_add",
-    "outcome_record",
-    "grant_closeout",
-}
 
 
 def _grant_disbursed_total(grant_id: int, organization_id: int) -> float:
@@ -641,6 +634,11 @@ def allocate_expense_to_budget_line(
         raise GrantAllocationError("expense not found for organization")
 
     normalized_category = _normalize_budget_category(category)
+    grant_accounting_policy_service.enforce_allowable_cost(
+        normalized_category,
+        description=expense.description,
+        payee=expense.payee,
+    )
     budget_line = db.session.scalars(
         select(GrantBudgetLine).where(
             GrantBudgetLine.grant_id == grant_id,
@@ -972,18 +970,6 @@ def opportunity_forecast_summary(organization_id: int) -> dict:
     return grant_preaward_service.opportunity_forecast_summary(organization_id)
 
 
-def _get_approval_request(request_id: int, organization_id: int) -> GrantApprovalRequest:
-    approval = db.session.scalars(
-        select(GrantApprovalRequest).where(
-            GrantApprovalRequest.id == request_id,
-            GrantApprovalRequest.organization_id == organization_id,
-        ).with_for_update().limit(1)
-    ).first()
-    if approval is None:
-        raise GrantApprovalError("approval request not found for organization")
-    return approval
-
-
 def create_approval_request(
     organization_id: int,
     *,
@@ -993,43 +979,26 @@ def create_approval_request(
     requested_by_user_id: int,
     requested_by_role: str,
     payload: Optional[dict] = None,
-) -> GrantApprovalRequest:
-    if action_type not in _VALID_APPROVAL_ACTIONS:
-        raise GrantApprovalError(f"invalid approval action '{action_type}'")
-    if not resource_type.strip():
-        raise GrantApprovalError("resource_type is required")
-    if int(resource_id) <= 0:
-        raise GrantApprovalError("resource_id must be positive")
-
-    approval = GrantApprovalRequest(
-        organization_id=organization_id,
+    required_approvals: Optional[int] = None,
+    approver_roles: Optional[list[str]] = None,
+    expires_at: Optional[datetime] = None,
+    expires_in_hours: Optional[int] = None,
+    escalation_role: Optional[str] = None,
+):
+    return grant_approval_service.create_approval_request(
+        organization_id,
         action_type=action_type,
-        resource_type=resource_type.strip(),
-        resource_id=int(resource_id),
-        requested_by_user_id=int(requested_by_user_id),
-        requested_by_role=(requested_by_role or "").strip() or "unknown",
-        status="pending",
-        payload_json=payload or None,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        requested_by_user_id=requested_by_user_id,
+        requested_by_role=requested_by_role,
+        payload=payload,
+        required_approvals=required_approvals,
+        approver_roles=approver_roles,
+        expires_at=expires_at,
+        expires_in_hours=expires_in_hours,
+        escalation_role=escalation_role,
     )
-    db.session.add(approval)
-    db.session.commit()
-    audit(
-        "grant.approval.request.create",
-        entity_type="grant_approval_request",
-        entity_id=int(approval.id),
-        details={
-            "organization_id": int(organization_id),
-            "after": {
-                "action_type": approval.action_type,
-                "resource_type": approval.resource_type,
-                "resource_id": int(approval.resource_id),
-                "status": approval.status,
-                "requested_by_user_id": int(approval.requested_by_user_id),
-                "requested_by_role": approval.requested_by_role,
-            },
-        },
-    )
-    return approval
 
 
 def decide_approval_request(
@@ -1040,45 +1009,17 @@ def decide_approval_request(
     decided_by_role: str,
     decision: str,
     comment: Optional[str] = None,
-) -> GrantApprovalRequest:
-    normalized_decision = (decision or "").strip().lower()
-    if normalized_decision not in {"approved", "rejected"}:
-        raise GrantApprovalError("decision must be approved or rejected")
-
-    approval = _get_approval_request(request_id, organization_id)
-    if approval.status != "pending":
-        raise GrantApprovalError("approval request is no longer pending")
-    if int(decided_by_user_id) == int(approval.requested_by_user_id):
-        raise GrantApprovalError("requester cannot approve/reject their own request")
-
-    role = (decided_by_role or "").strip().lower()
-    if role not in {"admin", "org_admin", "finance", "finance_admin", "executive"}:
-        raise GrantApprovalError("approver role not allowed for grant approvals")
-
-    approval.status = normalized_decision
-    decision_row = GrantApprovalDecision(
-        request_id=approval.id,
-        organization_id=organization_id,
-        decided_by_user_id=int(decided_by_user_id),
-        decided_by_role=(decided_by_role or "").strip() or "unknown",
-        decision=normalized_decision,
-        comment=(comment or "").strip() or None,
+    rationale: Optional[str] = None,
+):
+    return grant_approval_service.decide_approval_request(
+        request_id,
+        organization_id,
+        decided_by_user_id=decided_by_user_id,
+        decided_by_role=decided_by_role,
+        decision=decision,
+        comment=comment,
+        rationale=rationale,
     )
-    db.session.add(decision_row)
-    db.session.commit()
-    audit(
-        "grant.approval.request.decision",
-        entity_type="grant_approval_request",
-        entity_id=int(approval.id),
-        details={
-            "organization_id": int(organization_id),
-            "decision": normalized_decision,
-            "decided_by_user_id": int(decided_by_user_id),
-            "decided_by_role": decision_row.decided_by_role,
-            "status": approval.status,
-        },
-    )
-    return approval
 
 
 def _consume_approved_request(
@@ -1089,30 +1030,23 @@ def _consume_approved_request(
     required_resource_type: str,
     required_resource_id: int,
     executed_by_user_id: int,
-) -> GrantApprovalRequest:
-    approval = _get_approval_request(request_id, organization_id)
-    if approval.status != "approved":
-        raise GrantApprovalError("approval request must be approved before execution")
-    if approval.action_type != required_action:
-        raise GrantApprovalError("approval action does not match requested operation")
-    if approval.resource_type != required_resource_type or int(approval.resource_id) != int(required_resource_id):
-        raise GrantApprovalError("approval resource mismatch")
-    if int(executed_by_user_id) == int(approval.requested_by_user_id):
-        raise GrantApprovalError("requester cannot execute their own approved request")
-
-    approval.status = "executed"
-    db.session.commit()
-    audit(
-        "grant.approval.request.execute",
-        entity_type="grant_approval_request",
-        entity_id=int(approval.id),
-        details={
-            "organization_id": int(organization_id),
-            "status": approval.status,
-            "executed_by_user_id": int(executed_by_user_id),
-        },
+):
+    return grant_approval_service.consume_approved_request(
+        request_id=request_id,
+        organization_id=organization_id,
+        required_action=required_action,
+        required_resource_type=required_resource_type,
+        required_resource_id=required_resource_id,
+        executed_by_user_id=executed_by_user_id,
     )
-    return approval
+
+
+def escalate_expired_approval_requests(
+    organization_id: int,
+    *,
+    now: Optional[datetime] = None,
+):
+    return grant_approval_service.escalate_expired_requests(organization_id, now=now)
 
 
 def submit_proposal_with_approval(
@@ -1230,6 +1164,23 @@ def get_disbursements(grant_id: int, organization_id: int) -> List[GrantDisburse
         GrantDisbursement.organization_id == organization_id,
     ).order_by(GrantDisbursement.received_date.asc())
     return list(db.session.scalars(stmt))
+
+
+def grant_accounting_snapshot(
+    grant_id: int,
+    organization_id: int,
+    *,
+    indirect_rate: float = 0.1,
+) -> dict:
+    """Return baseline accounting controls for carry-forward and indirect pool analysis."""
+    return {
+        "carry_forward": grant_accounting_policy_service.compute_multi_year_carry_forward(grant_id, organization_id),
+        "indirect_pool": grant_accounting_policy_service.compute_indirect_cost_pool(
+            grant_id,
+            organization_id,
+            indirect_rate=indirect_rate,
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------

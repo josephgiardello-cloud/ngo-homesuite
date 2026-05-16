@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -102,6 +102,15 @@ def test_full_grant_lifecycle_integration_with_approvals(ctx):
         decided_by_user_id=202,
         decided_by_role="finance_admin",
         decision="approved",
+        rationale="Budget validated",
+    )
+    grant_service.decide_approval_request(
+        disb_req.id,
+        org.id,
+        decided_by_user_id=206,
+        decided_by_role="controller",
+        decision="approved",
+        rationale="Controller dual control",
     )
 
     disb = grant_service.add_disbursement_with_approval(
@@ -186,6 +195,15 @@ def test_full_grant_lifecycle_integration_with_approvals(ctx):
         decided_by_user_id=202,
         decided_by_role="org_admin",
         decision="approved",
+        rationale="Program closeout package reviewed",
+    )
+    grant_service.decide_approval_request(
+        close_req.id,
+        org.id,
+        decided_by_user_id=209,
+        decided_by_role="controller",
+        decision="approved",
+        rationale="Financial reconciliation complete",
     )
 
     closed = grant_service.close_grant_with_approval(
@@ -255,4 +273,144 @@ def test_cannot_execute_grant_action_without_approved_request(ctx):
             received_date=date(2026, 5, 16),
             approval_request_id=req.id,
             executed_by_user_id=43,
+        )
+
+
+def test_multi_level_chain_requires_all_approvals_and_persists_rationale(ctx):
+    org = _mk_org("Grant Lifecycle Org D", "grant-lifecycle-org-d")
+
+    req = grant_service.create_approval_request(
+        org.id,
+        action_type="disbursement_add",
+        resource_type="grant",
+        resource_id=7,
+        requested_by_user_id=501,
+        requested_by_role="staff",
+        required_approvals=2,
+        approver_roles=["finance_admin", "controller"],
+    )
+    assert req.status == "pending"
+    assert req.required_approvals == 2
+
+    first_pass = grant_service.decide_approval_request(
+        req.id,
+        org.id,
+        decided_by_user_id=601,
+        decided_by_role="finance_admin",
+        decision="approved",
+        rationale="Reviewed source docs",
+    )
+    assert first_pass.status == "pending"
+
+    with pytest.raises(grant_service.GrantApprovalError, match="already decided"):
+        grant_service.decide_approval_request(
+            req.id,
+            org.id,
+            decided_by_user_id=601,
+            decided_by_role="finance_admin",
+            decision="approved",
+        )
+
+    second_pass = grant_service.decide_approval_request(
+        req.id,
+        org.id,
+        decided_by_user_id=602,
+        decided_by_role="controller",
+        decision="approved",
+        rationale="Approved as second-level reviewer",
+    )
+    assert second_pass.status == "approved"
+
+
+def test_rejected_request_blocks_execution(ctx):
+    org = _mk_org("Grant Lifecycle Org E", "grant-lifecycle-org-e")
+    grant = grant_service.create_grant(
+        organization_id=org.id,
+        funder_name="Flow Funder",
+        title="Rejected Flow Grant",
+        amount_requested=100,
+    )
+    grant_service.advance_grant_status(grant.id, org.id, new_status="submitted")
+    grant_service.advance_grant_status(grant.id, org.id, new_status="awarded", amount_awarded=100)
+
+    req = grant_service.create_approval_request(
+        org.id,
+        action_type="disbursement_add",
+        resource_type="grant",
+        resource_id=grant.id,
+        requested_by_user_id=52,
+        requested_by_role="staff",
+    )
+    rejected = grant_service.decide_approval_request(
+        req.id,
+        org.id,
+        decided_by_user_id=53,
+        decided_by_role="finance_admin",
+        decision="rejected",
+        rationale="Missing supporting statements",
+    )
+    assert rejected.status == "rejected"
+
+    with pytest.raises(grant_service.GrantApprovalError, match="must be approved"):
+        grant_service.add_disbursement_with_approval(
+            grant.id,
+            org.id,
+            amount=100,
+            received_date=date(2026, 5, 16),
+            approval_request_id=req.id,
+            executed_by_user_id=54,
+        )
+
+
+def test_expired_requests_escalate_and_accept_escalation_role(ctx):
+    org = _mk_org("Grant Lifecycle Org F", "grant-lifecycle-org-f")
+
+    req = grant_service.create_approval_request(
+        org.id,
+        action_type="proposal_submit",
+        resource_type="proposal",
+        resource_id=88,
+        requested_by_user_id=701,
+        requested_by_role="staff",
+        expires_at=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=10),
+        escalation_role="org_admin",
+    )
+
+    escalated = grant_service.escalate_expired_approval_requests(
+        org.id,
+        now=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=30),
+    )
+    assert [item.id for item in escalated] == [req.id]
+    assert escalated[0].status == "escalated"
+
+    approved = grant_service.decide_approval_request(
+        req.id,
+        org.id,
+        decided_by_user_id=702,
+        decided_by_role="org_admin",
+        decision="approved",
+        rationale="Escalation queue triage completed",
+    )
+    assert approved.status == "approved"
+
+
+def test_granular_role_restriction_blocks_invalid_approver(ctx):
+    org = _mk_org("Grant Lifecycle Org G", "grant-lifecycle-org-g")
+
+    req = grant_service.create_approval_request(
+        org.id,
+        action_type="grant_closeout",
+        resource_type="grant",
+        resource_id=10,
+        requested_by_user_id=801,
+        requested_by_role="staff",
+    )
+
+    with pytest.raises(grant_service.GrantApprovalError, match="role not allowed"):
+        grant_service.decide_approval_request(
+            req.id,
+            org.id,
+            decided_by_user_id=802,
+            decided_by_role="program_manager",
+            decision="approved",
         )

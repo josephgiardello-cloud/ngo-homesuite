@@ -684,7 +684,12 @@ class GrantApprovalRequest(db.Model):
     resource_id = db.Column(db.Integer, nullable=False, index=True)
     requested_by_user_id = db.Column(db.Integer, nullable=False, index=True)
     requested_by_role = db.Column(db.String(40), nullable=False)
-    status = db.Column(db.String(20), nullable=False, default='pending', index=True)  # pending, approved, rejected, executed
+    status = db.Column(db.String(20), nullable=False, default='pending', index=True)  # pending, approved, rejected, escalated, executed
+    required_approvals = db.Column(db.Integer, nullable=False, default=1)
+    approver_roles_json = db.Column(JSON, nullable=True)
+    expires_at = db.Column(db.DateTime, nullable=True, index=True)
+    escalated_at = db.Column(db.DateTime, nullable=True)
+    escalation_role = db.Column(db.String(40), nullable=True)
     payload_json = db.Column(JSON, nullable=True)
     version_id = db.Column(db.Integer, nullable=False, default=0)
     created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
@@ -712,6 +717,7 @@ class GrantApprovalDecision(db.Model):
     decided_by_role = db.Column(db.String(40), nullable=False)
     decision = db.Column(db.String(20), nullable=False)  # approved, rejected
     comment = db.Column(db.Text, nullable=True)
+    rationale = db.Column(db.Text, nullable=True)
     decided_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
 
     def __repr__(self):
