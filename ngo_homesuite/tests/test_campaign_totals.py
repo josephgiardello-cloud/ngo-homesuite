@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ngo_homesuite.models.core import Campaign, Donation, Donor, Organization, db
-from ngo_homesuite.services.campaign_service import create_campaign, get_campaign
+from ngo_homesuite.services.campaign_service import campaign_stats, create_campaign, get_campaign
 from ngo_homesuite.services.donation_service import DonationService
 from ngo_homesuite.services import p2p_service
 
@@ -26,6 +26,11 @@ def test_campaign_raised_amount_recalculates_on_donation_create(shared_test_app)
         refreshed = get_campaign(campaign.id, org.id)
         assert refreshed is not None
         assert float(refreshed.raised_amount) == 55.0
+
+        stats = campaign_stats(campaign.id, org.id)
+        assert float(stats["received_amount"]) == 55.0
+        assert float(stats["pending_amount"]) == 99.0
+        assert float(stats["pledged_amount"]) == 154.0
 
 
 def test_p2p_link_unlink_triggers_campaign_recalculation(shared_test_app, monkeypatch):

@@ -31,22 +31,35 @@ def test_send_event_reminder_uses_email_utility(monkeypatch):
 
 
 def test_send_due_event_reminders_selects_window(monkeypatch):
-    monkeypatch.setattr(events_services, "_utcnow", lambda: datetime(2026, 5, 20, 10, 0, 0))
     monkeypatch.setattr(
-        events_services.db.session,
-        "execute",
-        lambda *_args, **_kwargs: _FakeResult(
-            [
-                {"id": 1, "name": "In Window", "start_date": "2026-05-21T10:05:00"},
-                {"id": 2, "name": "Out Window", "start_date": "2026-05-21T12:00:00"},
-            ]
-        ),
+        events_services,
+        "queue_due_event_reminders",
+        lambda **_kwargs: {"matched_events": 1, "queued": 1, "suppressed": 0},
     )
-    monkeypatch.setattr(events_services, "_attendee_emails", lambda event_id: [("a@example.org", "A")] if event_id == 1 else [])
-    monkeypatch.setattr(events_services, "send_event_reminder", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        events_services,
+        "process_event_email_queue",
+        lambda **_kwargs: {"processed": 1, "sent": 1, "failed": 0, "retried": 0},
+    )
 
     result = events_services.send_due_event_reminders(hours_before=24)
     assert result == {"matched_events": 1, "sent": 1, "failed": 0}
+
+
+def test_send_due_event_reminders_propagates_failed_deliveries(monkeypatch):
+    monkeypatch.setattr(
+        events_services,
+        "queue_due_event_reminders",
+        lambda **_kwargs: {"matched_events": 2, "queued": 2, "suppressed": 0},
+    )
+    monkeypatch.setattr(
+        events_services,
+        "process_event_email_queue",
+        lambda **_kwargs: {"processed": 2, "sent": 1, "failed": 1, "retried": 0},
+    )
+
+    result = events_services.send_due_event_reminders(hours_before=1)
+    assert result == {"matched_events": 2, "sent": 1, "failed": 1}
 
 
 def test_start_event_reminder_scheduler_registers_jobs(monkeypatch):

@@ -10,6 +10,7 @@ class InMemoryMetrics:
     def __init__(self) -> None:
         self._lock = RLock()
         self._counters: dict[str, float] = defaultdict(float)
+        self._gauges: dict[str, float] = defaultdict(float)
         self._hist_counts: dict[str, int] = defaultdict(int)
         self._hist_sums: dict[str, float] = defaultdict(float)
 
@@ -32,10 +33,17 @@ class InMemoryMetrics:
             self._hist_counts[key] += 1
             self._hist_sums[key] += float(value)
 
+    def set(self, name: str, value: float, labels: dict[str, str] | None = None) -> None:
+        key = self._key(name, labels)
+        with self._lock:
+            self._gauges[key] = float(value)
+
     def render_prometheus(self) -> str:
         lines: list[str] = []
         with self._lock:
             for key, value in sorted(self._counters.items()):
+                lines.append(f"{key} {value}")
+            for key, value in sorted(self._gauges.items()):
                 lines.append(f"{key} {value}")
             for key, count in sorted(self._hist_counts.items()):
                 lines.append(f"{key}_count {count}")

@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+from io import BytesIO
 from typing import List, Optional
+import warnings
 
 from sqlalchemy import and_, func, or_, select
 
@@ -24,6 +26,8 @@ from ngo_homesuite.grants.services import accounting_policy_impl as grant_accoun
 from ngo_homesuite.grants.services import approval_impl as grant_approval_service
 from ngo_homesuite.grants.services import outcomes_impl as grant_outcomes_service
 from ngo_homesuite.grants.services import preaward_impl as grant_preaward_service
+
+from openpyxl import Workbook
 
 
 GrantApprovalError = grant_approval_service.GrantApprovalError
@@ -882,6 +886,116 @@ def get_grant_budget_summary(grant_id: int, organization_id: int) -> dict:
         "utilization_pct": total_util_pct,
         "lines": line_results,
     }
+
+
+def export_grant_budget_report_excel(grant_id: int, organization_id: int) -> bytes:
+    """Export grant budget-vs-actual report as XLSX bytes."""
+    summary = get_grant_budget_summary(grant_id, organization_id)
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Grant Budget"
+
+    sheet.append(["Grant ID", summary["grant_id"]])
+    sheet.append(["Title", summary["title"]])
+    sheet.append(["Status", summary["status"]])
+    sheet.append(["Amount Awarded", summary["amount_awarded"]])
+    sheet.append(["Total Allocated", summary["total_allocated"]])
+    sheet.append(["Total Spent", summary["total_spent"]])
+    sheet.append(["Total Remaining", summary["total_remaining"]])
+    sheet.append(["Utilization %", summary["utilization_pct"]])
+    sheet.append([])
+
+    sheet.append([
+        "Budget Line ID",
+        "Category",
+        "Line Name",
+        "Allocated",
+        "Spent",
+        "Remaining",
+        "Utilization %",
+    ])
+    for line in summary["lines"]:
+        sheet.append([
+            line["budget_line_id"],
+            line["category"],
+            line["line_name"],
+            line["allocated"],
+            line["spent"],
+            line["remaining"],
+            line["utilization_pct"],
+        ])
+
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+def export_grant_budget_report_pdf(grant_id: int, organization_id: int) -> bytes:
+    """Export grant budget-vs-actual report as PDF bytes."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        from reportlab.lib.pagesizes import letter
+        from reportlab.pdfgen import canvas
+
+    summary = get_grant_budget_summary(grant_id, organization_id)
+
+    output = BytesIO()
+    pdf = canvas.Canvas(output, pagesize=letter)
+    width, height = letter
+
+    y = height - 40
+    pdf.setFont("Helvetica-Bold", 14)
+    pdf.drawString(40, y, f"Grant Budget Report: {summary['title']}")
+    y -= 22
+
+    pdf.setFont("Helvetica", 10)
+    summary_lines = [
+        f"Grant ID: {summary['grant_id']}",
+        f"Status: {summary['status']}",
+        f"Amount Awarded: {summary['amount_awarded']:.2f}",
+        f"Total Allocated: {summary['total_allocated']:.2f}",
+        f"Total Spent: {summary['total_spent']:.2f}",
+        f"Total Remaining: {summary['total_remaining']:.2f}",
+        f"Utilization: {summary['utilization_pct']:.2f}%",
+    ]
+    for line in summary_lines:
+        pdf.drawString(40, y, line)
+        y -= 14
+
+    y -= 10
+    pdf.setFont("Helvetica-Bold", 10)
+    pdf.drawString(40, y, "Category")
+    pdf.drawString(160, y, "Line Name")
+    pdf.drawString(320, y, "Allocated")
+    pdf.drawString(400, y, "Spent")
+    pdf.drawString(470, y, "Remaining")
+    y -= 14
+
+    pdf.setFont("Helvetica", 9)
+    for line in summary["lines"]:
+        if y < 60:
+            pdf.showPage()
+            y = height - 40
+            pdf.setFont("Helvetica-Bold", 10)
+            pdf.drawString(40, y, "Category")
+            pdf.drawString(160, y, "Line Name")
+            pdf.drawString(320, y, "Allocated")
+            pdf.drawString(400, y, "Spent")
+            pdf.drawString(470, y, "Remaining")
+            y -= 14
+            pdf.setFont("Helvetica", 9)
+
+        pdf.drawString(40, y, str(line["category"]))
+        pdf.drawString(160, y, str(line["line_name"])[:28])
+        pdf.drawRightString(380, y, f"{line['allocated']:.2f}")
+        pdf.drawRightString(450, y, f"{line['spent']:.2f}")
+        pdf.drawRightString(540, y, f"{line['remaining']:.2f}")
+        y -= 12
+
+    pdf.showPage()
+    pdf.save()
+    return output.getvalue()
 
 
 def create_opportunity(

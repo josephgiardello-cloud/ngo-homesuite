@@ -49,3 +49,26 @@ groups:
         annotations:
           summary: "Scheduler heartbeat missing"
           description: "Scheduler has not reported a heartbeat for more than 30 minutes."
+
+      - alert: NgoHomeSuiteSlowEndpoints
+        expr: |
+          (
+            sum(rate(http_request_latency_ms_sum[5m]))
+            /
+            clamp_min(sum(rate(http_request_latency_ms_count[5m])), 0.001)
+          ) > 1000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Elevated endpoint latency"
+          description: "Average request latency has exceeded 1000ms for at least 10 minutes."
+
+      - alert: NgoHomeSuiteDonationFailuresDetected
+        expr: ngo_homesuite_donation_failures_total > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Donation failures present"
+          description: "At least one donation is currently in failed status."

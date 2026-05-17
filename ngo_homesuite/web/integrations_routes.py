@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 
 from flask import Blueprint, current_app, jsonify, request
 from flask_login import current_user, login_required
+from sqlalchemy import text
 
 from ngo_homesuite.services.calendar_sync_service import InMemoryCalendarProvider, sync_task_deadlines
 from ngo_homesuite.services.integration_ops_service import (
@@ -17,6 +19,8 @@ from ngo_homesuite.services.integration_ops_service import (
 )
 from ngo_homesuite.utils.payment_webhooks import ReplayGuard, event_id, verify_stripe_signature
 from ngo_homesuite.web.rbac import roles_required
+from ngo_homesuite.models.core import db
+from ngo_homesuite.events.services import process_email_opt_out
 
 
 integrations_bp = Blueprint("integrations", __name__, url_prefix="/integrations")
@@ -38,6 +42,67 @@ def _calendar_provider() -> InMemoryCalendarProvider:
         provider = InMemoryCalendarProvider()
         current_app.extensions["calendar_sync_provider"] = provider
     return provider
+
+
+def _utcnow_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _ensure_registration_payment_columns() -> None:
+    cols = db.session.execute(text("PRAGMA table_info(registrations)")).mappings().all()
+    names = {str(c.get("name") or "") for c in cols}
+    if "payment_status" not in names:
+        db.session.execute(text("ALTER TABLE registrations ADD COLUMN payment_status TEXT DEFAULT 'pending'"))
+    if "payment_reference" not in names:
+        db.session.execute(text("ALTER TABLE registrations ADD COLUMN payment_reference TEXT"))
+    db.session.commit()
+
+
+def _upsert_event_registration_paid(*, event_id: int, donor_id: int, reference: str) -> None:
+    _ensure_registration_payment_columns()
+    existing = db.session.execute(
+        text(
+            """
+            SELECT id
+            FROM registrations
+            WHERE event_id = :event_id
+              AND donor_id = :donor_id
+              AND deleted_at IS NULL
+            LIMIT 1
+            """
+        ),
+        {"event_id": int(event_id), "donor_id": int(donor_id)},
+    ).mappings().first()
+
+    if existing:
+        db.session.execute(
+            text(
+                """
+                UPDATE registrations
+                SET payment_status = 'paid',
+                    payment_reference = :reference,
+                    updated_at = :now_iso
+                WHERE id = :id
+                """
+            ),
+            {"id": int(existing["id"]), "reference": str(reference), "now_iso": _utcnow_iso()},
+        )
+    else:
+        db.session.execute(
+            text(
+                """
+                INSERT INTO registrations(event_id, donor_id, registered_at, payment_status, payment_reference, updated_at)
+                VALUES (:event_id, :donor_id, :now_iso, 'paid', :reference, :now_iso)
+                """
+            ),
+            {
+                "event_id": int(event_id),
+                "donor_id": int(donor_id),
+                "reference": str(reference),
+                "now_iso": _utcnow_iso(),
+            },
+        )
+    db.session.commit()
 
 
 @integrations_bp.post("/stripe/checkout")
@@ -74,16 +139,26 @@ def create_stripe_checkout_route():
         return jsonify({"error": "amount_cents must be an integer"}), 400
 
     try:
+        donor_name = data.get("donor_name")
+        if not donor_name and current_user:
+            donor_name = getattr(current_user, "name", None) or getattr(current_user, "username", None)
+
+        campaign_name = str(data.get("campaign_name") or "Donation")
+        if data.get("event_id"):
+            campaign_name = f"Event Registration: {campaign_name}"
+
         result = PaymentService().create_checkout_session(
             org_id=org_id,
             donor_id=data.get("donor_id"),
             campaign_id=data.get("campaign_id"),
+            event_id=data.get("event_id"),
             amount_cents=amount_cents,
             currency=data.get("currency", "USD"),
-            campaign_name=data["campaign_name"],
+            campaign_name=campaign_name,
             success_url=data["success_url"],
             cancel_url=data["cancel_url"],
             donor_email=data.get("donor_email"),
+            donor_name=donor_name,
         )
     except StripeNotConfigured as exc:
         return jsonify({"error": str(exc)}), 503
@@ -94,7 +169,12 @@ def create_stripe_checkout_route():
         current_app,
         kind="stripe_checkout",
         status="created",
-        details={"session_id": result["session_id"], "org_id": org_id},
+        details={
+            "session_id": result["session_id"],
+            "org_id": org_id,
+            "event_id": data.get("event_id"),
+            "campaign_id": data.get("campaign_id"),
+        },
     )
     return jsonify(result), 201
 
@@ -133,6 +213,18 @@ def stripe_webhook_route():
         session_obj = ((event.get("data") or {}).get("object") or {})
         try:
             donation = PaymentService().handle_checkout_completed(session_obj)
+            metadata = session_obj.get("metadata") or {}
+            raw_event_id = metadata.get("event_id")
+            raw_donor_id = metadata.get("donor_id")
+            if raw_event_id and raw_donor_id:
+                try:
+                    _upsert_event_registration_paid(
+                        event_id=int(raw_event_id),
+                        donor_id=int(raw_donor_id),
+                        reference=str(session_obj.get("payment_intent") or session_obj.get("id") or ""),
+                    )
+                except Exception:
+                    current_app.logger.exception("Failed to upsert paid event registration from Stripe webhook")
             details = {
                 "event_id": eid,
                 "event_type": event_type,
@@ -177,6 +269,43 @@ def stripe_webhook_route():
 
     record_integration_event(current_app, kind="stripe_webhook", status="ignored", details={"event_id": eid, "event_type": event_type})
     return jsonify({"ok": True, "status": "ignored", "event_id": eid}), 200
+
+
+@integrations_bp.post("/email/webhooks/suppression")
+def email_suppression_webhook_route():
+    data = request.get_json(silent=True) or {}
+    email = str(data.get("email") or "").strip().lower()
+    reason = str(data.get("reason") or "bounce").strip().lower()
+    if not email:
+        return jsonify({"error": "email is required"}), 400
+
+    from ngo_homesuite.events.services import mark_email_bounced, mark_email_complaint
+    if reason in {"complaint", "spam"}:
+        mark_email_complaint(email, reason=reason)
+    else:
+        mark_email_bounced(email, reason=reason)
+    return jsonify({"ok": True, "email": email, "reason": reason})
+
+
+@integrations_bp.get("/events/reminders/opt-out/<token>")
+def event_reminder_opt_out_route(token: str):
+    ok = process_email_opt_out(token)
+    return jsonify({"ok": ok, "status": "opted_out" if ok else "invalid_token"}), (200 if ok else 404)
+
+
+@integrations_bp.get("/events/reminders/track/<kind>/<token>")
+def event_reminder_track_route(kind: str, token: str):
+    kind_norm = str(kind or "").strip().lower()
+    if kind_norm not in {"open", "click"}:
+        return jsonify({"error": "kind must be one of: open, click"}), 400
+
+    col = "opened_at" if kind_norm == "open" else "clicked_at"
+    db.session.execute(
+        text(f"UPDATE event_email_queue SET {col} = :now_iso, updated_at = :now_iso WHERE opt_out_token = :token"),
+        {"now_iso": _utcnow_iso(), "token": str(token or "").strip()},
+    )
+    db.session.commit()
+    return jsonify({"ok": True, "kind": kind_norm})
 
 
 @integrations_bp.post("/calendar/sync")

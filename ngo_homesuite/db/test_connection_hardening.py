@@ -4,6 +4,8 @@ import os
 import tempfile
 import pytest
 import sqlite3
+import types
+import sys
 from pathlib import Path
 from ngo_homesuite.db import connection
 from ngo_homesuite.db.connection import FatalDBError
@@ -127,3 +129,42 @@ def test_connect_db_allows_empty_schema_bootstrap(monkeypatch, tmp_path):
     conn = connection.connect_db_at(str(db_path))
     assert isinstance(conn, sqlite3.Connection)
     conn.close()
+
+
+def test_rotate_db_key_success_updates_env_and_window(monkeypatch, tmp_path):
+    db_path = tmp_path / "rotate.sqlite3"
+    monkeypatch.setattr(connection, "DB_PATH", str(db_path))
+
+    events: list[str] = []
+
+    class _FakeConn:
+        def execute(self, sql, _params=None):
+            events.append(str(sql))
+            return self
+
+        def close(self):
+            return None
+
+    fake_sqlcipher = types.SimpleNamespace(connect=lambda _path: _FakeConn())
+    monkeypatch.setitem(sys.modules, "pysqlcipher3", types.SimpleNamespace(dbapi2=fake_sqlcipher))
+
+    monkeypatch.setattr(connection, "log_key_provenance", lambda _c, _o, _n: None)
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(connection, "set_global_dual_key_window", lambda w: captured.setdefault("window", w))
+
+    old_key = "hex:" + ("a1" * 32)
+    new_key = "hex:" + ("b2" * 32)
+    monkeypatch.setenv(connection.DB_ENCRYPTION_KEY_ENV, old_key)
+
+    connection.rotate_db_key(old_key=old_key, new_key=new_key, dual_window_seconds=60.0)
+
+    assert any("PRAGMA key" in e for e in events)
+    assert any("PRAGMA rekey" in e for e in events)
+    assert os.environ.get(connection.DB_ENCRYPTION_KEY_ENV) == new_key
+    assert "window" in captured
+
+
+def test_rotate_db_key_rejects_same_key(monkeypatch):
+    key = "hex:" + ("aa" * 32)
+    with pytest.raises(FatalDBError, match="must differ"):
+        connection.rotate_db_key(old_key=key, new_key=key)

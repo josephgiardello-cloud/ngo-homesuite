@@ -22,7 +22,7 @@ from datetime import timedelta
 import json
 import re
 
-from flask import Flask, current_app
+from flask import Flask, current_app, has_app_context
 
 T = TypeVar('T')
 
@@ -435,22 +435,26 @@ class AppConfig:
     def enable_demo_seed(self) -> bool:
         return self.environment == Environment.DEVELOPMENT
 
+    @property
+    def demo_admin_password(self) -> str:
+        return os.environ.get('DEMO_ADMIN_PASSWORD', 'admin123!')
+
     def _load_database_config(self) -> DatabaseConfig:
         """Load database configuration from environment."""
         return DatabaseConfig(
-            url=self._get_env_required('DATABASE_URL'),
+            url=self._get_env('DATABASE_URL', 'sqlite:///ngo_homesuite.sqlite3'),
             pool_size=self._get_env_int('DATABASE_POOL_SIZE', 10),
             pool_recycle=self._get_env_int('DATABASE_POOL_RECYCLE', 3600),
             echo=self._get_env_bool('DATABASE_ECHO', False),
             encryption_enabled=self._get_env_bool('DB_ENCRYPTION_ENABLED', False),
             encryption_key=self._get_env('DB_ENCRYPTION_KEY'),
-            encryption_compat_mode=self._get_env_int('DB_ENCRYPTION_COMPAT_MODE', None),
+            encryption_compat_mode=self._get_env_int('DB_ENCRYPTION_COMPAT_MODE', 4),
         )
     
     def _load_secrets_config(self) -> SecretConfig:
         """Load secrets from environment."""
         return SecretConfig(
-            secret_key=self._get_env_required('SECRET_KEY'),
+            secret_key=self._get_env('SECRET_KEY', 'dev-only-secret-key-32-characters-min!'),
             csrf_token_secret=self._get_env('CSRF_TOKEN_SECRET'),
             db_encryption_key=self._get_env('DB_ENCRYPTION_KEY'),
             stripe_secret_key=self._get_env('STRIPE_SECRET_KEY'),
@@ -574,7 +578,10 @@ class AppConfig:
     def _get_env_int(name: str, default: int = 0) -> int:
         """Get integer environment variable."""
         try:
-            return int(os.environ.get(name, default))
+            value = os.environ.get(name)
+            if value in (None, ""):
+                return int(default)
+            return int(value)
         except ValueError:
             raise ConfigValidationError(f"Invalid integer for {name}")
     
@@ -589,8 +596,12 @@ class AppConfig:
 
 def get_config() -> AppConfig:
     """Get configuration from Flask app or create new."""
-    if current_app:
-        return current_app.config.get('APP_CONFIG')
+    if has_app_context() and current_app:
+        config_obj = current_app.config.get('APP_CONFIG')
+        if config_obj is not None:
+            return config_obj
+        env = os.environ.get('FLASK_ENV', 'development')
+        return AppConfig(Environment(env))
     else:
         env = os.environ.get('FLASK_ENV', 'development')
         return AppConfig(Environment(env))

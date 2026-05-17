@@ -3,8 +3,10 @@ from __future__ import annotations
 from flask import Blueprint, current_app, request
 from flask_login import current_user, login_required
 from pydantic import BaseModel, Field, ValidationError
+from sqlalchemy import func, select
 
 from ngo_homesuite.app.container import AppContainer
+from ngo_homesuite.models.core import Campaign, Donation, Donor, db
 from ngo_homesuite.observability import InMemoryMetrics
 from ngo_homesuite.shared_kernel import redact_payload
 from ngo_homesuite.tenant import TenantContext
@@ -178,6 +180,58 @@ def metrics_snapshot():
     metrics = current_app.extensions.get("metrics")
     if not isinstance(metrics, InMemoryMetrics):
         return {"error": "Metrics subsystem unavailable."}, 503
+
+    org_id = getattr(current_user, "organization_id", None)
+    if org_id is not None:
+        active_donors = int(
+            db.session.scalar(
+                select(func.count(Donor.id)).where(Donor.organization_id == int(org_id), Donor.is_active.is_(True))
+            )
+            or 0
+        )
+        donation_volume = float(
+            db.session.scalar(
+                select(func.coalesce(func.sum(Donation.amount), 0.0)).where(
+                    Donation.organization_id == int(org_id),
+                    Donation.status.in_(("received", "processed", "receipted")),
+                )
+            )
+            or 0.0
+        )
+        donation_failures = int(
+            db.session.scalar(
+                select(func.count(Donation.id)).where(
+                    Donation.organization_id == int(org_id),
+                    Donation.status == "failed",
+                )
+            )
+            or 0
+        )
+        active_campaigns = int(
+            db.session.scalar(
+                select(func.count(Campaign.id)).where(
+                    Campaign.organization_id == int(org_id),
+                    Campaign.status == "active",
+                )
+            )
+            or 0
+        )
+
+        metrics.set("ngo_homesuite_active_donors", float(active_donors))
+        metrics.set("ngo_homesuite_donation_volume_total", donation_volume)
+        metrics.set("ngo_homesuite_active_campaigns", float(active_campaigns))
+        metrics.set("ngo_homesuite_donation_failures_total", float(donation_failures))
+
+        campaign_rows = db.session.execute(
+            select(Campaign.id, Campaign.raised_amount).where(Campaign.organization_id == int(org_id))
+        ).all()
+        for campaign_id, raised_amount in campaign_rows:
+            metrics.set(
+                "donations_total",
+                float(raised_amount or 0.0),
+                labels={"campaign": str(int(campaign_id))},
+            )
+
     return current_app.response_class(metrics.render_prometheus(), mimetype="text/plain")
 
 

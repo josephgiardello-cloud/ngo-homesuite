@@ -5,7 +5,7 @@ import re
 from datetime import date
 from typing import Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select, text
 
 from ngo_homesuite.db.utils import audit
 from ngo_homesuite.models.core import Campaign, Donation, P2PPage, db
@@ -160,8 +160,31 @@ def campaign_stats(campaign_id: int, organization_id: int) -> dict:
         )
     ) or 0
 
-    # Raised amount tracked on the campaign record itself (updated by import/donation flows)
-    # Also compute live sum from P2P page donations for transparency
+    pending_total = float(
+        db.session.scalar(
+            select(func.coalesce(func.sum(Donation.amount), 0.0)).where(
+                Donation.organization_id == organization_id,
+                Donation.campaign_id == campaign_id,
+                Donation.status.in_(("pending",)),
+            )
+        )
+        or 0.0
+    )
+    received_total = float(
+        db.session.scalar(
+            select(func.coalesce(func.sum(Donation.amount), 0.0)).where(
+                Donation.organization_id == organization_id,
+                Donation.campaign_id == campaign_id,
+                Donation.status.in_(("received", "processed", "receipted")),
+            )
+        )
+        or 0.0
+    )
+
+    # Pledged approximation from pending + receivable pipeline.
+    pledged_total = pending_total + received_total
+
+    # Raised amount tracked on the campaign record itself (updated in real time by DB events)
     live_raised = float(campaign.raised_amount)
 
     progress_pct = (
@@ -178,6 +201,9 @@ def campaign_stats(campaign_id: int, organization_id: int) -> dict:
         "campaign_type": campaign.campaign_type,
         "goal_amount": float(campaign.goal_amount),
         "raised_amount": live_raised,
+        "pledged_amount": pledged_total,
+        "received_amount": received_total,
+        "pending_amount": pending_total,
         "progress_pct": progress_pct,
         "currency": campaign.currency,
         "p2p_page_count": int(page_count),
@@ -213,3 +239,43 @@ def calculate_campaign_total(campaign_id: int, organization_id: int) -> float:
         details={"organization_id": int(organization_id), "raised_amount": float(total)},
     )
     return total
+
+
+def _sync_campaign_total(connection, campaign_id: int, organization_id: int) -> None:
+    if campaign_id is None or organization_id is None:
+        return
+    connection.execute(
+        text(
+            """
+            UPDATE campaigns
+            SET raised_amount = COALESCE((
+                SELECT SUM(d.amount)
+                FROM donations d
+                WHERE d.organization_id = :organization_id
+                  AND d.campaign_id = :campaign_id
+                  AND d.status IN ('received', 'processed', 'receipted')
+            ), 0.0)
+            WHERE id = :campaign_id
+              AND organization_id = :organization_id
+            """
+        ),
+        {
+            "campaign_id": int(campaign_id),
+            "organization_id": int(organization_id),
+        },
+    )
+
+
+@event.listens_for(Donation, "after_insert")
+def _donation_after_insert(_mapper, connection, target):
+    _sync_campaign_total(connection, getattr(target, "campaign_id", None), getattr(target, "organization_id", None))
+
+
+@event.listens_for(Donation, "after_delete")
+def _donation_after_delete(_mapper, connection, target):
+    _sync_campaign_total(connection, getattr(target, "campaign_id", None), getattr(target, "organization_id", None))
+
+
+@event.listens_for(Donation, "after_update")
+def _donation_after_update(_mapper, connection, target):
+    _sync_campaign_total(connection, getattr(target, "campaign_id", None), getattr(target, "organization_id", None))

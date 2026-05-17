@@ -805,6 +805,33 @@ def _sqlcipher_apply_key(conn: DBConnection, key: str) -> None:
     conn.execute(f"PRAGMA key = '{safe_key}'")
 
 
+def _sqlcipher_apply_rekey(conn: DBConnection, key: str) -> None:
+    """Apply SQLCipher rekey using the same key policy semantics as _sqlcipher_apply_key."""
+
+    key = key.strip()
+    _kdf_iter, min_len, require_hex = _sqlcipher_policy()
+
+    if require_hex and not key.lower().startswith("hex:"):
+        raise ValueError(
+            "Hex-only SQLCipher key mode is enabled; set key to 'hex:<hex-bytes>'"
+        )
+
+    if key.lower().startswith("hex:"):
+        hex_key = key[4:].strip()
+        if not _looks_like_hex(hex_key):
+            raise ValueError("Invalid hex key format")
+        conn.execute(f"PRAGMA rekey = \"x'{hex_key.lower()}'\"")
+        return
+
+    if len(key) < min_len:
+        raise ValueError(
+            f"SQLCipher passphrase too short: {len(key)} chars (min {min_len})"
+        )
+
+    safe_key = _escape_sqlite_single_quotes(key)
+    conn.execute(f"PRAGMA rekey = '{safe_key}'")
+
+
 def _sqlcipher_apply_security_pragmas(conn: DBConnection) -> None:
     """Best-effort extra security and WAL encryption pragmas for SQLCipher.
 
@@ -1042,3 +1069,63 @@ def run_db(
             raise
 
     raise FatalDBError(f"Database unavailable: {last_exc}")
+
+
+def rotate_db_key(*, old_key: str | None, new_key: str | None, dual_window_seconds: float = 900.0) -> None:
+    """Rotate SQLCipher DB key and activate a short dual-key compatibility window."""
+
+    resolved_old = (old_key or os.environ.get(DB_ENCRYPTION_KEY_ENV, "")).strip()
+    resolved_new = (new_key or "").strip()
+
+    if not resolved_old:
+        raise FatalDBError(f"Missing old key; provide old_key or set {DB_ENCRYPTION_KEY_ENV}.")
+    if not resolved_new:
+        raise FatalDBError("Missing new key; provide new_key.")
+    if hmac.compare_digest(resolved_old, resolved_new):
+        raise FatalDBError("New key must differ from old key.")
+
+    try:
+        from pysqlcipher3 import dbapi2 as sqlcipher  # type: ignore
+    except ModuleNotFoundError as exc:
+        raise FatalDBError("SQLCipher driver pysqlcipher3 is required for key rotation.") from exc
+
+    conn: DBConnection | None = None
+    try:
+        sqlcipher_any = cast(Any, sqlcipher)
+        conn = cast(DBConnection, sqlcipher_any.connect(DB_PATH))
+        _install_attach_hardening(conn)
+
+        _attach_trusted_ctx.trusted = True
+        try:
+            _sqlcipher_apply_key(conn, resolved_old)
+            conn.execute("SELECT count(*) FROM sqlite_master")
+            _sqlcipher_apply_rekey(conn, resolved_new)
+            conn.execute("SELECT count(*) FROM sqlite_master")
+        finally:
+            _attach_trusted_ctx.trusted = False
+
+        log_key_provenance(conn, resolved_old, resolved_new)
+        os.environ[DB_ENCRYPTION_KEY_ENV] = resolved_new
+
+        window = make_dual_key_window(resolved_old, resolved_new, max(1.0, float(dual_window_seconds)))
+        set_global_dual_key_window(window)
+
+        logger.info(
+            "Database key rotated successfully",
+            extra={
+                "event_id": "db.key_rotation.success",
+                "extra_fields": {"dual_window_seconds": float(dual_window_seconds)},
+            },
+        )
+    except Exception as exc:
+        logger.exception(
+            "Database key rotation failed",
+            extra={"event_id": "db.key_rotation.failed", "extra_fields": {"error": str(exc)}},
+        )
+        raise FatalDBError(f"Database key rotation failed: {exc}") from exc
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass

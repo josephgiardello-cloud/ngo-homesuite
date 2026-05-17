@@ -32,6 +32,7 @@ from sqlalchemy.exc import IntegrityError
 
 from ngo_homesuite.models.core import Donation, db
 from ngo_homesuite.services.donation_service import DonationConcurrencyError, DonationNotFound, DonationService
+from ngo_homesuite.utils.email import send_email
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,23 @@ _ZERO_DECIMAL_CURRENCIES = {
     "BIF", "CLP", "DJF", "GNF", "JPY", "KMF", "KRW", "MGA",
     "PYG", "RWF", "UGX", "VND", "VUV", "XAF", "XOF", "XPF",
 }
+
+
+def _send_receipt_email(donation: Donation) -> None:
+    if not donation.donor_email:
+        return
+    subject = "Thank you for your donation"
+    body = (
+        f"Thank you for supporting our mission.\n\n"
+        f"Donation ID: {donation.id}\n"
+        f"Amount: {donation.amount:.2f} {donation.currency}\n"
+        f"Reference: {donation.reference_number or 'n/a'}\n"
+        f"Status: {donation.status}\n"
+    )
+    try:
+        send_email(donation.donor_email, subject, body)
+    except Exception:
+        logger.exception("Failed to send donation receipt email", extra={"donation_id": donation.id})
 
 
 def _cents_to_amount(amount_cents: int, currency: str) -> float:
@@ -109,6 +127,7 @@ class PaymentService:
         org_id: int,
         donor_id: Optional[int],
         campaign_id: Optional[int],
+        event_id: Optional[int] = None,
         amount_cents: int,
         currency: str,
         campaign_name: str,
@@ -145,6 +164,12 @@ class PaymentService:
             metadata["donor_id"] = str(donor_id)
         if campaign_id is not None:
             metadata["campaign_id"] = str(campaign_id)
+        if event_id is not None:
+            metadata["event_id"] = str(event_id)
+        if donor_email:
+            metadata["donor_email"] = str(donor_email)
+        if donor_name:
+            metadata["donor_name"] = str(donor_name)
 
         session_params: dict[str, Any] = {
             "payment_method_types": ["card"],
@@ -323,6 +348,7 @@ class PaymentService:
                 "reference_number": reference_number,
             },
         )
+        _send_receipt_email(donation)
         return donation
 
     def handle_charge_refunded(self, charge_obj: dict[str, Any]) -> Optional[Donation]:
