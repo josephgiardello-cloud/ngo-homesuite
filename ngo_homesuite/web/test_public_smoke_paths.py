@@ -33,6 +33,12 @@ def test_public_give_page_smoke(client):
     assert b"Donate" in rv.data or b"donate" in rv.data
 
 
+def test_public_stripe_donate_page_smoke(client):
+    rv = client.get("/public/donate")
+    assert rv.status_code == 200
+    assert b"Donate with Stripe" in rv.data
+
+
 def test_public_p2p_leaderboard_smoke(client):
     rv = client.get("/p2p/leaderboard")
     assert rv.status_code == 302

@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="container py-4">
+  <h1>Donate Online</h1>
+  <p>Support our mission securely with card checkout.</p>
+  <form action="/public/donate/create-checkout" method="POST">
+    <label>Amount: $<input type="number" step="0.01" min="1" name="amount" required></label><br>
+    <label>Email: <input type="email" name="email" required></label><br>
+    <input type="hidden" name="campaign_id" value="{{ campaign.id if campaign else '' }}">
+    <button type="submit">Donate with Stripe</button>
+  </form>
+</section>
+{% endblock %}

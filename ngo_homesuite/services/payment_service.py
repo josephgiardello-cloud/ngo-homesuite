@@ -128,6 +128,7 @@ class PaymentService:
         donor_id: Optional[int],
         campaign_id: Optional[int],
         event_id: Optional[int] = None,
+        donation_id: Optional[int] = None,
         amount_cents: int,
         currency: str,
         campaign_name: str,
@@ -166,6 +167,8 @@ class PaymentService:
             metadata["campaign_id"] = str(campaign_id)
         if event_id is not None:
             metadata["event_id"] = str(event_id)
+        if donation_id is not None:
+            metadata["donation_id"] = str(donation_id)
         if donor_email:
             metadata["donor_email"] = str(donor_email)
         if donor_name:
@@ -257,6 +260,34 @@ class PaymentService:
         reference_number = payment_intent or session_id
         if not reference_number:
             raise WebhookProcessingError("Cannot determine reference_number from Stripe session.")
+
+        # If checkout metadata points to an existing pending donation, complete it in-place.
+        raw_donation_id = metadata.get("donation_id")
+        if raw_donation_id:
+            try:
+                donation_id = int(raw_donation_id)
+            except (ValueError, TypeError) as exc:
+                raise WebhookProcessingError(f"Invalid donation_id in metadata: {raw_donation_id!r}") from exc
+
+            existing_pending = db.session.scalars(
+                select(Donation).where(
+                    Donation.id == donation_id,
+                    Donation.organization_id == org_id,
+                ).limit(1)
+            ).first()
+            if existing_pending is not None:
+                existing_pending.status = "received"
+                existing_pending.reference_number = str(reference_number)
+                existing_pending.payment_method = "stripe"
+                try:
+                    db.session.commit()
+                except Exception as exc:
+                    db.session.rollback()
+                    raise WebhookProcessingError(
+                        f"Failed to finalize pending donation {donation_id}: {exc}"
+                    ) from exc
+                _send_receipt_email(existing_pending)
+                return existing_pending
 
         # Check for existing donation (idempotency)
         existing = db.session.scalars(

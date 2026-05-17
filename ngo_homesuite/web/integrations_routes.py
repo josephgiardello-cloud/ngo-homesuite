@@ -4,7 +4,7 @@ import json
 import os
 from datetime import datetime, timezone
 
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, current_app, jsonify, request, render_template_string
 from flask_login import current_user, login_required
 from sqlalchemy import text
 
@@ -152,6 +152,7 @@ def create_stripe_checkout_route():
             donor_id=data.get("donor_id"),
             campaign_id=data.get("campaign_id"),
             event_id=data.get("event_id"),
+            donation_id=data.get("donation_id"),
             amount_cents=amount_cents,
             currency=data.get("currency", "USD"),
             campaign_name=campaign_name,
@@ -395,6 +396,42 @@ def integrations_job_detail_route(job_id: str):
     if job is None:
         return jsonify({"error": "Job not found."}), 404
     return jsonify(job)
+
+
+@integrations_bp.get("/email/queue")
+@login_required
+@roles_required("admin", "staff")
+def email_queue_status_route():
+    from ngo_homesuite.utils.email_worker import list_email_queue
+
+    rows = list_email_queue(limit=max(1, min(int(request.args.get("limit", 100)), 500)))
+    html = """
+    <html><head><title>Email Queue</title></head><body>
+    <h1>Email Queue Status</h1>
+    <table border="1" cellpadding="6" cellspacing="0">
+      <thead>
+        <tr>
+          <th>ID</th><th>To</th><th>Subject</th><th>Status</th><th>Attempts</th><th>Last Error</th><th>Created</th><th>Sent</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td>{{ r.id }}</td>
+          <td>{{ r.to_email }}</td>
+          <td>{{ r.subject }}</td>
+          <td>{{ r.status }}</td>
+          <td>{{ r.attempts }}</td>
+          <td>{{ r.last_error or '' }}</td>
+          <td>{{ r.created_at or '' }}</td>
+          <td>{{ r.sent_at or '' }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </body></html>
+    """
+    return render_template_string(html, rows=rows)
 
 
 @integrations_bp.post("/email/smoke")

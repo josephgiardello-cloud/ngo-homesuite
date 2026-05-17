@@ -9,7 +9,7 @@ from unittest import mock
 
 import pytest
 
-from ngo_homesuite.models.core import Organization, Task, User, db
+from ngo_homesuite.models.core import Donation, Donor, Organization, Task, User, db
 
 
 @pytest.fixture(scope="module")
@@ -107,6 +107,57 @@ def test_stripe_webhook_rejects_invalid_signature(client, monkeypatch):
         headers={"Stripe-Signature": "t=1700000000,v1=deadbeef"},
     )
     assert rv.status_code == 400
+
+
+def test_stripe_webhook_completes_existing_pending_donation(client, app, monkeypatch):
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_test")
+    org_id = _ensure_user(app, "pending_donation_admin", "pending_donation_admin@test.local", "admin", "pending_donation_admin_pass_123")
+
+    with app.app_context():
+        donor = Donor(organization_id=org_id, name="Pending Donor", email="pending@example.org")
+        db.session.add(donor)
+        db.session.flush()
+
+        donation = Donation(
+            organization_id=org_id,
+            donor_id=donor.id,
+            donor_name=donor.name,
+            donor_email=donor.email,
+            amount=15.0,
+            currency="USD",
+            status="pending",
+            payment_method="stripe",
+        )
+        db.session.add(donation)
+        db.session.commit()
+        donation_id = int(donation.id)
+
+    payload = {
+        "id": "evt_webhook_pending_1",
+        "type": "checkout.session.completed",
+        "data": {
+            "object": {
+                "id": "cs_pending_1",
+                "payment_status": "paid",
+                "payment_intent": "pi_pending_1",
+                "amount_total": 1500,
+                "currency": "usd",
+                "customer_details": {"name": "Pending Donor", "email": "pending@example.org"},
+                "metadata": {"org_id": str(org_id), "donation_id": str(donation_id)},
+            }
+        },
+    }
+    raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    header = _stripe_header(raw, "whsec_test", int(time.time()))
+
+    rv = client.post("/integrations/webhooks/stripe", data=raw, headers={"Stripe-Signature": header})
+    assert rv.status_code == 200
+
+    with app.app_context():
+        refreshed = db.session.get(Donation, donation_id)
+        assert refreshed is not None
+        assert refreshed.status == "received"
+        assert refreshed.reference_number == "pi_pending_1"
 
 
 def test_stripe_webhook_rejects_missing_event_id(client, monkeypatch):
@@ -249,3 +300,38 @@ def test_email_smoke_probe_mode_passes_flag(client, app):
     payload = rv.get_json()
     assert payload["probe"] is True
     assert payload["ready"] is False
+
+
+def test_email_queue_status_page_renders_table(client, app):
+    _ensure_user(app, "email_queue_admin", "email_queue_admin@test.local", "admin", "email_queue_admin_pass_123")
+    _login(client, "email_queue_admin", "email_queue_admin_pass_123")
+
+    with app.app_context():
+        db.session.execute(
+            db.text(
+                """
+                CREATE TABLE IF NOT EXISTS email_queue (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    to_email TEXT NOT NULL,
+                    subject TEXT NOT NULL,
+                    body TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    last_error TEXT,
+                    created_at TEXT,
+                    sent_at TEXT
+                )
+                """
+            )
+        )
+        db.session.execute(
+            db.text(
+                "INSERT INTO email_queue(to_email, subject, body, status, attempts) VALUES ('q@example.org','Queued','Body','pending',0)"
+            )
+        )
+        db.session.commit()
+
+    rv = client.get("/integrations/email/queue")
+    assert rv.status_code == 200
+    assert b"Email Queue Status" in rv.data
+    assert b"q@example.org" in rv.data

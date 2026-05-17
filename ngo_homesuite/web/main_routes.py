@@ -27,6 +27,7 @@ from ngo_homesuite.services.program_impact_service import list_cases
 from ngo_homesuite.services.donation_service import DonationConcurrencyError, DonationNotFound, DonationService
 from ngo_homesuite.services.donor_service import DonorNotFound, DonorService
 from ngo_homesuite.services.expense_service import ExpenseService
+from ngo_homesuite.services.payment_service import PaymentService, StripeNotConfigured
 from ngo_homesuite.services.fund_service import FundConcurrencyError, FundNotFound, FundService
 from ngo_homesuite.services.organization_service import get_first_active_organization
 from ngo_homesuite.services.project_service import ProjectNotFound, ProjectService
@@ -1069,6 +1070,105 @@ def public_give():
         return redirect(url_for('main.public_give'))
 
     return render_template('public_donation_form.html', form=form, active_page='give')
+
+
+@main_bp.route('/public/donate', methods=['GET'])
+def public_donate_page():
+    org = get_first_active_organization()
+    campaign = None
+    if org is not None:
+        campaign = (
+            db.session.scalars(
+                select(Campaign)
+                .where(Campaign.organization_id == org.id, Campaign.status == 'active')
+                .order_by(Campaign.id.asc())
+                .limit(1)
+            ).first()
+        )
+    return render_template('public/donate.html', campaign=campaign)
+
+
+@main_bp.route('/public/donate/create-checkout', methods=['POST'])
+def public_donate_create_checkout():
+    org = get_first_active_organization()
+    if not org:
+        flash('Donation portal is unavailable.', 'error')
+        return redirect(url_for('main.index'))
+
+    amount = float(request.form.get('amount', '0') or 0)
+    donor_email = (request.form.get('email') or '').strip().lower()
+    raw_campaign_id = (request.form.get('campaign_id') or '').strip()
+    campaign_id = int(raw_campaign_id) if raw_campaign_id.isdigit() else None
+
+    if amount <= 0:
+        flash('Amount must be greater than zero.', 'error')
+        return redirect(url_for('main.public_donate_page'))
+    if not donor_email:
+        flash('Email is required.', 'error')
+        return redirect(url_for('main.public_donate_page'))
+
+    donor_service = DonorService()
+    donor, _created = donor_service.find_or_create_by_email(
+        org.id,
+        donor_email,
+        donor_email.split('@')[0] or 'Donor',
+        donor_type='individual',
+        notes='Created from public Stripe donate flow.',
+    )
+
+    donation = DonationService().create_donation(
+        org_id=org.id,
+        donor_name=donor.name,
+        amount=amount,
+        currency='USD',
+        donor_email=donor.email,
+        donor_id=donor.id,
+        campaign_id=campaign_id,
+        payment_method='stripe',
+        purpose='Public Stripe donation',
+        notes='Pending Stripe checkout',
+        status='pending',
+    )
+
+    campaign_slug = 'general'
+    if campaign_id:
+        campaign = db.session.scalars(
+            select(Campaign).where(Campaign.id == campaign_id, Campaign.organization_id == org.id).limit(1)
+        ).first()
+        if campaign is not None:
+            campaign_slug = campaign.slug
+
+    try:
+        checkout = PaymentService().create_checkout_session(
+            org_id=org.id,
+            donor_id=donor.id,
+            campaign_id=campaign_id,
+            donation_id=donation.id,
+            amount_cents=int(round(amount * 100)),
+            currency='USD',
+            campaign_name=f'Donation to {campaign_slug}',
+            success_url=url_for('main.public_donate_success', donation_id=donation.id, _external=True),
+            cancel_url=url_for('main.public_donate_cancel', donation_id=donation.id, _external=True),
+            donor_email=donor.email,
+            donor_name=donor.name,
+        )
+    except StripeNotConfigured:
+        flash('Online card payments are not configured yet.', 'error')
+        return redirect(url_for('main.public_donate_page'))
+
+    return redirect(checkout['checkout_url'])
+
+
+@main_bp.route('/public/donate/success', methods=['GET'])
+def public_donate_success():
+    donation_id = request.args.get('donation_id', '')
+    return render_template('index.html', success_message=f'Thank you. Donation #{donation_id} is being finalized.')
+
+
+@main_bp.route('/public/donate/cancel', methods=['GET'])
+def public_donate_cancel():
+    donation_id = request.args.get('donation_id', '')
+    return render_template('index.html', error_message=f'Donation #{donation_id} was canceled.')
 
 
 @main_bp.route('/setup', methods=['GET', 'POST'])
