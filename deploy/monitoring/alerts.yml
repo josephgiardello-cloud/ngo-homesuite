@@ -31,3 +31,21 @@ groups:
         annotations:
           summary: "No traffic observed"
           description: "No HTTP request metrics observed in the last 30 minutes."
+
+      - alert: NgoHomeSuiteNoDonationsIn24h
+        expr: increase(donations_total[24h]) == 0
+        for: 1h
+        labels:
+          severity: info
+        annotations:
+          summary: "No donations in 24h"
+          description: "No donation events recorded in the last 24 hours."
+
+      - alert: NgoHomeSuiteSchedulerHeartbeatMissing
+        expr: time() - ngo_homesuite_scheduler_last_run_timestamp_seconds > 1800
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Scheduler heartbeat missing"
+          description: "Scheduler has not reported a heartbeat for more than 30 minutes."

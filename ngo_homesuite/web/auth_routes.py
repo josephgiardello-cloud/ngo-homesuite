@@ -4,7 +4,9 @@ Authentication blueprint for NGO HomeSuite.
 Handles user login, registration, logout, and password management.
 """
 
-from flask import Blueprint, render_template, redirect, url_for, flash, request, session, abort
+from flask import Blueprint, render_template, redirect, url_for, flash, request, session, abort, current_app
+import base64
+import json
 from authlib.integrations.flask_client import OAuth
 from flask_login import login_user, logout_user, login_required, current_user
 from wtforms import StringField, PasswordField, BooleanField, SubmitField
@@ -219,6 +221,85 @@ def _request_data() -> dict:
     return request.form.to_dict() if request.form else {}
 
 
+def _b64url_decode(value: str) -> bytes:
+    raw = (value or '').encode('ascii')
+    raw += b'=' * ((4 - len(raw) % 4) % 4)
+    return base64.urlsafe_b64decode(raw)
+
+
+def _b64url_encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode('ascii').rstrip('=')
+
+
+def _webauthn_generate_registration_options(*, user: User, rp_id: str, rp_name: str, exclude_ids: list[str]) -> dict:
+    from webauthn import generate_registration_options
+    from webauthn.helpers import options_to_json
+    from webauthn.helpers.structs import PublicKeyCredentialDescriptor
+
+    exclude_credentials = [
+        PublicKeyCredentialDescriptor(id=_b64url_decode(cred_id)) for cred_id in exclude_ids if cred_id
+    ]
+    options = generate_registration_options(
+        rp_id=rp_id,
+        rp_name=rp_name,
+        user_id=str(user.id).encode('utf-8'),
+        user_name=user.username,
+        user_display_name=(user.first_name or user.username),
+        exclude_credentials=exclude_credentials,
+    )
+    return json.loads(options_to_json(options))
+
+
+def _webauthn_verify_registration_response(*, credential: dict, expected_challenge: str, expected_origin: str, expected_rp_id: str) -> dict:
+    from webauthn import verify_registration_response
+
+    verification = verify_registration_response(
+        credential=credential,
+        expected_challenge=expected_challenge,
+        expected_rp_id=expected_rp_id,
+        expected_origin=expected_origin,
+    )
+    return {
+        'credential_id': _b64url_encode(verification.credential_id),
+        'public_key': _b64url_encode(verification.credential_public_key),
+        'sign_count': int(verification.sign_count),
+    }
+
+
+def _webauthn_generate_authentication_options(*, rp_id: str, allow_ids: list[str]) -> dict:
+    from webauthn import generate_authentication_options
+    from webauthn.helpers import options_to_json
+    from webauthn.helpers.structs import PublicKeyCredentialDescriptor
+
+    allow_credentials = [
+        PublicKeyCredentialDescriptor(id=_b64url_decode(cred_id)) for cred_id in allow_ids if cred_id
+    ]
+    options = generate_authentication_options(rp_id=rp_id, allow_credentials=allow_credentials)
+    return json.loads(options_to_json(options))
+
+
+def _webauthn_verify_authentication_response(
+    *,
+    credential: dict,
+    expected_challenge: str,
+    expected_origin: str,
+    expected_rp_id: str,
+    stored_public_key_b64: str,
+    current_sign_count: int,
+) -> dict:
+    from webauthn import verify_authentication_response
+
+    verification = verify_authentication_response(
+        credential=credential,
+        expected_challenge=expected_challenge,
+        expected_rp_id=expected_rp_id,
+        expected_origin=expected_origin,
+        credential_public_key=_b64url_decode(stored_public_key_b64),
+        credential_current_sign_count=int(current_sign_count),
+    )
+    return {'new_sign_count': int(verification.new_sign_count)}
+
+
 @auth_bp.post('/mfa/enroll')
 @login_required
 def mfa_enroll():
@@ -291,6 +372,176 @@ def mfa_rotate_backup_codes():
     backup_codes = current_user.generate_mfa_backup_codes()
     db.session.commit()
     return {'backup_codes': backup_codes}, 200
+
+
+@auth_bp.post('/webauthn/register/begin')
+@login_required
+def webauthn_register_begin():
+    """Begin passkey registration for the authenticated user."""
+    rp_id = str(current_app.config.get('WEBAUTHN_RP_ID', '')).strip() or str(request.host).split(':', 1)[0]
+    rp_name = str(current_app.config.get('WEBAUTHN_RP_NAME', 'NGO HomeSuite')).strip() or 'NGO HomeSuite'
+    existing = list(current_user.webauthn_credentials_json or [])
+    exclude_ids = [str(item.get('credential_id') or '') for item in existing]
+    try:
+        options = _webauthn_generate_registration_options(
+            user=current_user,
+            rp_id=rp_id,
+            rp_name=rp_name,
+            exclude_ids=exclude_ids,
+        )
+    except Exception:
+        return {'error': 'webauthn registration is unavailable'}, 503
+
+    challenge = str(options.get('challenge') or '')
+    if not challenge:
+        return {'error': 'could not create registration challenge'}, 500
+    session['webauthn_registration_challenge'] = challenge
+    session['webauthn_registration_user_id'] = int(current_user.id)
+    return {'options': options}, 200
+
+
+@auth_bp.post('/webauthn/register/complete')
+@login_required
+def webauthn_register_complete():
+    """Complete passkey registration for the authenticated user."""
+    expected_challenge = str(session.get('webauthn_registration_challenge') or '')
+    expected_user_id = int(session.get('webauthn_registration_user_id') or 0)
+    if not expected_challenge or expected_user_id != int(current_user.id):
+        return {'error': 'registration session is missing or expired'}, 400
+
+    data = _request_data()
+    credential = data.get('credential') if isinstance(data, dict) else None
+    if not isinstance(credential, dict):
+        return {'error': 'credential is required'}, 400
+
+    try:
+        verified = _webauthn_verify_registration_response(
+            credential=credential,
+            expected_challenge=expected_challenge,
+            expected_origin=(str(current_app.config.get('WEBAUTHN_ORIGIN', '')).strip() or request.host_url.rstrip('/')),
+            expected_rp_id=(str(current_app.config.get('WEBAUTHN_RP_ID', '')).strip() or str(request.host).split(':', 1)[0]),
+        )
+    except Exception:
+        return {'error': 'registration verification failed'}, 400
+
+    credentials = list(current_user.webauthn_credentials_json or [])
+    credential_id = str(verified.get('credential_id') or '')
+    if not credential_id:
+        return {'error': 'registration response missing credential id'}, 400
+
+    if not any(str(item.get('credential_id') or '') == credential_id for item in credentials):
+        credentials.append(
+            {
+                'credential_id': credential_id,
+                'public_key': str(verified.get('public_key') or ''),
+                'sign_count': int(verified.get('sign_count') or 0),
+            }
+        )
+        current_user.webauthn_credentials_json = credentials
+        db.session.commit()
+
+    session.pop('webauthn_registration_challenge', None)
+    session.pop('webauthn_registration_user_id', None)
+    return {'status': 'registered', 'credential_id': credential_id}, 200
+
+
+@auth_bp.post('/webauthn/authenticate/begin')
+def webauthn_authenticate_begin():
+    """Begin passkey authentication for a known user."""
+    data = _request_data()
+    identifier = str((data or {}).get('identifier') or '').strip().lower()
+    if not identifier:
+        return {'error': 'identifier is required'}, 400
+
+    user = db.session.scalars(
+        select(User).where((User.username == identifier) | (User.email == identifier)).limit(1)
+    ).first()
+    if user is None or not user.is_active:
+        return {'error': 'user not found'}, 404
+
+    credentials = list(user.webauthn_credentials_json or [])
+    allow_ids = [str(item.get('credential_id') or '') for item in credentials if item.get('credential_id')]
+    if not allow_ids:
+        return {'error': 'no registered passkeys'}, 400
+
+    try:
+        options = _webauthn_generate_authentication_options(
+            rp_id=(str(current_app.config.get('WEBAUTHN_RP_ID', '')).strip() or str(request.host).split(':', 1)[0]),
+            allow_ids=allow_ids,
+        )
+    except Exception:
+        return {'error': 'webauthn authentication is unavailable'}, 503
+
+    challenge = str(options.get('challenge') or '')
+    if not challenge:
+        return {'error': 'could not create authentication challenge'}, 500
+
+    session['webauthn_auth_challenge'] = challenge
+    session['webauthn_auth_user_id'] = int(user.id)
+    return {'options': options}, 200
+
+
+@auth_bp.post('/webauthn/authenticate/complete')
+def webauthn_authenticate_complete():
+    """Complete passkey authentication and create a logged-in session."""
+    expected_challenge = str(session.get('webauthn_auth_challenge') or '')
+    user_id = int(session.get('webauthn_auth_user_id') or 0)
+    if not expected_challenge or not user_id:
+        return {'error': 'authentication session is missing or expired'}, 400
+
+    data = _request_data()
+    credential = data.get('credential') if isinstance(data, dict) else None
+    if not isinstance(credential, dict):
+        return {'error': 'credential is required'}, 400
+
+    credential_id = str(credential.get('id') or credential.get('rawId') or '')
+    if not credential_id:
+        return {'error': 'credential id is required'}, 400
+
+    user = db.session.get(User, user_id)
+    if user is None or not user.is_active:
+        return {'error': 'user not found'}, 404
+
+    credentials = list(user.webauthn_credentials_json or [])
+    match = next((item for item in credentials if str(item.get('credential_id') or '') == credential_id), None)
+    if match is None:
+        return {'error': 'unknown passkey'}, 400
+
+    try:
+        verified = _webauthn_verify_authentication_response(
+            credential=credential,
+            expected_challenge=expected_challenge,
+            expected_origin=(str(current_app.config.get('WEBAUTHN_ORIGIN', '')).strip() or request.host_url.rstrip('/')),
+            expected_rp_id=(str(current_app.config.get('WEBAUTHN_RP_ID', '')).strip() or str(request.host).split(':', 1)[0]),
+            stored_public_key_b64=str(match.get('public_key') or ''),
+            current_sign_count=int(match.get('sign_count') or 0),
+        )
+    except Exception:
+        return {'error': 'authentication verification failed'}, 400
+
+    new_sign_count = int(verified.get('new_sign_count') or 0)
+    updated_credentials: list[dict] = []
+    for item in credentials:
+        if str(item.get('credential_id') or '') == credential_id:
+            updated_credentials.append(
+                {
+                    'credential_id': str(item.get('credential_id') or ''),
+                    'public_key': str(item.get('public_key') or ''),
+                    'sign_count': new_sign_count,
+                }
+            )
+        else:
+            updated_credentials.append(item)
+
+    user.webauthn_credentials_json = updated_credentials
+    db.session.commit()
+
+    session.pop('webauthn_auth_challenge', None)
+    session.pop('webauthn_auth_user_id', None)
+    session.clear()
+    login_user(user)
+
+    return {'status': 'authenticated', 'redirect': url_for('main.dashboard')}, 200
 
 # ---------------------------------------------------------------------------
 # OAuth registry (authlib)

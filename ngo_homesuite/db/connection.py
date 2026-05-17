@@ -629,7 +629,13 @@ def _pool_acquire_connection() -> DBConnection:
             return conn
         if _pool_created < max_size:
             _pool_created += 1
-            return connect_db()
+            try:
+                return connect_db()
+            except Exception:
+                # Connection creation failed; free the slot so subsequent callers
+                # can retry rather than seeing a permanently exhausted pool.
+                _pool_created = max(0, _pool_created - 1)
+                raise
 
     # Pool is exhausted; block until someone returns a connection.
     now = time.monotonic()

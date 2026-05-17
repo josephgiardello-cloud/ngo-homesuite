@@ -67,6 +67,7 @@ class GrantsFacade:
     restricted_funding_summary = staticmethod(_grant_lifecycle.restricted_funding_summary)
     grant_pipeline_summary = staticmethod(_grant_lifecycle.grant_pipeline_summary)
     grant_calendar_events = staticmethod(_grant_lifecycle.grant_calendar_events)
+    get_grant_budget_summary = staticmethod(_grant_lifecycle.get_grant_budget_summary)
 
 
 def get_grants_facade() -> GrantsFacade:

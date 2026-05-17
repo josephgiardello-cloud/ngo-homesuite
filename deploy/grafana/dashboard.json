@@ -38,6 +38,50 @@
           "legendFormat": "errors/sec"
         }
       ]
+    },
+    {
+      "type": "stat",
+      "title": "Active Grants",
+      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 8},
+      "targets": [
+        {
+          "expr": "sum(grants_status_count{status=~\"awarded|active|reporting\"})",
+          "legendFormat": "active_grants"
+        }
+      ]
+    },
+    {
+      "type": "gauge",
+      "title": "Grant Budget Utilization %",
+      "gridPos": {"h": 8, "w": 6, "x": 6, "y": 8},
+      "targets": [
+        {
+          "expr": "100 * sum(grant_budget_spent_total) / clamp_min(sum(grant_budget_allocated_total), 1)",
+          "legendFormat": "utilization"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Scheduler Heartbeat Age (s)",
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 8},
+      "targets": [
+        {
+          "expr": "time() - ngo_homesuite_scheduler_last_run_timestamp_seconds",
+          "legendFormat": "heartbeat_age"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Grant Pipeline Open",
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 8},
+      "targets": [
+        {
+          "expr": "sum(grants_status_count{status=~\"prospect|in_progress|submitted\"})",
+          "legendFormat": "pipeline_open"
+        }
+      ]
     }
   ]
 }

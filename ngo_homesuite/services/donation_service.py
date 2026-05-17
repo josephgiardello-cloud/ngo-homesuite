@@ -208,6 +208,7 @@ class DonationService:
 
         processed = 0
         failed = 0
+        campaign_ids_to_recalc: set[int] = set()
 
         for plan in plans:
             donor = db.session.scalars(
@@ -237,6 +238,8 @@ class DonationService:
             )
             db.session.add(donation)
             db.session.flush()
+            if donation.campaign_id is not None:
+                campaign_ids_to_recalc.add(int(donation.campaign_id))
 
             # Keep recurring charges on the same lifecycle as manual/public donations.
             donation.status = "processed"
@@ -276,6 +279,15 @@ class DonationService:
             raise DonationConcurrencyError(
                 f"Concurrent update detected while processing recurring plans for org {org_id}; please retry."
             ) from exc
+
+        # Recalculate campaign totals for campaigns touched by this recurring run.
+        for campaign_id in campaign_ids_to_recalc:
+            try:
+                from ngo_homesuite.services.campaign_service import calculate_campaign_total
+                calculate_campaign_total(int(campaign_id), int(org_id))
+            except Exception:
+                pass
+
         return {"processed": processed, "failed": failed}
 
     # ------------------------------------------------------------------
@@ -431,6 +443,13 @@ class DonationService:
             raise DonationConcurrencyError(
                 f"Concurrent update detected for donation {donation_id}; please reload and retry."
             ) from exc
+        # Recalculate campaign total whenever a refund is applied.
+        if new_status == "refunded" and donation.campaign_id is not None:
+            try:
+                from ngo_homesuite.services.campaign_service import calculate_campaign_total
+                calculate_campaign_total(int(donation.campaign_id), int(donation.organization_id))
+            except Exception:
+                pass
         return donation
 
     def delete_donation(

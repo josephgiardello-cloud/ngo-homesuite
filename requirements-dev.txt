@@ -5,6 +5,7 @@
 pytest==9.0.2
 pytest-cov==6.0.0
 pytest-asyncio==0.25.2
+pytest-timeout>=2.3.1
 
 # Code Quality
 black==25.1.0

@@ -325,6 +325,86 @@ class PaymentService:
         )
         return donation
 
+    def handle_charge_refunded(self, charge_obj: dict[str, Any]) -> Optional[Donation]:
+        """Mark a donation as refunded when Stripe fires ``charge.refunded``.
+
+        Looks up the donation by ``payment_intent`` on the charge object and
+        transitions its status to ``refunded``.  Idempotent — returns the
+        donation unchanged when it is already in a terminal state.
+
+        Returns:
+            The updated Donation, or ``None`` when no matching donation exists.
+        """
+        payment_intent = charge_obj.get("payment_intent")
+        if not payment_intent:
+            logger.warning("charge.refunded event missing payment_intent; skipping")
+            return None
+
+        donation = db.session.scalars(
+            select(Donation).where(
+                Donation.reference_number == payment_intent,
+            ).limit(1)
+        ).first()
+        if donation is None:
+            logger.info(
+                "charge.refunded: no matching donation for payment_intent=%s", payment_intent
+            )
+            return None
+
+        if donation.status in ("received", "processed", "receipted"):
+            try:
+                donation = _donation_service.update_status(
+                    donation.id, int(donation.organization_id), "refunded"
+                )
+            except Exception as exc:
+                raise WebhookProcessingError(
+                    f"Failed to mark donation {donation.id} as refunded: {exc}"
+                ) from exc
+
+        logger.info(
+            "Donation marked refunded via charge.refunded",
+            extra={"donation_id": donation.id, "payment_intent": payment_intent},
+        )
+        return donation
+
+    def handle_payment_failed(self, payment_intent_obj: dict[str, Any]) -> Optional[Donation]:
+        """Mark a donation as failed when Stripe fires ``payment_intent.payment_failed``.
+
+        Returns:
+            The updated Donation, or ``None`` when no matching donation exists.
+        """
+        payment_intent_id = payment_intent_obj.get("id")
+        if not payment_intent_id:
+            logger.warning("payment_intent.payment_failed event missing id; skipping")
+            return None
+
+        donation = db.session.scalars(
+            select(Donation).where(
+                Donation.reference_number == payment_intent_id,
+            ).limit(1)
+        ).first()
+        if donation is None:
+            logger.info(
+                "payment_intent.payment_failed: no matching donation for id=%s", payment_intent_id
+            )
+            return None
+
+        if donation.status in ("pending", "received"):
+            try:
+                donation = _donation_service.update_status(
+                    donation.id, int(donation.organization_id), "failed"
+                )
+            except Exception as exc:
+                raise WebhookProcessingError(
+                    f"Failed to mark donation {donation.id} as failed: {exc}"
+                ) from exc
+
+        logger.info(
+            "Donation marked failed via payment_intent.payment_failed",
+            extra={"donation_id": donation.id, "payment_intent_id": payment_intent_id},
+        )
+        return donation
+
     # ------------------------------------------------------------------
     # Direct (non-Stripe) donation recording
     # ------------------------------------------------------------------

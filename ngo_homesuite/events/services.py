@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -7,6 +8,9 @@ from sqlalchemy import text
 
 from ngo_homesuite.models.core import db
 from ngo_homesuite.utils.email import send_email
+
+_MAX_SEND_ATTEMPTS = 3
+_RETRY_BASE_SECONDS = 1.0
 
 
 def _utcnow() -> datetime:
@@ -71,15 +75,25 @@ def _attendee_emails(event_id: int) -> list[tuple[str, str]]:
 
 
 def send_event_reminder(event_id: int, attendee_email: str, attendee_name: str) -> bool:
+    """Send a reminder email with up to _MAX_SEND_ATTEMPTS attempts and exponential backoff."""
     event = get_event(event_id)
     if event is None:
         return False
-    return send_email(
-        to=attendee_email,
-        subject=f"Reminder: {event['title']} starting soon",
-        template="emails/event_reminder.txt",
-        context={"event": event, "name": attendee_name, "text": f"Reminder: {event['title']}"},
-    )
+    for attempt in range(_MAX_SEND_ATTEMPTS):
+        try:
+            result = send_email(
+                to=attendee_email,
+                subject=f"Reminder: {event['title']} starting soon",
+                template="emails/event_reminder.txt",
+                context={"event": event, "name": attendee_name, "text": f"Reminder: {event['title']}"},
+            )
+            if result:
+                return True
+        except Exception:
+            pass
+        if attempt < _MAX_SEND_ATTEMPTS - 1:
+            time.sleep(_RETRY_BASE_SECONDS * (2 ** attempt))
+    return False
 
 
 def send_due_event_reminders(*, hours_before: int) -> dict[str, int]:

@@ -453,6 +453,7 @@ def test_oauth_google_links_existing_email_account(oauth_client, oauth_app):
     assert rv.status_code == 302
     with oauth_app.app_context():
         user = db.session.get(User, existing_id)
+        assert user is not None
         assert user.oauth_provider == 'google'
         assert user.oauth_provider_id == 'google-uid-link'
         # Password should remain intact (it was an existing password account)
@@ -524,3 +525,125 @@ def test_login_template_contains_oauth_buttons(oauth_client, oauth_app):
     body = rv.data
     assert b'/auth/oauth/google' in body
     assert b'/auth/oauth/github' in body
+
+
+# ---------------------------------------------------------------------------
+# WebAuthn / Passkeys
+# ---------------------------------------------------------------------------
+
+def test_webauthn_register_begin_and_complete_stores_credential(client, app):
+    _ensure_user(app, "passkey_user1", "AuthPass123!")
+
+    rv_login = client.post(
+        "/auth/login",
+        data={"username": "passkey_user1", "password": "AuthPass123!"},
+        follow_redirects=False,
+    )
+    assert rv_login.status_code == 302
+
+    import ngo_homesuite.web.auth_routes as ar
+
+    with mock.patch.object(
+        ar,
+        '_webauthn_generate_registration_options',
+        return_value={"challenge": "reg-challenge-1", "rp": {"id": "localhost"}},
+    ):
+        rv_begin = client.post('/auth/webauthn/register/begin', json={})
+
+    assert rv_begin.status_code == 200
+    body_begin = rv_begin.get_json() or {}
+    assert (body_begin.get('options') or {}).get('challenge') == 'reg-challenge-1'
+
+    with mock.patch.object(
+        ar,
+        '_webauthn_verify_registration_response',
+        return_value={
+            'credential_id': 'cred-reg-001',
+            'public_key': 'pk-reg-001',
+            'sign_count': 0,
+        },
+    ):
+        rv_complete = client.post('/auth/webauthn/register/complete', json={'credential': {'id': 'cred-reg-001'}})
+
+    assert rv_complete.status_code == 200
+    body_complete = rv_complete.get_json() or {}
+    assert body_complete.get('status') == 'registered'
+    assert body_complete.get('credential_id') == 'cred-reg-001'
+
+    with app.app_context():
+        user = User.query.filter_by(username='passkey_user1').first()
+        assert user is not None
+        creds = list(user.webauthn_credentials_json or [])
+        assert len(creds) == 1
+        assert creds[0].get('credential_id') == 'cred-reg-001'
+
+
+def test_webauthn_authenticate_begin_and_complete_logs_in(client, app):
+    _ensure_user(app, "passkey_user2", "AuthPass123!")
+
+    with app.app_context():
+        user = User.query.filter_by(username='passkey_user2').first()
+        assert user is not None
+        user.webauthn_credentials_json = [
+            {'credential_id': 'cred-auth-001', 'public_key': 'pk-auth-001', 'sign_count': 1}
+        ]
+        db.session.commit()
+
+    import ngo_homesuite.web.auth_routes as ar
+
+    with mock.patch.object(
+        ar,
+        '_webauthn_generate_authentication_options',
+        return_value={"challenge": "auth-challenge-1", "allowCredentials": [{"id": "cred-auth-001"}]},
+    ):
+        rv_begin = client.post('/auth/webauthn/authenticate/begin', json={'identifier': 'passkey_user2'})
+
+    assert rv_begin.status_code == 200
+    body_begin = rv_begin.get_json() or {}
+    assert (body_begin.get('options') or {}).get('challenge') == 'auth-challenge-1'
+
+    with mock.patch.object(
+        ar,
+        '_webauthn_verify_authentication_response',
+        return_value={'new_sign_count': 2},
+    ):
+        rv_complete = client.post('/auth/webauthn/authenticate/complete', json={'credential': {'id': 'cred-auth-001'}})
+
+    assert rv_complete.status_code == 200
+    body_complete = rv_complete.get_json() or {}
+    assert body_complete.get('status') == 'authenticated'
+    assert '/dashboard' in (body_complete.get('redirect') or '')
+
+    with client.session_transaction() as sess:
+        assert sess.get('_user_id') is not None
+
+    with app.app_context():
+        user = User.query.filter_by(username='passkey_user2').first()
+        assert user is not None
+        creds = list(user.webauthn_credentials_json or [])
+        assert creds[0].get('sign_count') == 2
+
+
+def test_webauthn_authenticate_complete_rejects_unknown_credential(client, app):
+    _ensure_user(app, "passkey_user3", "AuthPass123!")
+    with app.app_context():
+        user = User.query.filter_by(username='passkey_user3').first()
+        assert user is not None
+        user.webauthn_credentials_json = [
+            {'credential_id': 'known-cred-001', 'public_key': 'pk-known-001', 'sign_count': 0}
+        ]
+        db.session.commit()
+
+    import ngo_homesuite.web.auth_routes as ar
+
+    with mock.patch.object(
+        ar,
+        '_webauthn_generate_authentication_options',
+        return_value={"challenge": "auth-challenge-2", "allowCredentials": [{"id": "known-cred-001"}]},
+    ):
+        rv_begin = client.post('/auth/webauthn/authenticate/begin', json={'identifier': 'passkey_user3'})
+    assert rv_begin.status_code == 200
+
+    rv_complete = client.post('/auth/webauthn/authenticate/complete', json={'credential': {'id': 'unknown-cred-999'}})
+    assert rv_complete.status_code == 400
+    assert (rv_complete.get_json() or {}).get('error') == 'unknown passkey'

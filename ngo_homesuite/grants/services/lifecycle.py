@@ -826,6 +826,64 @@ def list_budget_lines(grant_id: int, organization_id: int) -> List[GrantBudgetLi
     return list(db.session.scalars(stmt))
 
 
+def get_grant_budget_summary(grant_id: int, organization_id: int) -> dict:
+    """Return per-grant, per-line spending vs. allocation breakdown for funder reporting.
+
+    Returns a dict with totals and a ``lines`` list, each entry containing:
+    ``budget_line_id``, ``category``, ``line_name``, ``allocated``, ``spent``,
+    ``remaining``, ``utilization_pct``.
+    """
+    from ngo_homesuite.grants.exceptions import GrantNotFound  # local import avoids circular
+    grant = db.session.scalars(
+        select(Grant).where(
+            Grant.id == grant_id,
+            Grant.organization_id == organization_id,
+        ).limit(1)
+    ).first()
+    if grant is None:
+        raise GrantNotFound(grant_id)
+
+    lines = list_budget_lines(grant_id, organization_id)
+    line_results = []
+    for bl in lines:
+        spent = float(
+            db.session.scalar(
+                select(func.coalesce(func.sum(GrantExpenseAllocation.amount), 0)).where(
+                    GrantExpenseAllocation.budget_line_id == bl.id,
+                    GrantExpenseAllocation.organization_id == organization_id,
+                )
+            ) or 0
+        )
+        allocated = float(bl.allocated_amount or 0)
+        remaining = max(0.0, allocated - spent)
+        util_pct = round(spent / allocated * 100, 2) if allocated > 0 else 0.0
+        line_results.append({
+            "budget_line_id": int(bl.id),
+            "category": bl.category,
+            "line_name": bl.line_name,
+            "allocated": allocated,
+            "spent": spent,
+            "remaining": remaining,
+            "utilization_pct": util_pct,
+        })
+
+    total_allocated = _grant_budget_allocated_total(grant_id, organization_id)
+    total_spent = _grant_spent_total(grant_id, organization_id)
+    total_remaining = max(0.0, total_allocated - total_spent)
+    total_util_pct = round(total_spent / total_allocated * 100, 2) if total_allocated > 0 else 0.0
+    return {
+        "grant_id": int(grant.id),
+        "title": grant.title,
+        "status": grant.status,
+        "amount_awarded": float(grant.amount_awarded or 0),
+        "total_allocated": total_allocated,
+        "total_spent": total_spent,
+        "total_remaining": total_remaining,
+        "utilization_pct": total_util_pct,
+        "lines": line_results,
+    }
+
+
 def create_opportunity(
     organization_id: int,
     *,

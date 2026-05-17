@@ -1,5 +1,6 @@
 """Flask configuration for NGO HomeSuite."""
 
+import os
 from datetime import timedelta
 
 from sqlalchemy.pool import StaticPool
@@ -103,6 +104,18 @@ class Config:
     CORS_ALLOWED_ORIGINS = _RUNTIME_SETTINGS.cors_allowed_origins
     ENABLE_DEMO_SEED = _RUNTIME_SETTINGS.enable_demo_seed
 
+    # OAuth / SSO providers
+    GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
+    GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
+    GITHUB_CLIENT_ID = os.environ.get('GITHUB_CLIENT_ID', '')
+    GITHUB_CLIENT_SECRET = os.environ.get('GITHUB_CLIENT_SECRET', '')
+    OAUTH_REDIRECT_BASE = os.environ.get('OAUTH_REDIRECT_BASE', '')  # e.g. https://app.example.com
+
+    # WebAuthn / Passkeys
+    WEBAUTHN_RP_ID = os.environ.get('WEBAUTHN_RP_ID', '')
+    WEBAUTHN_RP_NAME = os.environ.get('WEBAUTHN_RP_NAME', 'NGO HomeSuite')
+    WEBAUTHN_ORIGIN = os.environ.get('WEBAUTHN_ORIGIN', '')
+
 
 class DevelopmentConfig(Config):
     """Development configuration."""
@@ -155,12 +168,3 @@ def get_config():
     env = _RUNTIME_SETTINGS.flask_env
     selected = config.get(env, DevelopmentConfig)
     return selected
-
-
-    # OAuth / SSO providers (set via environment variables)
-    import os as _os
-    GOOGLE_CLIENT_ID = _os.environ.get('GOOGLE_CLIENT_ID', '')
-    GOOGLE_CLIENT_SECRET = _os.environ.get('GOOGLE_CLIENT_SECRET', '')
-    GITHUB_CLIENT_ID = _os.environ.get('GITHUB_CLIENT_ID', '')
-    GITHUB_CLIENT_SECRET = _os.environ.get('GITHUB_CLIENT_SECRET', '')
-    OAUTH_REDIRECT_BASE = _os.environ.get('OAUTH_REDIRECT_BASE', '')  # e.g. https://app.example.com
