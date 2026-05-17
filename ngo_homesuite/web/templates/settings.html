@@ -22,7 +22,7 @@
 
     <div class="card" style="padding:1.75rem;">
         <form method="post" action="{{ url_for('main.org_settings') }}">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token is defined else '' }}" />
 
             <div class="form-group">
                 <label for="name">Organization name <span style="color:var(--danger)">*</span></label>
@@ -77,6 +77,226 @@
             </tr>
         </table>
     </div>
+
+    <div class="card" style="margin-top:1.25rem; padding:1.25rem;">
+        <h2 style="margin:0 0 0.35rem 0;">Custom Fields Schema</h2>
+        <p class="text-muted" style="margin:0 0 0.85rem 0;">Define organization-level custom fields for donors and campaigns. Admin-only.</p>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0.75rem;">
+            <div class="form-group">
+                <label for="cfEntity">Entity</label>
+                <select id="cfEntity">
+                    <option value="donor">Donor</option>
+                    <option value="campaign">Campaign</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="cfKey">Key</label>
+                <input id="cfKey" type="text" placeholder="e.g., preferred_language" />
+            </div>
+            <div class="form-group">
+                <label for="cfLabel">Label</label>
+                <input id="cfLabel" type="text" placeholder="Preferred Language" />
+            </div>
+            <div class="form-group">
+                <label for="cfType">Type</label>
+                <select id="cfType">
+                    <option value="text">Text</option>
+                    <option value="number">Number</option>
+                    <option value="date">Date</option>
+                    <option value="boolean">Boolean</option>
+                    <option value="select">Select</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="form-group" style="margin-top:0.75rem;">
+            <label for="cfOptions">Select Options (comma-separated; required for select type)</label>
+            <input id="cfOptions" type="text" placeholder="Gold, Silver, Bronze" />
+        </div>
+
+        <div class="checkbox-group" style="margin-top:0.5rem;">
+            <input id="cfRequired" type="checkbox" />
+            <label for="cfRequired" style="margin:0;">Required field</label>
+        </div>
+
+        <div class="actions-row" style="margin-top:0.8rem;">
+            <button id="cfAddBtn" class="btn btn-secondary" type="button">Add Field</button>
+            <button id="cfSaveBtn" class="btn btn-primary" type="button">Save Schema</button>
+            <button id="cfReloadBtn" class="btn btn-secondary" type="button">Reload</button>
+        </div>
+
+        <div id="cfError" class="flash flash-error" style="display:none;margin-top:0.85rem;"></div>
+        <div id="cfSuccess" class="flash flash-success" style="display:none;margin-top:0.85rem;"></div>
+
+        <div style="margin-top:1rem; overflow-x:auto;">
+            <table style="width:100%; border-collapse:collapse; font-size:0.9rem;">
+                <thead>
+                    <tr>
+                        <th style="text-align:left; border-bottom:1px solid var(--border); padding:0.45rem;">Entity</th>
+                        <th style="text-align:left; border-bottom:1px solid var(--border); padding:0.45rem;">Key</th>
+                        <th style="text-align:left; border-bottom:1px solid var(--border); padding:0.45rem;">Label</th>
+                        <th style="text-align:left; border-bottom:1px solid var(--border); padding:0.45rem;">Type</th>
+                        <th style="text-align:left; border-bottom:1px solid var(--border); padding:0.45rem;">Required</th>
+                        <th style="text-align:left; border-bottom:1px solid var(--border); padding:0.45rem;">Options</th>
+                        <th style="text-align:left; border-bottom:1px solid var(--border); padding:0.45rem;">Action</th>
+                    </tr>
+                </thead>
+                <tbody id="cfTableBody">
+                    <tr><td colspan="7" class="text-muted" style="padding:0.6rem;">No custom fields defined.</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+    (function() {
+        const state = { schema: { donor: [], campaign: [] } };
+        const els = {
+            entity: document.getElementById('cfEntity'),
+            key: document.getElementById('cfKey'),
+            label: document.getElementById('cfLabel'),
+            type: document.getElementById('cfType'),
+            options: document.getElementById('cfOptions'),
+            required: document.getElementById('cfRequired'),
+            addBtn: document.getElementById('cfAddBtn'),
+            saveBtn: document.getElementById('cfSaveBtn'),
+            reloadBtn: document.getElementById('cfReloadBtn'),
+            tableBody: document.getElementById('cfTableBody'),
+            error: document.getElementById('cfError'),
+            success: document.getElementById('cfSuccess'),
+        };
+
+        function setError(message) {
+            if (!els.error) return;
+            els.error.style.display = message ? 'block' : 'none';
+            els.error.textContent = message || '';
+        }
+
+        function setSuccess(message) {
+            if (!els.success) return;
+            els.success.style.display = message ? 'block' : 'none';
+            els.success.textContent = message || '';
+        }
+
+        function normalizeKey(value) {
+            return String(value || '').trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
+        }
+
+        function renderTable() {
+            const rows = [];
+            ['donor', 'campaign'].forEach((entity) => {
+                (state.schema[entity] || []).forEach((field, idx) => {
+                    rows.push(`
+                        <tr>
+                            <td style="padding:0.45rem; border-bottom:1px solid var(--border);">${entity}</td>
+                            <td style="padding:0.45rem; border-bottom:1px solid var(--border);">${field.key}</td>
+                            <td style="padding:0.45rem; border-bottom:1px solid var(--border);">${field.label}</td>
+                            <td style="padding:0.45rem; border-bottom:1px solid var(--border);">${field.type}</td>
+                            <td style="padding:0.45rem; border-bottom:1px solid var(--border);">${field.required ? 'yes' : 'no'}</td>
+                            <td style="padding:0.45rem; border-bottom:1px solid var(--border);">${(field.options || []).join(', ')}</td>
+                            <td style="padding:0.45rem; border-bottom:1px solid var(--border);">
+                                <button type="button" class="btn btn-secondary" data-entity="${entity}" data-index="${idx}">Remove</button>
+                            </td>
+                        </tr>
+                    `);
+                });
+            });
+
+            if (!rows.length) {
+                els.tableBody.innerHTML = '<tr><td colspan="7" class="text-muted" style="padding:0.6rem;">No custom fields defined.</td></tr>';
+                return;
+            }
+            els.tableBody.innerHTML = rows.join('');
+            els.tableBody.querySelectorAll('button[data-entity][data-index]').forEach((btn) => {
+                btn.addEventListener('click', () => {
+                    const entity = btn.getAttribute('data-entity');
+                    const index = Number(btn.getAttribute('data-index'));
+                    state.schema[entity].splice(index, 1);
+                    renderTable();
+                });
+            });
+        }
+
+        async function api(url, options) {
+            const res = await fetch(url, options);
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new Error(String(data.error || 'Request failed'));
+            }
+            return data;
+        }
+
+        async function loadSchema() {
+            setError('');
+            setSuccess('');
+            const payload = await api('/admin/custom-fields/schema', { method: 'GET' });
+            state.schema = payload.schema || { donor: [], campaign: [] };
+            renderTable();
+        }
+
+        function addField() {
+            setError('');
+            setSuccess('');
+            const entity = String(els.entity.value || '').trim();
+            const key = normalizeKey(els.key.value);
+            const label = String(els.label.value || '').trim();
+            const type = String(els.type.value || '').trim();
+            const required = !!els.required.checked;
+            const options = String(els.options.value || '').split(',').map(v => v.trim()).filter(Boolean);
+
+            if (!entity || !['donor', 'campaign'].includes(entity)) {
+                setError('Entity must be donor or campaign.');
+                return;
+            }
+            if (!key) {
+                setError('Key is required.');
+                return;
+            }
+            if (!label) {
+                setError('Label is required.');
+                return;
+            }
+            if (type === 'select' && options.length === 0) {
+                setError('Select fields require at least one option.');
+                return;
+            }
+
+            const exists = (state.schema[entity] || []).some((f) => f.key === key);
+            if (exists) {
+                setError(`Field key '${key}' already exists for ${entity}.`);
+                return;
+            }
+
+            state.schema[entity].push({ key, label, type, required, options: type === 'select' ? options : [] });
+            renderTable();
+
+            els.key.value = '';
+            els.label.value = '';
+            els.options.value = '';
+            els.required.checked = false;
+        }
+
+        async function saveSchema() {
+            setError('');
+            setSuccess('');
+            const payload = await api('/admin/custom-fields/schema', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ schema: state.schema }),
+            });
+            state.schema = payload.schema || { donor: [], campaign: [] };
+            renderTable();
+            setSuccess('Custom fields schema saved.');
+        }
+
+        els.addBtn.addEventListener('click', addField);
+        els.saveBtn.addEventListener('click', () => { saveSchema().catch((err) => setError(err.message)); });
+        els.reloadBtn.addEventListener('click', () => { loadSchema().catch((err) => setError(err.message)); });
+
+        loadSchema().catch((err) => setError(err.message));
+    })();
+    </script>
 
     {% endif %}
 </div>

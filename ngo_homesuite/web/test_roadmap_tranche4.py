@@ -558,6 +558,72 @@ class TestAdminRoutes:
         assert rv.status_code == 400
         assert "authorized_from" in rv.get_json()["error"]
 
+    def test_admin_custom_fields_schema_round_trip(self, client, app):
+        _ensure_user(app, "admin_user2", "admin2@test.local", "admin", "AdminPass123!")
+        _login(client, "admin_user2", "AdminPass123!")
+
+        get_rv = client.get("/admin/custom-fields/schema")
+        assert get_rv.status_code == 200
+        assert "schema" in get_rv.get_json()
+
+        put_rv = client.put(
+            "/admin/custom-fields/schema",
+            json={
+                "schema": {
+                    "donor": [
+                        {
+                            "key": "preferred_language",
+                            "label": "Preferred Language",
+                            "type": "select",
+                            "required": False,
+                            "options": ["English", "Spanish"],
+                        }
+                    ],
+                    "campaign": [
+                        {
+                            "key": "priority_band",
+                            "label": "Priority Band",
+                            "type": "text",
+                            "required": False,
+                            "options": [],
+                        }
+                    ],
+                }
+            },
+        )
+        assert put_rv.status_code == 200
+        schema = put_rv.get_json()["schema"]
+        assert len(schema["donor"]) == 1
+        assert schema["donor"][0]["key"] == "preferred_language"
+
+        get_again_rv = client.get("/admin/custom-fields/schema")
+        assert get_again_rv.status_code == 200
+        stored = get_again_rv.get_json()["schema"]
+        assert stored["campaign"][0]["key"] == "priority_band"
+
+    def test_admin_custom_fields_schema_rejects_invalid_payload(self, client, app):
+        _ensure_user(app, "admin_user2", "admin2@test.local", "admin", "AdminPass123!")
+        _login(client, "admin_user2", "AdminPass123!")
+
+        rv = client.put(
+            "/admin/custom-fields/schema",
+            json={
+                "schema": {
+                    "donor": [
+                        {
+                            "key": "bad-key-with-dash",
+                            "label": "Bad Key",
+                            "type": "text",
+                            "required": False,
+                            "options": [],
+                        }
+                    ],
+                }
+            },
+        )
+        assert rv.status_code == 400
+        assert "key must match pattern" in rv.get_json()["error"]
+
     def test_admin_get_org(self, client, app):
         _ensure_user(app, "admin_user2", "admin2@test.local", "admin", "AdminPass123!")
         _login(client, "admin_user2", "AdminPass123!")

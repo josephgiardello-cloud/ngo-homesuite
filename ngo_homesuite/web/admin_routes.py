@@ -5,6 +5,8 @@ All endpoints require the 'admin' role.
 from __future__ import annotations
 
 from datetime import datetime
+import re
+from typing import Any
 
 from flask import Blueprint, jsonify, request
 from flask_login import current_user, login_required
@@ -15,9 +17,87 @@ from ngo_homesuite.web.rbac import roles_required
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
 
+_CUSTOM_FIELD_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{1,62}$")
+_CUSTOM_FIELD_TYPES = {"text", "number", "date", "boolean", "select"}
+_CUSTOM_FIELD_ENTITIES = {"donor", "campaign"}
+
 
 def _org_id() -> int:
     return int(current_user.organization_id)
+
+
+def _get_org_custom_field_schema(org: Any) -> dict[str, list[dict[str, Any]]]:
+    metadata = org.metadata_json if isinstance(org.metadata_json, dict) else {}
+    schema = metadata.get("custom_fields_schema")
+    if not isinstance(schema, dict):
+        return {"donor": [], "campaign": []}
+
+    normalized: dict[str, list[dict[str, Any]]] = {"donor": [], "campaign": []}
+    for entity in _CUSTOM_FIELD_ENTITIES:
+        items = schema.get(entity, [])
+        if isinstance(items, list):
+            normalized[entity] = [row for row in items if isinstance(row, dict)]
+    return normalized
+
+
+def _validate_custom_field_schema(raw_schema: Any) -> tuple[dict[str, list[dict[str, Any]]] | None, str | None]:
+    if not isinstance(raw_schema, dict):
+        return None, "schema must be an object"
+
+    normalized: dict[str, list[dict[str, Any]]] = {"donor": [], "campaign": []}
+    for entity, raw_fields in raw_schema.items():
+        if entity not in _CUSTOM_FIELD_ENTITIES:
+            return None, f"Unsupported entity '{entity}'. Allowed entities: {sorted(_CUSTOM_FIELD_ENTITIES)}"
+        if not isinstance(raw_fields, list):
+            return None, f"{entity} must be a list"
+        if len(raw_fields) > 50:
+            return None, f"{entity} exceeds max field count (50)"
+
+        seen_keys: set[str] = set()
+        for idx, raw_field in enumerate(raw_fields):
+            if not isinstance(raw_field, dict):
+                return None, f"{entity}[{idx}] must be an object"
+
+            key = str(raw_field.get("key") or "").strip().lower()
+            label = str(raw_field.get("label") or "").strip()
+            field_type = str(raw_field.get("type") or "").strip().lower()
+            required = bool(raw_field.get("required", False))
+
+            if not _CUSTOM_FIELD_KEY_RE.match(key):
+                return None, f"{entity}[{idx}].key must match pattern {_CUSTOM_FIELD_KEY_RE.pattern}"
+            if key in seen_keys:
+                return None, f"{entity} has duplicate key '{key}'"
+            seen_keys.add(key)
+
+            if not label:
+                return None, f"{entity}[{idx}].label is required"
+            if len(label) > 120:
+                return None, f"{entity}[{idx}].label must be <= 120 characters"
+            if field_type not in _CUSTOM_FIELD_TYPES:
+                return None, f"{entity}[{idx}].type must be one of {sorted(_CUSTOM_FIELD_TYPES)}"
+
+            options: list[str] = []
+            if field_type == "select":
+                raw_options = raw_field.get("options")
+                if not isinstance(raw_options, list) or not raw_options:
+                    return None, f"{entity}[{idx}].options is required for select fields"
+                for option in raw_options:
+                    text = str(option or "").strip()
+                    if not text:
+                        return None, f"{entity}[{idx}].options cannot contain empty values"
+                    options.append(text)
+
+            normalized[entity].append(
+                {
+                    "key": key,
+                    "label": label,
+                    "type": field_type,
+                    "required": required,
+                    "options": options,
+                }
+            )
+
+    return normalized, None
 
 
 # ---------------------------------------------------------------------------
@@ -320,6 +400,42 @@ def update_org_route():
             setattr(org, key, value)
     db.session.commit()
     return jsonify({"id": org.id, "name": org.name})
+
+
+@admin_bp.get("/custom-fields/schema")
+@login_required
+@roles_required("admin")
+def get_custom_fields_schema_route():
+    from ngo_homesuite.models.core import Organization, db
+
+    org = db.session.get(Organization, _org_id())
+    if org is None:
+        return jsonify({"error": "not found"}), 404
+
+    return jsonify({"schema": _get_org_custom_field_schema(org)})
+
+
+@admin_bp.put("/custom-fields/schema")
+@login_required
+@roles_required("admin")
+def put_custom_fields_schema_route():
+    from ngo_homesuite.models.core import Organization, db
+
+    org = db.session.get(Organization, _org_id())
+    if org is None:
+        return jsonify({"error": "not found"}), 404
+
+    payload = request.get_json(silent=True) or {}
+    candidate_schema = payload.get("schema", payload)
+    schema, error = _validate_custom_field_schema(candidate_schema)
+    if error:
+        return jsonify({"error": error}), 400
+
+    metadata = org.metadata_json if isinstance(org.metadata_json, dict) else {}
+    metadata["custom_fields_schema"] = schema
+    org.metadata_json = metadata
+    db.session.commit()
+    return jsonify({"schema": schema})
 
 
 # ---------------------------------------------------------------------------

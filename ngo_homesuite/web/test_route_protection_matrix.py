@@ -22,6 +22,7 @@ ROUTE_POLICY_MANIFEST: dict[str, RoutePolicy] = {
     "/admin/compliance/audit": RoutePolicy(access="admin"),
     "/admin/compliance/drift": RoutePolicy(access="admin"),
     "/admin/compliance/grant-deadlines": RoutePolicy(access="admin"),
+    "/admin/custom-fields/schema": RoutePolicy(access="admin"),
     "/admin/org": RoutePolicy(access="admin"),
     "/admin/roles": RoutePolicy(access="admin"),
     "/admin/external-comms/audit": RoutePolicy(access="admin"),

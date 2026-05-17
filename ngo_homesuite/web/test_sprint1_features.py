@@ -665,3 +665,13 @@ def test_campaign_email_workbench_route_renders_dedicated_view(client):
     assert "Human Reviewer Name" in body
     assert "Special warning" in body
     assert "Email Workbench" in body
+
+
+def test_settings_page_renders_custom_fields_schema_admin_ui(client):
+    _login_admin(client)
+
+    rv = client.get("/settings")
+    assert rv.status_code == 200
+    body = rv.get_data(as_text=True)
+    assert "Custom Fields Schema" in body
+    assert "/admin/custom-fields/schema" in body
