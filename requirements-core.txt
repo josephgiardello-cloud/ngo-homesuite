@@ -18,11 +18,13 @@ greenlet==3.3.0
 # Forms and validation
 WTForms==3.1.2
 email-validator==2.2.0
+zxcvbn==4.5.0
 
 # Security and config
 cryptography==46.0.3
 argon2-cffi==25.1.0
 python-dotenv==1.0.1
+portalocker==3.2.0
 
 # Web server and utilities
 gunicorn==22.0.0
