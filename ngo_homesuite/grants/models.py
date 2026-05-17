@@ -147,6 +147,7 @@ class GrantOpportunity(db.Model):
     organization_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False, index=True)
     awarded_grant_id = db.Column(db.Integer, db.ForeignKey("grants.id"), nullable=True, index=True)
     funder_name = db.Column(db.String(200), nullable=False)
+    funder_ein = db.Column(db.String(12), nullable=True, index=True)
     program_name = db.Column(db.String(200), nullable=False)
     title = db.Column(db.String(300), nullable=False)
     deadline = db.Column(db.Date, nullable=True, index=True)

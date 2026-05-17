@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 
 from ngo_homesuite.db.utils import audit
 from ngo_homesuite.models.core import Grant, GrantOpportunity, GrantProposal, db
+from ngo_homesuite.shared_kernel.validators import ValidationError, validate_ein
 
 
 _VALID_OPPORTUNITY_STATUSES = {"identified", "qualified", "in_progress", "submitted", "awarded", "declined", "archived"}
@@ -44,6 +45,7 @@ def create_opportunity(
     probability: float = 0.0,
     status: str = "identified",
     notes: Optional[str] = None,
+    funder_ein: Optional[str] = None,
 ) -> GrantOpportunity:
     if not funder_name.strip():
         raise ValueError("funder_name is required")
@@ -60,12 +62,22 @@ def create_opportunity(
     if amount_min is not None and amount_max is not None and float(amount_max) < float(amount_min):
         raise ValueError("amount_max must be greater than or equal to amount_min")
 
+    cleaned_ein: Optional[str] = None
+    if funder_ein is not None:
+        cleaned_ein = funder_ein.strip() or None
+        if cleaned_ein:
+            try:
+                validate_ein(cleaned_ein)
+            except ValidationError as exc:
+                raise ValueError(str(exc)) from exc
+
     probability_value = _validate_probability(probability)
     weighted = _compute_probability_weighted_amount(amount_min, amount_max, probability_value)
 
     opportunity = GrantOpportunity(
         organization_id=organization_id,
         funder_name=funder_name.strip(),
+        funder_ein=cleaned_ein,
         program_name=program_name.strip(),
         title=title.strip(),
         deadline=deadline,
@@ -150,6 +162,16 @@ def update_opportunity(opportunity_id: int, organization_id: int, **fields) -> G
 
     if "notes" in fields:
         opportunity.notes = str(fields["notes"] or "").strip() or None
+
+    if "funder_ein" in fields:
+        raw_ein = fields["funder_ein"]
+        cleaned_ein: Optional[str] = str(raw_ein or "").strip() or None
+        if cleaned_ein:
+            try:
+                validate_ein(cleaned_ein)
+            except ValidationError as exc:
+                raise ValueError(str(exc)) from exc
+        opportunity.funder_ein = cleaned_ein
 
     opportunity.probability_weighted_amount = _compute_probability_weighted_amount(
         opportunity.amount_min,
