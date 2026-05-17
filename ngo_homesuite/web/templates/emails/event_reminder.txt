@@ -1,0 +1,12 @@
+Hi {{ name }},
+
+This is a reminder that {{ event.title }} is starting soon.
+
+{% if event.start_date %}Start: {{ event.start_date }}
+{% endif %}{% if event.end_date %}End: {{ event.end_date }}
+{% endif %}{% if event.description %}
+Details:
+{{ event.description }}
+{% endif %}
+Thanks,
+NGO HomeSuite

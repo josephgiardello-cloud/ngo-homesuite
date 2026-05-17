@@ -5,6 +5,7 @@ This module creates and configures the Flask application with all extensions.
 """
 
 import logging
+import os
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import time
@@ -23,7 +24,14 @@ from ngo_homesuite.models.core import db, User, Organization, Donor, Donation, P
 from ngo_homesuite.errors import init_error_handlers
 from ngo_homesuite.app.container import AppContainer
 from ngo_homesuite.db.migrate import auto_migrate
-from ngo_homesuite.observability import InMemoryMetrics, configure_json_logging, set_request_id
+from ngo_homesuite.observability import (
+    InMemoryMetrics,
+    configure_json_logging,
+    set_request_id,
+    observe_request_latency,
+    inc_error,
+    render_latest_metrics,
+)
 from ngo_homesuite.persistence.models.workflow_tables import WorkflowDefinitionRecord, WorkflowEventRecord, WorkflowInstanceRecord  # noqa: F401
 
 
@@ -153,6 +161,27 @@ def create_app(config=None):
     app.register_blueprint(v2_bp)
     if tony_bp is not None:
         app.register_blueprint(tony_bp)
+
+    @app.get('/metrics')
+    def metrics_native():
+        payload = render_latest_metrics()
+        if payload is None:
+            return {"error": "Prometheus client unavailable"}, 503
+        return app.response_class(payload, mimetype='text/plain; version=0.0.4; charset=utf-8')
+
+    scheduler_enabled = str(
+        app.config.get(
+            'EVENT_REMINDER_SCHEDULER_ENABLED',
+            os.getenv('EVENT_REMINDER_SCHEDULER_ENABLED', 'false'),
+        )
+    ).strip().lower() in {'1', 'true', 'yes', 'on'}
+    if scheduler_enabled and not bool(app.config.get('TESTING', False)):
+        try:
+            from ngo_homesuite.events.scheduler import start_event_reminder_scheduler
+
+            start_event_reminder_scheduler(app)
+        except Exception as exc:
+            app.logger.warning('Event reminder scheduler did not start: %s', exc)
     
     # Setup logging
     setup_logging(app)
@@ -184,6 +213,9 @@ def create_app(config=None):
         if isinstance(metrics, InMemoryMetrics):
             metrics.inc('http_requests_total', labels=labels)
             metrics.observe('http_request_latency_ms', duration_ms, labels=labels)
+        observe_request_latency(duration_ms / 1000.0)
+        if response.status_code >= 500:
+            inc_error(f"http_{response.status_code}")
 
         response.headers.setdefault('X-Request-ID', getattr(g, 'request_id', str(uuid.uuid4())))
         response.headers.setdefault('X-Content-Type-Options', 'nosniff')

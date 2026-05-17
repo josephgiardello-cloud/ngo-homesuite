@@ -205,6 +205,7 @@ class Donation(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
     project_id = db.Column(db.Integer, db.ForeignKey('projects.id'), nullable=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaigns.id'), nullable=True, index=True)
     fund_id = db.Column(db.Integer, db.ForeignKey('funds.id'), nullable=True)
     donor_id = db.Column(db.Integer, db.ForeignKey('donors.id'), nullable=True)
     

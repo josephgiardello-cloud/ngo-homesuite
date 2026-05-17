@@ -220,6 +220,13 @@ def link_donation(page_id: int, organization_id: int, donation_id: int) -> P2PPa
     link = P2PPageDonation(page_id=page_id, donation_id=donation_id)
     db.session.add(link)
     db.session.commit()
+    if donation.campaign_id is not None:
+        try:
+            from ngo_homesuite.services.campaign_service import calculate_campaign_total
+
+            calculate_campaign_total(int(donation.campaign_id), int(organization_id))
+        except Exception:
+            pass
     try:
         from ngo_homesuite.db.utils import audit
 
@@ -253,6 +260,13 @@ def unlink_donation(page_id: int, organization_id: int, donation_id: int) -> Non
     if link:
         db.session.delete(link)
         db.session.commit()
+        if donation.campaign_id is not None:
+            try:
+                from ngo_homesuite.services.campaign_service import calculate_campaign_total
+
+                calculate_campaign_total(int(donation.campaign_id), int(organization_id))
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------------

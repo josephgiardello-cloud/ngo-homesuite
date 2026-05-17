@@ -19,6 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from ngo_homesuite.models.core import Donation, DonationReceipt, Donor, RecurringDonationPlan, db
+from ngo_homesuite.observability import inc_donations
 
 
 _VALID_TRANSITIONS: dict[str, set[str]] = {
@@ -291,6 +292,7 @@ class DonationService:
         donor_email: Optional[str] = None,
         donor_phone: Optional[str] = None,
         donor_id: Optional[int] = None,
+        campaign_id: Optional[int] = None,
         project_id: Optional[int] = None,
         fund_id: Optional[int] = None,
         payment_method: Optional[str] = None,
@@ -334,6 +336,7 @@ class DonationService:
             donor_email=donor_email,
             donor_phone=donor_phone,
             donor_id=donor_id,
+            campaign_id=campaign_id,
             project_id=project_id,
             fund_id=fund_id,
             payment_method=payment_method,
@@ -355,6 +358,15 @@ class DonationService:
             db.session.rollback()
             raise
 
+        inc_donations(1.0)
+        if campaign_id is not None:
+            try:
+                from ngo_homesuite.services.campaign_service import calculate_campaign_total
+
+                calculate_campaign_total(int(campaign_id), int(org_id))
+            except Exception:
+                # Best-effort recalculation: donation write must not fail because of aggregation drift.
+                pass
         return donation
 
     def update_donation(

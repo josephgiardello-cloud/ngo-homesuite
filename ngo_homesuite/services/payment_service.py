@@ -268,11 +268,11 @@ class PaymentService:
             except (ValueError, TypeError):
                 logger.warning("Invalid donor_id in Stripe metadata: %s", raw_donor_id)
 
-        project_id: Optional[int] = None
+        campaign_id: Optional[int] = None
         raw_project_id = metadata.get("campaign_id")  # legacy field name in metadata
         if raw_project_id:
             try:
-                project_id = int(raw_project_id)
+                campaign_id = int(raw_project_id)
             except (ValueError, TypeError):
                 logger.warning("Invalid campaign_id in Stripe metadata: %s", raw_project_id)
 
@@ -284,7 +284,7 @@ class PaymentService:
                 currency=currency,
                 donor_email=donor_email,
                 donor_id=donor_id,
-                project_id=project_id,
+                campaign_id=campaign_id,
                 payment_method="stripe",
                 reference_number=reference_number,
                 purpose=f"Online donation via Stripe ({session_id})",

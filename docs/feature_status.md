@@ -10,16 +10,16 @@ Maturity scale:
 - `Operational`: Used in primary workflows, decent test coverage, still needs polish.
 - `Production-ready`: Strong coverage, operational hardening, and documented runbooks.
 
-| Area | Status | Maturity | Notes |
-|---|---|---|---|
+| Area | Status | Maturity | Progress | Notes |
+|---|---|---|---|---|
 | Donors CRUD + profiles | Available | Operational | Web list/detail/create/edit/delete, dedupe/merge, donor insights in UI. |
 | Donations + receipts + recurring | Available | Operational | Public give flow, recurring plans, receipt PDFs, export paths. |
 | Peer Fundraising (P2P) API | Available | Operational | Tenant checks, audit events, aggregated leaderboard, pagination. |
 | Peer Fundraising (P2P) Web (public) | Available | Operational | Public page, thermometer, leaderboard, embeddable widget script, and DAST smoke probes in CI. |
 | P2P Staff workflow | Available | Operational | Dashboard create/publish/close flow plus service-level validation for title/goal/story edge cases; UX iteration still pending. |
-| Events management | Partial | Foundational | Data model and route scaffolding exist, full lifecycle UX still limited. |
-| Campaign management | Partial | Foundational | Campaign entities and relationships present; full end-to-end UI not complete. |
-| Grants workflows | Available | Foundational | Core lifecycle/disbursement guards and mutation audit events are in place, but budget-line accounting, approval gates, and full compliance workflows are still pending. |
+| Events management | Partial | Foundational | 60% | Data model and route scaffolding exist, full lifecycle UX still limited. Email reminders are now service-backed, but route/UI integration is still pending. |
+| Campaign management | Partial | Foundational | 55% | Campaign entities and relationships present; full end-to-end UI and fundraising aggregation polish remain incomplete. |
+| Grants workflows | Available | Foundational | 70% | Core lifecycle/disbursement guards and mutation audit events are in place. Budget-line accounting is functional in services/tests, while approval/compliance operationalization is still in progress. |
 | Memberships | Partial | Operational | Role-gated membership management routes validated by route-policy and RBAC audits; admin UX polish remains. |
 | Volunteers | Partial | Operational | Role-gated volunteer accounting/workflow routes with explicit route-contract and RBAC audit coverage. |
 | Reporting exports/charts | Available | Operational | Export endpoints and chart/report paths are role-gated and now covered by route-policy and RBAC audit tests. |

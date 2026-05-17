@@ -1,0 +1,43 @@
+{
+  "title": "NGO HomeSuite - Critical Signals",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "tags": ["ngohomesuite", "critical"],
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "HTTP Request Duration (p95)",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Donations Total",
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 0},
+      "targets": [
+        {
+          "expr": "sum(donations_total)",
+          "legendFormat": "donations"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Errors (5m)",
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 0},
+      "targets": [
+        {
+          "expr": "sum(rate(errors_total[5m]))",
+          "legendFormat": "errors/sec"
+        }
+      ]
+    }
+  ]
+}

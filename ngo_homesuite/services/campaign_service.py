@@ -184,3 +184,32 @@ def campaign_stats(campaign_id: int, organization_id: int) -> dict:
         "start_date": str(campaign.start_date) if campaign.start_date else None,
         "end_date": str(campaign.end_date) if campaign.end_date else None,
     }
+
+
+def calculate_campaign_total(campaign_id: int, organization_id: int) -> float:
+    """Recalculate and persist campaign raised total from completed donations."""
+    campaign = get_campaign(campaign_id, organization_id)
+    if campaign is None:
+        raise LookupError(f"Campaign {campaign_id} not found")
+
+    completed_statuses = ("received", "processed", "receipted")
+    total = float(
+        db.session.scalar(
+            select(func.coalesce(func.sum(Donation.amount), 0.0)).where(
+                Donation.organization_id == organization_id,
+                Donation.campaign_id == campaign_id,
+                Donation.status.in_(completed_statuses),
+            )
+        )
+        or 0.0
+    )
+
+    campaign.raised_amount = total
+    db.session.commit()
+    audit(
+        "campaign.recalculate_total",
+        entity_type="campaign",
+        entity_id=int(campaign_id),
+        details={"organization_id": int(organization_id), "raised_amount": float(total)},
+    )
+    return total
