@@ -1,7 +1,7 @@
 # Optional AI and retrieval dependencies
 ollama==0.6.0
 langchain==0.3.27
-langchain-ollama==0.3.3
+langchain-ollama==1.1.0
 langchain-community==0.3.27
 chromadb==0.5.5
 pypdf==5.9.0
