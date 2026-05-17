@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import unittest.mock as mock
+from io import BytesIO
+from pathlib import Path
 
 import pytest
 from sqlalchemy import select
@@ -225,6 +227,39 @@ def test_update_campaign(client, app):
     assert rv.status_code == 200
     body = rv.get_json()
     assert body["status"] == "active"
+
+
+def test_campaign_photo_upload_persists_and_returns_media_url(client, app):
+    _login_admin(client)
+    create_rv = client.post(
+        "/api/v2/campaigns",
+        json={"name": "Campaign Photo Upload", "goal_amount": 1500.0},
+    )
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+
+    upload_rv = client.post(
+        f"/api/v2/campaigns/{campaign_id}/photo",
+        data={"photo": (BytesIO(b"fake-png-bytes"), "campaign.png")},
+        content_type="multipart/form-data",
+    )
+    assert upload_rv.status_code == 200
+    payload = upload_rv.get_json()
+    assert payload["photo_url"] == f"/media/campaigns/{campaign_id}/photo"
+
+    list_rv = client.get("/api/v2/campaigns")
+    assert list_rv.status_code == 200
+    items = list_rv.get_json()
+    item = next((row for row in items if int(row["id"]) == campaign_id), None)
+    assert item is not None
+    assert item["photo_url"] == f"/media/campaigns/{campaign_id}/photo"
+
+    with app.app_context():
+        campaign = db.session.get(Campaign, campaign_id)
+        assert campaign is not None
+        assert campaign.photo_path
+        file_path = Path(app.instance_path) / str(campaign.photo_path)
+        assert file_path.exists()
 
 
 def test_update_campaign_invalid_status_returns_400(client, app):

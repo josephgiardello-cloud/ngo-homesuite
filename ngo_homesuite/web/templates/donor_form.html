@@ -5,7 +5,7 @@
 {% block content %}
 <h1>{{ 'Edit Donor' if is_edit else 'Add Donor' }}</h1>
 
-<form method="post" class="mt-2">
+<form method="post" class="mt-2" enctype="multipart/form-data">
     {{ form.hidden_tag() }}
 
     <div class="form-group {% if form.name.errors %}error{% endif %}">
@@ -37,6 +37,20 @@
         {{ form.notes(rows=4) }}
         {% for error in form.notes.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
     </div>
+
+    <div class="form-group">
+        <label for="photo">Photo (JPG, PNG, GIF, WEBP; max 5MB)</label>
+        <input id="photo" name="photo" type="file" accept="image/jpeg,image/png,image/gif,image/webp" />
+    </div>
+
+    {% if donor and donor.photo_path %}
+    <div class="form-group">
+        <label>Current Photo</label>
+        <div>
+            <img src="{{ url_for('main.donor_photo', donor_id=donor.id) }}" alt="Donor photo" style="max-width:180px;border:1px solid var(--border);border-radius:8px;" />
+        </div>
+    </div>
+    {% endif %}
 
     {{ form.submit(class_='btn btn-primary') }}
     <a href="{{ url_for('main.donors_list') }}" class="btn btn-secondary">Cancel</a>

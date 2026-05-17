@@ -13,13 +13,14 @@ from flask import Blueprint, render_template, redirect, url_for, request, flash,
 from flask_login import login_required, current_user
 from flask_wtf import FlaskForm
 from werkzeug.exceptions import NotFound
+from werkzeug.utils import secure_filename
 from wtforms import BooleanField, DateField, FloatField, SelectField, StringField, SubmitField, TextAreaField
 from wtforms.validators import DataRequired, Optional as WTOptional, NumberRange, Email
 from io import BytesIO
 from openpyxl import Workbook, load_workbook
 
 from ngo_homesuite.models.core import (
-    Organization, Beneficiary, Project, Donation, Donor, Fund, Expense, DonationReceipt, P2PPage, Volunteer, db
+    Organization, Beneficiary, Project, Donation, Donor, Fund, Expense, DonationReceipt, P2PPage, Volunteer, Campaign, db
 )
 from ngo_homesuite.services.beneficiary_service import create_beneficiary, get_beneficiary, list_beneficiaries, update_beneficiary
 from ngo_homesuite.services.program_impact_service import list_cases
@@ -47,7 +48,7 @@ from ngo_homesuite.services.opinionated_workflows import (
     run_grant_tracking_reporting_workflow,
     run_program_tracking_impact_workflow,
 )
-from sqlalchemy import func
+from sqlalchemy import func, select
 from ngo_homesuite.web.rbac import roles_required
 from ngo_homesuite.utils.receipt_pdf import generate_receipt_pdf_bytes
 from ngo_homesuite.compliance.evidence_pack import build_compliance_evidence
@@ -58,6 +59,8 @@ _SUPPORTED_LOCALES = {'en', 'es', 'fr'}
 _DONOR_IMPORT_ALLOWED_EXTENSIONS = {'.csv', '.xlsx'}
 _DONOR_IMPORT_MAX_ROWS = 2500
 _DONOR_IMPORT_VALID_TYPES = {'individual', 'corporate', 'foundation', 'anonymous'}
+_PHOTO_ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
+_PHOTO_MAX_BYTES = 5 * 1024 * 1024
 
 # Track process start time for uptime calculation.
 _PROCESS_START = time.monotonic()
@@ -401,6 +404,47 @@ def _donor_import_cache_dir() -> Path:
     cache_dir = Path(current_app.instance_path) / 'donor_import_cache'
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir
+
+
+def _uploads_root_dir() -> Path:
+    uploads_dir = Path(current_app.instance_path) / 'uploads'
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+    return uploads_dir
+
+
+def _save_photo_upload(uploaded, *, entity: str, org_id: int, record_id: int) -> str:
+    if uploaded is None or not getattr(uploaded, 'filename', None):
+        raise ValueError('No file uploaded')
+
+    filename = secure_filename(str(uploaded.filename or ''))
+    if not filename:
+        raise ValueError('Invalid file name')
+
+    ext = Path(filename).suffix.lower()
+    if ext not in _PHOTO_ALLOWED_EXTENSIONS:
+        raise ValueError('Unsupported image type. Allowed: .jpg, .jpeg, .png, .gif, .webp')
+
+    uploaded.stream.seek(0, 2)
+    size_bytes = uploaded.stream.tell()
+    uploaded.stream.seek(0)
+    if size_bytes > _PHOTO_MAX_BYTES:
+        raise ValueError('Image must be 5MB or smaller')
+
+    relative_dir = Path(entity) / f'org_{int(org_id)}'
+    target_dir = _uploads_root_dir() / relative_dir
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_name = f"{int(record_id)}-{uuid.uuid4().hex}{ext}"
+    target_path = target_dir / target_name
+    uploaded.save(target_path)
+    return str((Path('uploads') / relative_dir / target_name).as_posix())
+
+
+def _resolve_upload_path(relative_path: str) -> Path:
+    uploads_root = _uploads_root_dir().resolve()
+    candidate = (Path(current_app.instance_path) / relative_path).resolve()
+    if uploads_root not in candidate.parents and candidate != uploads_root:
+        raise NotFound()
+    return candidate
 
 
 def _parse_donor_import_file(path: Path) -> tuple[list[str], list[dict[str, str]]]:
@@ -1472,7 +1516,7 @@ def donor_create():
 
     form = DonorForm()
     if form.validate_on_submit():
-        DonorService().create_donor(
+        donor = DonorService().create_donor(
             org.id,
             form.name.data,
             email=form.email.data,
@@ -1480,10 +1524,20 @@ def donor_create():
             donor_type=form.donor_type.data,
             notes=form.notes.data,
         )
+
+        uploaded = request.files.get('photo')
+        if uploaded is not None and uploaded.filename:
+            try:
+                donor.photo_path = _save_photo_upload(uploaded, entity='donors', org_id=org.id, record_id=int(donor.id))
+                db.session.commit()
+            except ValueError as exc:
+                flash(str(exc), 'error')
+                return redirect(url_for('main.donor_edit', donor_id=donor.id))
+
         flash('Donor created successfully.', 'success')
         return redirect(url_for('main.donors_list'))
 
-    return render_template('donor_form.html', form=form, is_edit=False, active_page='donors')
+    return render_template('donor_form.html', form=form, donor=None, is_edit=False, active_page='donors')
 
 
 @main_bp.route('/donors/<int:donor_id>/edit', methods=['GET', 'POST'])
@@ -1495,7 +1549,7 @@ def donor_edit(donor_id: int):
     form = DonorForm(obj=donor)
 
     if form.validate_on_submit():
-        DonorService().update_donor(
+        donor = DonorService().update_donor(
             donor.id,
             org.id,
             name=form.name.data,
@@ -1504,10 +1558,55 @@ def donor_edit(donor_id: int):
             donor_type=form.donor_type.data,
             notes=form.notes.data,
         )
+
+        uploaded = request.files.get('photo')
+        if uploaded is not None and uploaded.filename:
+            donor.photo_path = _save_photo_upload(uploaded, entity='donors', org_id=org.id, record_id=int(donor.id))
+            db.session.commit()
+
         flash('Donor updated successfully.', 'success')
         return redirect(url_for('main.donors_list'))
 
     return render_template('donor_form.html', form=form, is_edit=True, donor=donor, active_page='donors')
+
+
+@main_bp.route('/media/donors/<int:donor_id>/photo')
+@login_required
+def donor_photo(donor_id: int):
+    org = _current_org()
+    if org is None:
+        raise NotFound()
+
+    donor = DonorService().get_donor(donor_id, org.id)
+    if not donor.photo_path:
+        raise NotFound()
+
+    photo_path = _resolve_upload_path(str(donor.photo_path))
+    if not photo_path.exists():
+        raise NotFound()
+    return send_file(photo_path)
+
+
+@main_bp.route('/media/campaigns/<int:campaign_id>/photo')
+@login_required
+def campaign_photo(campaign_id: int):
+    org = _current_org()
+    if org is None:
+        raise NotFound()
+
+    campaign = db.session.scalars(
+        select(Campaign).where(
+            Campaign.id == int(campaign_id),
+            Campaign.organization_id == int(org.id),
+        ).limit(1)
+    ).first()
+    if campaign is None or not campaign.photo_path:
+        raise NotFound()
+
+    photo_path = _resolve_upload_path(str(campaign.photo_path))
+    if not photo_path.exists():
+        raise NotFound()
+    return send_file(photo_path)
 
 
 @main_bp.route('/donors/<int:donor_id>/delete', methods=['POST'])

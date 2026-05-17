@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import date
+from io import BytesIO
+from pathlib import Path
 
 import pytest
 
@@ -503,6 +505,32 @@ def test_donor_detail_page_shows_profile_metrics(client, app):
     assert "Next Best Action:" in body
     assert "Recent Donations" in body
     assert "Recurring Plans" in body
+
+
+def test_donor_create_accepts_photo_upload(client, app):
+    _login_admin(client)
+
+    rv = client.post(
+        "/donors/new",
+        data={
+            "name": "Photo Donor",
+            "email": "photo.donor@example.org",
+            "phone": "+1-555-3000",
+            "donor_type": "individual",
+            "notes": "Uploaded profile photo",
+            "photo": (BytesIO(b"fake-jpeg-bytes"), "donor.jpg"),
+        },
+        content_type="multipart/form-data",
+        follow_redirects=False,
+    )
+    assert rv.status_code in (302, 303)
+
+    with app.app_context():
+        donor = Donor.query.filter_by(email="photo.donor@example.org").first()
+        assert donor is not None
+        assert donor.photo_path
+        file_path = Path(app.instance_path) / str(donor.photo_path)
+        assert file_path.exists()
 
 
 def test_donations_export_iif_returns_payload(client, app):

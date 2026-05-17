@@ -5,11 +5,14 @@ All routes are prefixed with /api/v2 and require login.
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 from typing import Any
+import uuid
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, request
 from flask_login import current_user, login_required
 from sqlalchemy import select
+from werkzeug.utils import secure_filename
 
 from ngo_homesuite.grants.facade import GrantsFacade
 from ngo_homesuite.grants.exceptions import GrantNotFound, InvalidGrantTransition
@@ -19,6 +22,8 @@ from ngo_homesuite.web.rbac import roles_required
 
 v2_bp = Blueprint("v2", __name__, url_prefix="/api/v2")
 _GRANTS_FACADE = GrantsFacade()
+_PHOTO_ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
+_PHOTO_MAX_BYTES = 5 * 1024 * 1024
 
 
 def _org_id() -> int:
@@ -41,6 +46,38 @@ def _parse_iso_date(value: str) -> date:
 
 def _grants():
     return _GRANTS_FACADE
+
+
+def _campaign_photo_url(campaign_id: int, photo_path: str | None) -> str | None:
+    if not photo_path:
+        return None
+    return f"/media/campaigns/{int(campaign_id)}/photo"
+
+
+def _save_campaign_photo_upload(uploaded, *, org_id: int, campaign_id: int) -> str:
+    if uploaded is None or not getattr(uploaded, 'filename', None):
+        raise ValueError('No file uploaded')
+
+    filename = secure_filename(str(uploaded.filename or ''))
+    if not filename:
+        raise ValueError('Invalid file name')
+
+    ext = Path(filename).suffix.lower()
+    if ext not in _PHOTO_ALLOWED_EXTENSIONS:
+        raise ValueError('Unsupported image type. Allowed: .jpg, .jpeg, .png, .gif, .webp')
+
+    uploaded.stream.seek(0, 2)
+    size_bytes = uploaded.stream.tell()
+    uploaded.stream.seek(0)
+    if size_bytes > _PHOTO_MAX_BYTES:
+        raise ValueError('Image must be 5MB or smaller')
+
+    target_dir = Path(current_app.instance_path) / 'uploads' / 'campaigns' / f'org_{int(org_id)}'
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_name = f"{int(campaign_id)}-{uuid.uuid4().hex}{ext}"
+    target_path = target_dir / target_name
+    uploaded.save(target_path)
+    return str((Path('uploads') / 'campaigns' / f'org_{int(org_id)}' / target_name).as_posix())
 
 
 def _human_in_the_loop_metadata(data: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
@@ -923,6 +960,7 @@ def list_campaigns_route():
             "goal_amount": float(c.goal_amount),
             "raised_amount": float(c.raised_amount),
             "currency": c.currency,
+            "photo_url": _campaign_photo_url(c.id, getattr(c, 'photo_path', None)),
             "start_date": str(c.start_date) if c.start_date else None,
             "end_date": str(c.end_date) if c.end_date else None,
             "created_at": c.created_at.isoformat() if c.created_at else None,
@@ -967,7 +1005,11 @@ def create_campaign_route():
         )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    return jsonify({"id": campaign.id, "slug": campaign.slug}), 201
+    return jsonify({
+        "id": campaign.id,
+        "slug": campaign.slug,
+        "photo_url": _campaign_photo_url(campaign.id, getattr(campaign, 'photo_path', None)),
+    }), 201
 
 
 @v2_bp.route("/campaigns/<int:campaign_id>", methods=["GET"])
@@ -975,11 +1017,13 @@ def create_campaign_route():
 @roles_required("admin", "staff")
 def get_campaign_route(campaign_id: int):
     """Get campaign detail + live stats."""
-    from ngo_homesuite.services.campaign_service import campaign_stats
+    from ngo_homesuite.services.campaign_service import campaign_stats, get_campaign
     try:
         stats = campaign_stats(campaign_id, _org_id())
     except LookupError:
         return jsonify({"error": "Campaign not found"}), 404
+    campaign = get_campaign(campaign_id, _org_id())
+    stats["photo_url"] = _campaign_photo_url(campaign_id, getattr(campaign, 'photo_path', None) if campaign else None)
     return jsonify(stats)
 
 
@@ -1003,7 +1047,37 @@ def update_campaign_route(campaign_id: int):
         return jsonify({"error": "Campaign not found"}), 404
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    return jsonify({"id": campaign.id, "status": campaign.status})
+    return jsonify({
+        "id": campaign.id,
+        "status": campaign.status,
+        "photo_url": _campaign_photo_url(campaign.id, getattr(campaign, 'photo_path', None)),
+    })
+
+
+@v2_bp.route("/campaigns/<int:campaign_id>/photo", methods=["POST"])
+@login_required
+@roles_required("admin", "staff")
+def upload_campaign_photo_route(campaign_id: int):
+    from ngo_homesuite.services.campaign_service import get_campaign
+
+    campaign = get_campaign(campaign_id, _org_id())
+    if campaign is None:
+        return jsonify({"error": "Campaign not found"}), 404
+
+    uploaded = request.files.get("photo")
+    if uploaded is None or not uploaded.filename:
+        return jsonify({"error": "photo file is required"}), 400
+
+    try:
+        campaign.photo_path = _save_campaign_photo_upload(uploaded, org_id=_org_id(), campaign_id=campaign_id)
+        db.session.commit()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify({
+        "id": campaign.id,
+        "photo_url": _campaign_photo_url(campaign.id, campaign.photo_path),
+    })
 
 
 @v2_bp.route("/campaigns/<int:campaign_id>/close", methods=["POST"])
