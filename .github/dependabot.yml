@@ -8,10 +8,29 @@ updates:
       time: "04:00"
       timezone: "UTC"
     open-pull-requests-limit: 10
+    reviewers:
+      - "josephgiardello-cloud"
     labels:
       - "dependencies"
       - "security"
     commit-message:
-      prefix: "deps"
+      prefix: "chore(deps):"
+      include: "scope"
+    pull-request-branch-name:
+      separator: "/"
+      prefix: "dependabot"
     allow:
-      - dependency-type: "all"
+      - dependency-type: "direct"
+      - dependency-type: "indirect"
+    ignore:
+      # Pin volatile packages to manual review
+      - dependency-name: "langchain*"
+    rebase-strategy: "auto"
+    recreate-closed: false
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+    open-pull-requests-limit: 5

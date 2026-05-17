@@ -84,6 +84,10 @@ jobs:
         print("Backup/restore drill smoke passed")
         PY
 
+    - name: PyProject / Requirements drift guard
+      run: |
+        python tools/check_pyproject_requirements_drift.py
+
     - name: Dependency drift guard
       run: |
         python tools/check_dependency_drift.py
@@ -226,6 +230,48 @@ jobs:
         NGO_HOMESUITE_DB_KEY: ""
       run: |
         pytest ngo_homesuite/web/test_cross_tenant_boundaries.py ngo_homesuite/web/test_v2_route_contracts.py ngo_homesuite/web/test_rbac_tenant_route_audit.py ngo_homesuite/api/test_v1_runtime.py -v --maxfail=10
+
+  docker-matrix-ci:
+    name: Docker Matrix CI [${{ matrix.db-mode }}]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        db-mode: ["plaintext", "sqlcipher"]
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build Docker image (${{ matrix.db-mode }})
+      run: |
+        if [ "${{ matrix.db-mode }}" = "plaintext" ]; then
+          docker build -f Dockerfile.ci -t ngo-homesuite:test-plaintext .
+          docker run --rm ngo-homesuite:test-plaintext
+        else
+          docker build -f Dockerfile.ci-sqlcipher -t ngo-homesuite:test-sqlcipher .
+          docker run --rm ngo-homesuite:test-sqlcipher
+        fi
+
+    - name: Extract coverage from Docker
+      if: always()
+      run: |
+        if [ "${{ matrix.db-mode }}" = "plaintext" ]; then
+          docker create --name extract ngo-homesuite:test-plaintext
+        else
+          docker create --name extract ngo-homesuite:test-sqlcipher
+        fi
+        docker cp extract:/app/coverage.xml ./coverage-${{ matrix.db-mode }}.xml || true
+        docker rm extract
+
+    - name: Upload Docker test coverage
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-docker-${{ matrix.db-mode }}
+        path: coverage-${{ matrix.db-mode }}.xml
+        retention-days: 5
 
   container-security:
     name: Container Security

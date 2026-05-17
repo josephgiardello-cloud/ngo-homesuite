@@ -1,0 +1,70 @@
+# Production-grade CI Dockerfile for plaintext SQLite mode
+# Multi-stage build with optimized layer caching and minimal final image
+# Usage: docker build -f Dockerfile.ci -t ngo-homesuite:ci-plaintext .
+
+# ============================================================================
+# STAGE 1: Builder (Python environment + dependencies)
+# ============================================================================
+FROM python:3.13-slim AS builder
+
+WORKDIR /build
+
+# Install build dependencies (minimal set)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy only requirement files first (layer caching optimization)
+COPY requirements.lock requirements.txt pyproject.toml /build/
+
+# Install dependencies (this layer cached if requirements unchanged)
+RUN pip install --no-cache-dir --user -r requirements.lock
+
+# ============================================================================
+# STAGE 2: Runtime (lean production image)
+# ============================================================================
+FROM python:3.13-slim
+
+WORKDIR /app
+
+# Install runtime-only dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy Python packages from builder (avoids re-compilation)
+COPY --from=builder /root/.local /root/.local
+
+# Copy application code
+COPY . .
+
+# Set Python path and environment
+ENV PATH=/root/.local/bin:$PATH \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    NGO_HOMESUITE_DB_MODE=plaintext \
+    NGO_HOMESUITE_DB_KEY="" \
+    FLASK_ENV=testing
+
+# Create non-root user for security (best practice)
+RUN useradd -m -u 1000 testuser && chown -R testuser:testuser /app
+USER testuser
+
+# Health check (allows Docker to detect if container is ready)
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=2 \
+    CMD python -c "import sys; sys.exit(0)" || exit 1
+
+# Default command: run tests with coverage reporting
+CMD ["pytest", \
+     "ngo_homesuite/", \
+     "-v", \
+     "--tb=short", \
+     "--cov=ngo_homesuite", \
+     "--cov-report=term-missing", \
+     "--cov-report=xml", \
+     "--cov-report=html", \
+     "-n", "auto"]  # parallel execution with pytest-xdist
+

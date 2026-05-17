@@ -1,0 +1,78 @@
+# Production-grade CI Dockerfile for SQLCipher encrypted database mode
+# Multi-stage build with optimized layer caching and security-first design
+# Usage: docker build -f Dockerfile.ci-sqlcipher -t ngo-homesuite:ci-sqlcipher .
+
+# ============================================================================
+# STAGE 1: Builder (Python + SQLCipher build environment)
+# ============================================================================
+FROM python:3.13-slim AS builder
+
+WORKDIR /build
+
+# Install build dependencies including SQLCipher dev tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    git \
+    libsqlcipher-dev \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements files first (layer caching optimization)
+COPY requirements.lock requirements.txt pyproject.toml /build/
+
+# Install Python dependencies with SQLCipher support
+# Note: Order matters - SQLCipher packages need build env
+RUN pip install --no-cache-dir --user -r requirements.lock && \
+    pip install --no-cache-dir --user sqlcipher pycryptodome
+
+# ============================================================================
+# STAGE 2: Runtime (lean encrypted database testing image)
+# ============================================================================
+FROM python:3.13-slim
+
+WORKDIR /app
+
+# Install runtime dependencies (SQLCipher lib only, not dev tools)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libsqlcipher0 \
+    libssl3 \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy Python packages from builder (avoids re-compilation in runtime)
+COPY --from=builder /root/.local /root/.local
+
+# Copy application code
+COPY . .
+
+# Set Python path, environment, and encryption settings
+ENV PATH=/root/.local/bin:$PATH \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    NGO_HOMESUITE_DB_MODE=sqlcipher \
+    NGO_HOMESUITE_DB_KEY=test_encryption_key_32_chars_long_ \
+    FLASK_ENV=testing \
+    SQLCIPHER_COMPAT=4
+
+# Create non-root user for security (defense-in-depth)
+RUN useradd -m -u 1000 testuser && chown -R testuser:testuser /app
+USER testuser
+
+# Health check (validates test environment is operational)
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=2 \
+    CMD python -c "from ngo_homesuite.db import db; db.engine.execute('SELECT 1')" || exit 1
+
+# Default command: run tests with encryption enabled and coverage reporting
+CMD ["pytest", \
+     "ngo_homesuite/", \
+     "-v", \
+     "--tb=short", \
+     "--cov=ngo_homesuite", \
+     "--cov-report=term-missing", \
+     "--cov-report=xml", \
+     "--cov-report=html", \
+     "-m", "not requires_plaintext", \
+     "-n", "auto"]  # exclude plaintext-only tests, parallel execution
+
