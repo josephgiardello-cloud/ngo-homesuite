@@ -20,6 +20,11 @@ We welcome contributions! Please submit issues, pull requests, and join discussi
 - Optional cloud integrations (AWS/Azure): `pip install -r requirements-cloud.txt`
 - Dev and test tooling: `pip install -r requirements-dev.txt`
 
+## Running Tests
+- Install `requirements-dev.txt` before running the default `pytest` command.
+- The repository `pytest.ini` enables timeout and coverage options by default, so a fresh venv also needs dev plugins such as `pytest-timeout` and `pytest-cov`.
+- Full suite from the repo root: `python -m pytest --maxfail=10 -v`
+
 ## Community
 - [Discord](https://discord.gg/example)
 - [Forum](https://community.ngohomesuite.org)

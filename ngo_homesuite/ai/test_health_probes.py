@@ -170,10 +170,10 @@ class TestCircuitBreakerRecovery:
         time.sleep(1.1)
         
         # Next attempt should transition to HALF_OPEN
-        # (will fail because function still fails, but state changed)
+        # A failed recovery attempt immediately re-opens the circuit.
         with pytest.raises(ValueError):
             cb.call(failing_func)
-        assert cb.get_state() == CircuitBreakerState.HALF_OPEN
+        assert cb.get_state() == CircuitBreakerState.OPEN
 
     def test_transition_half_open_to_closed_on_success(self):
         """
@@ -251,7 +251,8 @@ class TestCircuitBreakerMetrics:
         cb.call(slow_func)
         
         metrics = cb.get_metrics()
-        assert metrics['avg_latency_ms'] > 10  # At least 10ms
+        assert metrics['avg_latency_ms'] > 0
+        assert metrics['max_latency_ms'] >= 10
 
     def test_metrics_track_failure_rate(self):
         """

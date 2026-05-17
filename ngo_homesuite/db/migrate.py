@@ -28,6 +28,11 @@ def _env_float(name: str, default: float) -> float:
     return float(raw)
 
 
+def _runtime_setting(name: str, default: Any) -> Any:
+    settings = get_runtime_settings()
+    return getattr(settings, name, default)
+
+
 def _guard_encrypted_db_not_supported() -> None:
     if os.environ.get(DB_ENCRYPTION_KEY_ENV):
         raise MigrationPlanError(
@@ -175,7 +180,7 @@ def plan_migrations(db_path: str | None = None, migrations_dir: Path | None = No
     resolved_db_path = db_path or "ngo_data.db"
     directory = Path(migrations_dir) if migrations_dir is not None else _resolve_migrations_dir()
     migration_files = sorted(directory.glob("*.sql"))
-    timeout_s = _env_float("NGO_HOMESUITE_MIGRATION_TIMEOUT_SEC", get_runtime_settings().migration_timeout_sec)
+    timeout_s = _env_float("NGO_HOMESUITE_MIGRATION_TIMEOUT_SEC", float(_runtime_setting("migration_timeout_sec", 30.0)))
     conn = sqlite3.connect(resolved_db_path, detect_types=sqlite3.PARSE_DECLTYPES, timeout=timeout_s)
     conn.row_factory = sqlite3.Row
     try:
@@ -224,10 +229,12 @@ def plan_migrations(db_path: str | None = None, migrations_dir: Path | None = No
 
 
 def _create_backup_if_needed(db_path: str) -> str | None:
-    settings = get_runtime_settings()
-    enabled = _env_bool("NGO_HOMESUITE_BACKUP_BEFORE_MIGRATE", settings.backup_before_migrate)
-    require_backup = _env_bool("NGO_HOMESUITE_REQUIRE_BACKUP_BEFORE_MIGRATE", settings.require_backup_before_migrate)
-    warn_only = _env_bool("NGO_HOMESUITE_MIGRATION_BACKUP_WARN_ONLY", settings.migration_backup_warn_only)
+    enabled = _env_bool("NGO_HOMESUITE_BACKUP_BEFORE_MIGRATE", bool(_runtime_setting("backup_before_migrate", True)))
+    require_backup = _env_bool(
+        "NGO_HOMESUITE_REQUIRE_BACKUP_BEFORE_MIGRATE",
+        bool(_runtime_setting("require_backup_before_migrate", True)),
+    )
+    warn_only = _env_bool("NGO_HOMESUITE_MIGRATION_BACKUP_WARN_ONLY", bool(_runtime_setting("migration_backup_warn_only", False)))
 
     if not enabled:
         msg = "Backup before migrate is disabled by configuration"
@@ -260,7 +267,7 @@ def _create_backup_if_needed(db_path: str) -> str | None:
 def _restore_backup_if_needed(db_path: str, backup_path: str | None) -> None:
     restore = _env_bool(
         "NGO_HOMESUITE_RESTORE_BACKUP_ON_MIGRATION_FAIL",
-        get_runtime_settings().restore_backup_on_migration_fail,
+        bool(_runtime_setting("restore_backup_on_migration_fail", True)),
     )
     if not restore or not backup_path:
         return
@@ -287,7 +294,7 @@ def auto_migrate(db_path: str | None = None) -> None:
     ]
 
     backup_path = _create_backup_if_needed(resolved_db_path)
-    timeout_s = _env_float("NGO_HOMESUITE_MIGRATION_TIMEOUT_SEC", get_runtime_settings().migration_timeout_sec)
+    timeout_s = _env_float("NGO_HOMESUITE_MIGRATION_TIMEOUT_SEC", float(_runtime_setting("migration_timeout_sec", 30.0)))
     conn = sqlite3.connect(resolved_db_path, detect_types=sqlite3.PARSE_DECLTYPES, timeout=timeout_s)
     conn.row_factory = sqlite3.Row
     try:

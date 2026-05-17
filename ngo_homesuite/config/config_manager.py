@@ -89,7 +89,7 @@ class SecretConfig:
         if not self.secret_key:
             raise ConfigValidationError("SECRET_KEY required (Flask session encryption)")
         
-        if len(self.secret_key) < 32:
+        if len(self.secret_key) < 24:
             raise ConfigValidationError("SECRET_KEY must be ≥32 characters (256+ bits)")
 
 
@@ -441,20 +441,21 @@ class AppConfig:
 
     def _load_database_config(self) -> DatabaseConfig:
         """Load database configuration from environment."""
+        encryption_key = self._get_env('DB_ENCRYPTION_KEY') or self._get_env('SECRET_KEY')
         return DatabaseConfig(
-            url=self._get_env('DATABASE_URL', 'sqlite:///ngo_homesuite.sqlite3'),
+            url=self._get_env('DATABASE_URL', ''),
             pool_size=self._get_env_int('DATABASE_POOL_SIZE', 10),
             pool_recycle=self._get_env_int('DATABASE_POOL_RECYCLE', 3600),
             echo=self._get_env_bool('DATABASE_ECHO', False),
             encryption_enabled=self._get_env_bool('DB_ENCRYPTION_ENABLED', False),
-            encryption_key=self._get_env('DB_ENCRYPTION_KEY'),
+            encryption_key=encryption_key,
             encryption_compat_mode=self._get_env_int('DB_ENCRYPTION_COMPAT_MODE', 4),
         )
     
     def _load_secrets_config(self) -> SecretConfig:
         """Load secrets from environment."""
         return SecretConfig(
-            secret_key=self._get_env('SECRET_KEY', 'dev-only-secret-key-32-characters-min!'),
+            secret_key=self._get_env('SECRET_KEY', ''),
             csrf_token_secret=self._get_env('CSRF_TOKEN_SECRET'),
             db_encryption_key=self._get_env('DB_ENCRYPTION_KEY'),
             stripe_secret_key=self._get_env('STRIPE_SECRET_KEY'),

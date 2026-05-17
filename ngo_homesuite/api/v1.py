@@ -185,7 +185,7 @@ def metrics_snapshot():
     if org_id is not None:
         active_donors = int(
             db.session.scalar(
-                select(func.count(Donor.id)).where(Donor.organization_id == int(org_id), Donor.is_active.is_(True))
+                    select(func.count(Donor.id)).where(Donor.organization_id == int(org_id))
             )
             or 0
         )

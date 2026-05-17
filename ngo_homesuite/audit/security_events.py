@@ -34,6 +34,14 @@ from sqlalchemy.dialects.sqlite import JSON
 from ngo_homesuite.models.core import db
 
 
+def _stable_datetime_iso(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        value = value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value.isoformat()
+
+
 class SecurityEventType(StrEnum):
     """Security event types for audit trail."""
     
@@ -81,6 +89,10 @@ class SecurityEventType(StrEnum):
     SECURITY_POLICY_CHANGED = "system.security_policy_changed"
     API_KEY_ROTATED = "system.api_key_rotated"
     ENCRYPTION_KEY_ROTATED = "system.encryption_key_rotated"
+    SYSTEM_BOOTSTRAP_TOKEN_GENERATED = "system.bootstrap_token_generated"
+    SYSTEM_BOOTSTRAP_TOKEN_VALIDATION_FAILED = "system.bootstrap_token_validation_failed"
+    SYSTEM_BOOTSTRAP_TOKEN_CONSUMED = "system.bootstrap_token_consumed"
+    SYSTEM_BOOTSTRAP_TOKEN_INVALIDATED = "system.bootstrap_token_invalidated"
 
 
 class SecurityAuditEvent(db.Model):
@@ -135,7 +147,7 @@ class SecurityAuditEvent(db.Model):
             "event_type": self.event_type,
             "resource_id": self.resource_id,
             "action": self.action,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "created_at": _stable_datetime_iso(self.created_at),
             "previous_hash": self.previous_event_hash,
         }, sort_keys=True)
         return hashlib.sha256(data.encode()).hexdigest()
@@ -192,10 +204,11 @@ class SecurityAuditService:
             request_id = getattr(g, "request_id", None) or str(uuid4())
             
             # Get previous event hash for chain
+            chain_org_id = resource_org_id or actor_org_id
             previous_event = (
                 SecurityAuditEvent.query
-                .filter_by(actor_org_id=actor_org_id or resource_org_id)
-                .order_by(desc(SecurityAuditEvent.created_at))
+                .filter_by(resource_org_id=chain_org_id)
+                .order_by(desc(SecurityAuditEvent.created_at), desc(SecurityAuditEvent.id))
                 .first()
             )
             previous_hash = previous_event.this_event_hash if previous_event else None
@@ -215,6 +228,7 @@ class SecurityAuditService:
                 result=result,
                 reason=reason,
                 payload=payload or {},
+                created_at=datetime.now(timezone.utc),
                 request_id=request_id,
                 previous_event_hash=previous_hash,
             )
@@ -256,7 +270,7 @@ class SecurityAuditService:
         
         **SECURITY**: Only return events for requested org.
         """
-        query = SecurityAuditEvent.query.filter_by(actor_org_id=org_id)
+        query = SecurityAuditEvent.query.filter_by(resource_org_id=org_id)
         
         if actor_user_id:
             query = query.filter_by(actor_user_id=actor_user_id)
@@ -281,8 +295,8 @@ class SecurityAuditService:
         """
         events = (
             SecurityAuditEvent.query
-            .filter_by(actor_org_id=org_id)
-            .order_by(SecurityAuditEvent.created_at)
+            .filter_by(resource_org_id=org_id)
+            .order_by(SecurityAuditEvent.created_at.asc(), SecurityAuditEvent.id.asc())
             .all()
         )
         

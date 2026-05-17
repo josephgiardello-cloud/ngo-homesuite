@@ -11,6 +11,7 @@ Validates:
 
 import pytest
 from datetime import datetime, timezone
+from uuid import uuid4
 from ngo_homesuite.audit.security_events import (
     SecurityAuditService,
     SecurityAuditEvent,
@@ -55,10 +56,29 @@ def org2(app):
 def admin_user1(app, org1):
     """Create admin for org1."""
     with app.app_context():
+        suffix = uuid4().hex[:8]
         user = User(
-            username="admin_org1",
-            email="admin1@test.local",
+            username=f"admin_org1_{suffix}",
+            email=f"admin1_{suffix}@test.local",
             organization_id=org1.id,
+            role="admin",
+        )
+        user.set_password("Admin123!")
+        db.session.add(user)
+        db.session.flush()
+        yield user
+        db.session.rollback()
+
+
+@pytest.fixture()
+def admin_user2(app, org2):
+    """Create admin for org2."""
+    with app.app_context():
+        suffix = uuid4().hex[:8]
+        user = User(
+            username=f"admin_org2_{suffix}",
+            email=f"admin2_{suffix}@test.local",
+            organization_id=org2.id,
             role="admin",
         )
         user.set_password("Admin123!")
@@ -97,7 +117,7 @@ class TestSecurityAuditEventLogging:
                 
                 assert event.event_id is not None
                 assert event.actor_user_id == admin_user1.id
-                assert event.actor_username == "admin_org1"
+                assert event.actor_username == admin_user1.username
                 assert event.actor_org_id == org1.id
                 assert event.created_at is not None
                 assert event.this_event_hash is not None
@@ -111,7 +131,7 @@ class TestSecurityAuditEventLogging:
         with app.app_context():
             with app.test_request_context():
                 event = SecurityAuditService.log_event(
-                    event_type=SecurityEventType.SYSTEM_API_KEY_ROTATED,
+                    event_type=SecurityEventType.API_KEY_ROTATED,
                     action="api_key_rotated",
                     result="success",
                     resource_org_id=org1.id,
@@ -145,7 +165,7 @@ class TestSecurityAuditEventLogging:
                 assert event.result == "denied"
                 assert "Viewer role" in event.reason
 
-    def test_tamper_evidence_hash_chain(self, app, org1):
+    def test_tamper_evidence_hash_chain(self, app, org1, admin_user1):
         """
         **Scenario**: Verify hash chain for tamper detection.
         
@@ -159,6 +179,9 @@ class TestSecurityAuditEventLogging:
         """
         with app.app_context():
             with app.test_request_context():
+                from flask_login import login_user
+                login_user(admin_user1)
+
                 # Event 1
                 event1 = SecurityAuditService.log_event(
                     event_type=SecurityEventType.USER_CREATED,
@@ -196,7 +219,7 @@ class TestSecurityAuditEventLogging:
                 is_valid = SecurityAuditService.verify_chain_integrity(org1.id)
                 assert is_valid is True
 
-    def test_tamper_detection_hash_mutation(self, app, org1):
+    def test_tamper_detection_hash_mutation(self, app, org1, admin_user1):
         """
         **Scenario**: Detect tampering by mutating event hash.
         
@@ -204,6 +227,9 @@ class TestSecurityAuditEventLogging:
         """
         with app.app_context():
             with app.test_request_context():
+                from flask_login import login_user
+                login_user(admin_user1)
+
                 # Create event
                 event1 = SecurityAuditService.log_event(
                     event_type=SecurityEventType.USER_CREATED,
@@ -227,7 +253,7 @@ class TestSecurityAuditEventLogging:
 class TestRLSEnforcementInAuditQueries:
     """Test that RLS is enforced in audit queries."""
 
-    def test_query_events_org_boundary_enforcement(self, app, org1, org2, admin_user1):
+    def test_query_events_org_boundary_enforcement(self, app, org1, org2, admin_user1, admin_user2):
         """
         **Scenario**: Query audit events respects organization boundary.
         
@@ -241,7 +267,10 @@ class TestRLSEnforcementInAuditQueries:
         """
         with app.app_context():
             with app.test_request_context():
+                from flask_login import login_user, logout_user
+
                 # Events in Org 1
+                login_user(admin_user1)
                 SecurityAuditService.log_event(
                     event_type=SecurityEventType.USER_CREATED,
                     action="user_created_org1_1",
@@ -260,6 +289,8 @@ class TestRLSEnforcementInAuditQueries:
                 )
                 
                 # Events in Org 2
+                logout_user()
+                login_user(admin_user2)
                 SecurityAuditService.log_event(
                     event_type=SecurityEventType.USER_CREATED,
                     action="user_created_org2_1",
@@ -327,7 +358,7 @@ class TestAuditEventIntegration:
             # Create target user
             target = User(
                 username="target_role_change",
-                email="target@test.local",
+                email=f"target_{org1.id}@test.local",
                 organization_id=org1.id,
                 role="viewer",
             )
@@ -365,8 +396,8 @@ class TestAuditEventIntegration:
         with app.app_context():
             # Create viewer user
             viewer = User(
-                username="viewer_user",
-                email="viewer@test.local",
+                username=f"viewer_user_{org1.id}",
+                email=f"viewer_{org1.id}@test.local",
                 organization_id=org1.id,
                 role="viewer",
             )

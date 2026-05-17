@@ -40,9 +40,9 @@ class CSPNonceManager:
     @staticmethod
     def get_or_create_nonce() -> str:
         """Get existing nonce for request or create new one."""
-        if not hasattr(g, 'csp_nonce'):
-            g.csp_nonce = CSPNonceManager.generate_nonce()
-        return g.csp_nonce
+        if 'csp_nonce' not in request.environ:
+            request.environ['csp_nonce'] = CSPNonceManager.generate_nonce()
+        return request.environ['csp_nonce']
 
 
 class SessionHardeningMiddleware:

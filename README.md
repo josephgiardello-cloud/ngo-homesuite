@@ -171,6 +171,12 @@ ngo-homesuite/
    pip install -e .
    ```
 
+   For local development and the default test workflow, also install dev tooling:
+   ```bash
+   pip install -r requirements-dev.txt
+   ```
+   The repository `pytest.ini` enables coverage and timeout plugins by default, so a fresh venv needs the dev test dependencies for `pytest` to run unchanged.
+
 4. **Configure the application**
    ```bash
    cp .env.example .env

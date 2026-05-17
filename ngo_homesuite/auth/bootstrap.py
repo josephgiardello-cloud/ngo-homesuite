@@ -32,20 +32,32 @@ from ngo_homesuite.audit.security_events import (
 )
 
 
+def _utc_now_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _as_utc_naive(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
 class BootstrapToken(db.Model):
     """One-time setup token for organization initialization."""
     
     __tablename__ = "bootstrap_tokens"
     
     id = Column(String(36), primary_key=True)  # Random token ID
-    organization_id = Column(db.Integer, db.ForeignKey("organization.id"), nullable=False, unique=True)
+    organization_id = Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False, unique=True)
     
     # Token security
     token_hash = Column(String(64), nullable=False, unique=True)  # SHA256 hash
     token_secret = Column(String(256), nullable=True)  # Encrypted secret portion
     
     # Lifecycle
-    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, nullable=False, default=_utc_now_naive)
     expires_at = Column(DateTime, nullable=False)
     used_at = Column(DateTime, nullable=True)  # Set when token consumed
     invalidated_at = Column(DateTime, nullable=True)  # Admin manually invalidates
@@ -55,14 +67,16 @@ class BootstrapToken(db.Model):
     last_validation_attempt = Column(DateTime, nullable=True)
     
     # Used by
-    used_by_user_id = Column(db.Integer, db.ForeignKey("user.id"), nullable=True)
+    used_by_user_id = Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
     
     def is_valid(self) -> bool:
         """Check if token is still valid for use."""
+        expires_at = _as_utc_naive(self.expires_at)
         return (
             self.used_at is None
             and self.invalidated_at is None
-            and datetime.now(timezone.utc) < self.expires_at
+            and expires_at is not None
+            and _utc_now_naive() < expires_at
         )
     
     def is_rate_limited(self) -> bool:
@@ -73,8 +87,9 @@ class BootstrapToken(db.Model):
         if self.validation_attempts >= MAX_ATTEMPTS:
             # Check if still within rate limit window
             if self.last_validation_attempt:
-                window_end = self.last_validation_attempt + RATE_LIMIT_WINDOW
-                if datetime.now(timezone.utc) < window_end:
+                last_attempt = _as_utc_naive(self.last_validation_attempt)
+                window_end = (last_attempt or _utc_now_naive()) + RATE_LIMIT_WINDOW
+                if _utc_now_naive() < window_end:
                     return True
         
         return False
@@ -124,7 +139,7 @@ class BootstrapService:
             .filter_by(organization_id=org_id)
             .filter(BootstrapToken.used_at.is_(None))
             .filter(BootstrapToken.invalidated_at.is_(None))
-            .filter(BootstrapToken.expires_at > datetime.now(timezone.utc))
+            .filter(BootstrapToken.expires_at > _utc_now_naive())
             .first()
         )
         if existing:
@@ -138,7 +153,7 @@ class BootstrapService:
         token_hash = hashlib.sha256(token_plaintext.encode()).hexdigest()
         
         # Create token record
-        expires_at = datetime.now(timezone.utc) + timedelta(hours=ttl_hours)
+        expires_at = _utc_now_naive() + timedelta(hours=ttl_hours)
         token_record = BootstrapToken(
             id=token_plaintext[:8],  # Short ID for logs
             organization_id=org_id,
@@ -193,6 +208,21 @@ class BootstrapService:
         )
         
         if not token_record:
+            active_tokens = (
+                BootstrapToken.query
+                .filter(BootstrapToken.used_at.is_(None))
+                .filter(BootstrapToken.invalidated_at.is_(None))
+                .all()
+            )
+            now = _utc_now_naive()
+            for active_token in active_tokens:
+                expires_at = _as_utc_naive(active_token.expires_at)
+                if expires_at is not None and expires_at > now:
+                    active_token.validation_attempts = (active_token.validation_attempts or 0) + 1
+                    active_token.last_validation_attempt = now
+            if active_tokens:
+                db.session.commit()
+
             # Token not found - log and return generic failure
             SecurityAuditService.log_event(
                 event_type=SecurityEventType.SYSTEM_BOOTSTRAP_TOKEN_VALIDATION_FAILED,
@@ -217,7 +247,7 @@ class BootstrapService:
         
         # Record attempt
         token_record.validation_attempts += 1
-        token_record.last_validation_attempt = datetime.now(timezone.utc)
+        token_record.last_validation_attempt = _utc_now_naive()
         db.session.commit()
         
         # Check if token is valid
@@ -257,7 +287,7 @@ class BootstrapService:
             return False
         
         # Mark consumed
-        token_record.used_at = datetime.now(timezone.utc)
+        token_record.used_at = _utc_now_naive()
         token_record.used_by_user_id = user_id
         db.session.commit()
         
@@ -292,7 +322,7 @@ class BootstrapService:
         if not token_record:
             return False
         
-        token_record.invalidated_at = datetime.now(timezone.utc)
+        token_record.invalidated_at = _utc_now_naive()
         db.session.commit()
         
         # Audit log

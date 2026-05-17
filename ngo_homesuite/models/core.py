@@ -9,13 +9,15 @@ Core entities:
 - Donation: Financial contribution to the organization
 """
 
-from datetime import datetime, timezone
-import secrets
 import hashlib
+import re
+import secrets
+from datetime import datetime, timezone
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError, VerificationError
+from sqlalchemy import event, text
 from sqlalchemy.dialects.sqlite import JSON
 import pyotp
 
@@ -24,6 +26,14 @@ password_hasher = PasswordHasher()
 
 def _utcnow_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _slugify_value(value: str, *, fallback_prefix: str) -> str:
+    raw = (value or "").strip().lower()
+    raw = re.sub(r"[^\w\s-]", "", raw)
+    raw = re.sub(r"[\s_]+", "-", raw)
+    raw = re.sub(r"-+", "-", raw).strip("-")
+    return raw[:100] or f"{fallback_prefix}-{secrets.token_hex(4)}"
 
 
 
@@ -192,6 +202,26 @@ class Organization(db.Model):
     
     def __repr__(self):
         return f'<Organization {self.name}>'
+
+
+@event.listens_for(Organization, 'before_insert')
+def _organization_before_insert(_mapper, connection, target) -> None:
+    if getattr(target, 'slug', None):
+        return
+
+    base_slug = _slugify_value(getattr(target, 'name', ''), fallback_prefix='org')
+    slug = base_slug
+    counter = 1
+
+    while connection.execute(
+        text("SELECT 1 FROM organizations WHERE slug = :slug LIMIT 1"),
+        {"slug": slug},
+    ).first() is not None:
+        suffix = f"-{counter}"
+        slug = f"{base_slug[: max(1, 100 - len(suffix))]}{suffix}"
+        counter += 1
+
+    target.slug = slug
 
 
 class Beneficiary(db.Model):
