@@ -43,6 +43,38 @@ def _grants():
     return _GRANTS_FACADE
 
 
+def _human_in_the_loop_metadata(data: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+    compliance = data.get("compliance") if isinstance(data.get("compliance"), dict) else {}
+    ai_assisted = bool(compliance.get("ai_assisted", False))
+    contains_internal_details = bool(compliance.get("contains_internal_details", False))
+    required = True
+
+    reviewer_name = str(compliance.get("reviewer_name") or "").strip()
+    reviewer_role = str(compliance.get("reviewer_role") or "").strip()
+    warning_acknowledged = bool(compliance.get("warning_acknowledged", False))
+    human_confirmation_text = str(compliance.get("human_confirmation_text") or "").strip()
+
+    metadata = {
+        "required": required,
+        "ai_assisted": ai_assisted,
+        "contains_internal_details": contains_internal_details,
+        "reviewer_name": reviewer_name,
+        "reviewer_role": reviewer_role,
+        "warning_acknowledged": warning_acknowledged,
+        "human_confirmation_text": human_confirmation_text,
+    }
+
+    required_phrase = "I CONFIRM HUMAN REVIEW"
+    if not reviewer_name or len(reviewer_name) < 3:
+        return metadata, "Human reviewer name is required for any outbound external communication."
+    if not warning_acknowledged:
+        return metadata, "Warning acknowledgement is required before any outbound external communication is sent."
+    if human_confirmation_text != required_phrase:
+        return metadata, f"Human authorization confirmation must match '{required_phrase}'."
+
+    return metadata, None
+
+
 def _normalize_grant_dates(data: dict[str, Any], fields: tuple[str, ...]) -> tuple[dict[str, Any], str | None]:
     payload = dict(data)
     for field in fields:
@@ -994,15 +1026,40 @@ def campaign_send_emails_route(campaign_id: int):
     """Send (or preview) a bulk campaign email to a donor audience."""
     from ngo_homesuite.services.campaign_email_service import send_campaign_bulk_email
 
+    actor_role = str(getattr(current_user, "role", "") or "").strip().lower()
+    actor_granted = bool(getattr(current_user, "can_authorize_external_comms", False))
+    if actor_role != "admin" and not actor_granted:
+        return jsonify(
+            {
+                "error": "User is not authorized for outbound external communications.",
+                "required_permission": "can_authorize_external_comms",
+            }
+        ), 403
+
     data = _json_or_400(["subject", "body"])
+    hitl_metadata, hitl_error = _human_in_the_loop_metadata(data)
+    if hitl_error:
+        return jsonify({
+            "error": hitl_error,
+            "warning": "All outbound external communication requires explicit human authorization.",
+            "human_in_the_loop_required": True,
+        }), 400
+
+    audience_payload = data.get("audience") if isinstance(data.get("audience"), dict) else {}
+    audience_payload = dict(audience_payload)
+    audience_payload["_human_in_the_loop"] = hitl_metadata
+
     try:
         payload = send_campaign_bulk_email(
             _org_id(),
             campaign_id,
             created_by_user_id=int(getattr(current_user, "id", 0) or 0),
+            created_by_username=str(getattr(current_user, "username", "") or ""),
+            created_by_role=str(getattr(current_user, "role", "") or ""),
             subject=str(data.get("subject") or ""),
             body=str(data.get("body") or ""),
-            audience=data.get("audience") if isinstance(data.get("audience"), dict) else {},
+            audience=audience_payload,
+            human_authorization=hitl_metadata,
             dry_run=bool(data.get("dry_run", False)),
         )
     except LookupError:

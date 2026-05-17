@@ -45,6 +45,7 @@ class User(UserMixin, db.Model):
     # Role and status
     role = db.Column(db.String(32), default='viewer', nullable=False)  # admin, staff, volunteer, viewer
     is_active = db.Column(db.Boolean, default=True, nullable=False, index=True)
+    can_authorize_external_comms = db.Column(db.Boolean, default=False, nullable=False)
     
     # Organization association
     organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=True)
@@ -1090,6 +1091,35 @@ class CampaignEmailDelivery(db.Model):
 
     def __repr__(self):
         return f'<CampaignEmailDelivery batch={self.batch_id} {self.delivery_status}>'
+
+
+class ExternalCommunicationAuthorization(db.Model):
+    """Human authorization audit record for outbound external communications."""
+
+    __tablename__ = 'external_communication_authorizations'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    username = db.Column(db.String(120), nullable=False)
+    user_role = db.Column(db.String(32), nullable=False)
+    channel = db.Column(db.String(40), nullable=False, index=True)  # email, sms, webhook, etc.
+    communication_type = db.Column(db.String(80), nullable=False, index=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaigns.id'), nullable=True, index=True)
+    batch_id = db.Column(db.Integer, db.ForeignKey('campaign_email_batches.id'), nullable=True, index=True)
+    warning_acknowledged = db.Column(db.Boolean, nullable=False, default=False)
+    confirmation_phrase = db.Column(db.String(80), nullable=False)
+    reviewer_name = db.Column(db.String(180), nullable=False)
+    reviewer_role = db.Column(db.String(120), nullable=True)
+    details_json = db.Column(JSON, nullable=True)
+    authorized_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False, index=True)
+
+    organization = db.relationship('Organization', backref='external_communication_authorizations')
+    user = db.relationship('User', backref='external_communication_authorizations')
+    campaign = db.relationship('Campaign', backref='external_communication_authorizations')
+
+    def __repr__(self):
+        return f'<ExternalCommunicationAuthorization channel={self.channel} user={self.user_id}>'
 
 
 # ---------------------------------------------------------------------------

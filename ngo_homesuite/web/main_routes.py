@@ -2392,6 +2392,43 @@ def reports_page():
     )
 
 
+@main_bp.route('/campaigns/email-workbench')
+@login_required
+def campaign_email_workbench_page():
+    org = _current_org()
+    overview = {
+        'total_donations': 0.0,
+        'total_expenses': 0.0,
+        'net_total': 0.0,
+        'chart_data': {
+            'labels': [],
+            'donations': [],
+            'expenses': [],
+            'net': [],
+            'totals': {'donations': 0.0, 'expenses': 0.0, 'net': 0.0},
+        },
+    }
+    if org:
+        overview = ReportingService().financial_overview(org.id)
+
+    return render_template(
+        'reports.html',
+        total_donations=overview['total_donations'],
+        total_expenses=overview['total_expenses'],
+        net_total=overview['net_total'],
+        chart_data=overview['chart_data'],
+        email_workbench_only=True,
+        active_page='campaign_email_workbench',
+        ai_context={
+            'active_page': 'campaign_email_workbench',
+            'organization': org.name if org else None,
+            'total_donations': overview['total_donations'],
+            'total_expenses': overview['total_expenses'],
+            'net_balance': overview['net_total'],
+        },
+    )
+
+
 @main_bp.route('/reports/compliance/evidence')
 @login_required
 @roles_required('admin', 'staff')

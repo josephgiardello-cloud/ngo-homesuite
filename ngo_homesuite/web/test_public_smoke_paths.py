@@ -77,6 +77,12 @@ def test_unauthenticated_reports_redirects_to_login(client):
     assert "/auth/login" in (rv.headers.get("Location") or "")
 
 
+def test_unauthenticated_campaign_email_workbench_redirects_to_login(client):
+    rv = client.get("/campaigns/email-workbench", follow_redirects=False)
+    assert rv.status_code == 302
+    assert "/auth/login" in (rv.headers.get("Location") or "")
+
+
 def test_unauthenticated_api_v1_metrics_requires_auth(client):
     rv = client.get("/api/v1/metrics", follow_redirects=False)
     # Either 401/403 (JSON API style) or 302 redirect to login

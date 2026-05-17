@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+import re
 
 import pytest
 
@@ -18,8 +19,14 @@ class RoutePolicy:
 ROUTE_POLICY_MANIFEST: dict[str, RoutePolicy] = {
     "/": RoutePolicy(access="public"),
     "/about": RoutePolicy(access="public"),
+    "/admin/compliance/audit": RoutePolicy(access="admin"),
+    "/admin/compliance/drift": RoutePolicy(access="admin"),
+    "/admin/compliance/grant-deadlines": RoutePolicy(access="admin"),
     "/admin/org": RoutePolicy(access="admin"),
     "/admin/roles": RoutePolicy(access="admin"),
+    "/admin/external-comms/audit": RoutePolicy(access="admin"),
+    "/admin/tony/audit": RoutePolicy(access="admin"),
+    "/admin/tony/recommendations": RoutePolicy(access="admin"),
     "/admin/users": RoutePolicy(access="admin"),
     "/ai/health": RoutePolicy(access="authenticated"),
     "/ai/history": RoutePolicy(access="authenticated"),
@@ -82,6 +89,7 @@ ROUTE_POLICY_MANIFEST: dict[str, RoutePolicy] = {
     "/integrations/ops/status": RoutePolicy(access="authenticated"),
     "/membership/summary": RoutePolicy(access="authenticated"),
     "/membership/tiers": RoutePolicy(access="authenticated"),
+    "/metrics": RoutePolicy(access="public"),
     "/mobile/intake": RoutePolicy(access="authenticated"),
     "/p2p/leaderboard": RoutePolicy(access="authenticated"),
     "/p2p/manage": RoutePolicy(access="authenticated"),
@@ -92,16 +100,20 @@ ROUTE_POLICY_MANIFEST: dict[str, RoutePolicy] = {
     "/programs/intake/beneficiaries": RoutePolicy(access="authenticated"),
     "/projects": RoutePolicy(access="authenticated"),
     "/projects/new": RoutePolicy(access="authenticated"),
+    "/campaigns/email-workbench": RoutePolicy(access="authenticated"),
     "/reports": RoutePolicy(access="authenticated"),
     "/reports/compliance/evidence": RoutePolicy(access="authenticated"),
     "/reports/funder": RoutePolicy(access="authenticated"),
     "/reports/scheduled": RoutePolicy(access="authenticated"),
     "/reports/trends/giving": RoutePolicy(access="authenticated"),
     "/reports/trends/retention": RoutePolicy(access="authenticated"),
+    "/settings": RoutePolicy(access="authenticated"),
+    "/setup": RoutePolicy(access="authenticated"),
     "/smart-groups/": RoutePolicy(access="authenticated"),
     "/tasks/board": RoutePolicy(access="authenticated"),
     "/tasks/": RoutePolicy(access="authenticated"),
     "/tasks/overdue": RoutePolicy(access="authenticated"),
+    "/tony-scoring": RoutePolicy(access="authenticated"),
     "/volunteers": RoutePolicy(access="authenticated"),
     "/volunteers/hours": RoutePolicy(access="authenticated"),
     "/volunteers/shifts": RoutePolicy(access="authenticated"),
@@ -156,7 +168,13 @@ def _static_get_routes(app) -> Iterable[str]:
 
 
 def _materialize_admin_rule_path(rule_text: str, target_user_id: int) -> str:
-    return rule_text.replace("<int:user_id>", str(target_user_id))
+    def replace_match(match: re.Match[str]) -> str:
+        param_name = match.group(1)
+        if param_name == "user_id":
+            return str(target_user_id)
+        return "1"
+
+    return re.sub(r"<(?:[^:>]+:)?([^>]+)>", replace_match, rule_text)
 
 
 def test_static_get_route_policy_manifest_is_complete_and_exact(app):

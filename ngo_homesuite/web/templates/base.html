@@ -798,6 +798,7 @@
                     <li><a href="{{ url_for('main.mobile_intake') }}" class="{{ 'active' if active_page == 'mobile_intake' else '' }}">Mobile Intake</a></li>
                     <li><a href="{{ url_for('main.task_board') }}" class="{{ 'active' if active_page == 'task_board' else '' }}">Task Board</a></li>
                     <li><a href="{{ url_for('main.p2p_manage') }}" class="{{ 'active' if active_page == 'p2p' else '' }}">P2P</a></li>
+                    <li><a href="{{ url_for('main.campaign_email_workbench_page') }}" class="{{ 'active' if active_page == 'campaign_email_workbench' else '' }}">Email Workbench</a></li>
                     <li><a href="{{ url_for('main.reports_page') }}" class="{{ 'active' if active_page == 'reports' else '' }}">Reports</a></li>
                     {% if current_user.role == 'admin' %}
                     <li><a href="{{ url_for('main.tony_scoring') }}" class="{{ 'active' if active_page == 'tony_scoring' else '' }}">📊 TONY Scoring</a></li>

@@ -1,11 +1,391 @@
 {% extends "base.html" %}
 
-{% block title %}Reports - NGO HomeSuite{% endblock %}
+{% block title %}{{ 'Campaign Email Workbench - NGO HomeSuite' if email_workbench_only else 'Reports - NGO HomeSuite' }}{% endblock %}
 
 {% block content %}
+<style>
+    .email-wb-shell {
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: linear-gradient(160deg, rgba(20, 118, 212, 0.08), rgba(255, 255, 255, 0.98) 38%);
+        padding: 1rem;
+    }
+
+    .email-wb-grid {
+        display: grid;
+        gap: 0.85rem;
+        grid-template-columns: 1.1fr 1fr;
+    }
+
+    .email-wb-card {
+        border: 1px solid var(--border);
+        background: var(--surface);
+        border-radius: 12px;
+        padding: 0.9rem;
+    }
+
+    .email-wb-title {
+        margin: 0 0 0.35rem 0;
+        font-size: 1rem;
+        font-weight: 700;
+    }
+
+    .email-wb-note {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.88rem;
+    }
+
+    .email-wb-form {
+        display: grid;
+        gap: 0.7rem;
+    }
+
+    .email-wb-mini-grid {
+        display: grid;
+        gap: 0.65rem;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    }
+
+    .email-wb-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        align-items: center;
+    }
+
+    .email-wb-pill {
+        border: 1px solid var(--border);
+        background: var(--surface-soft);
+        border-radius: 999px;
+        padding: 0.2rem 0.55rem;
+        font-size: 0.78rem;
+        color: var(--muted);
+    }
+
+    .email-wb-metrics {
+        display: grid;
+        gap: 0.55rem;
+        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+        margin-top: 0.65rem;
+    }
+
+    .email-wb-metric {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface-soft);
+        padding: 0.55rem;
+    }
+
+    .email-wb-metric strong {
+        display: block;
+        font-size: 1.05rem;
+    }
+
+    .email-wb-list {
+        margin: 0.5rem 0 0 1rem;
+        padding: 0;
+        font-size: 0.87rem;
+    }
+
+    .email-wb-preview {
+        margin-top: 0.6rem;
+        border: 1px dashed var(--border);
+        border-radius: 10px;
+        background: var(--surface-soft);
+        padding: 0.65rem;
+        max-height: 260px;
+        overflow: auto;
+    }
+
+    .email-wb-error {
+        margin-top: 0.4rem;
+        color: var(--danger);
+        font-size: 0.86rem;
+    }
+
+    .email-wb-warning {
+        margin-top: 0.6rem;
+        border: 1px solid rgba(201, 63, 63, 0.48);
+        background: var(--error-bg);
+        color: var(--error-text);
+        border-radius: 10px;
+        padding: 0.65rem;
+        font-size: 0.86rem;
+    }
+
+    .email-audit-grid {
+        display: grid;
+        gap: 0.65rem;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    }
+
+    .email-audit-table-wrap {
+        margin-top: 0.75rem;
+        overflow-x: auto;
+    }
+
+    .email-audit-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.84rem;
+    }
+
+    .email-audit-table th,
+    .email-audit-table td {
+        border: 1px solid var(--border);
+        padding: 0.45rem;
+        text-align: left;
+        vertical-align: top;
+    }
+
+    .email-audit-table th {
+        background: var(--surface-soft);
+        font-weight: 700;
+    }
+
+    @media (max-width: 980px) {
+        .email-wb-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+{% if email_workbench_only %}
+<h1>Campaign Email Workbench</h1>
+<p class="text-muted">Human-supervised, AI-assisted campaign email orchestration with confirmation guardrails.</p>
+{% else %}
 <h1>Reports</h1>
 <p class="text-muted">Starter reporting dashboard for quick operational visibility.</p>
+{% endif %}
 
+<div class="card mb-3">
+    <div class="email-wb-shell">
+        <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:0.7rem;">
+            <div>
+                <h2 style="margin:0;">Campaign Email Workbench</h2>
+                <p class="text-muted" style="margin:0.2rem 0 0 0;">
+                    Industry-grade flow: AI draft, precision audience design, live quality checks, safe-send confirmation, and analytics.
+                </p>
+            </div>
+            <div class="email-wb-pill" id="emailWorkbenchRole"></div>
+        </div>
+
+        <div class="email-wb-grid mt-2">
+            <section class="email-wb-card">
+                <h3 class="email-wb-title">Compose & Audience</h3>
+                <p class="email-wb-note">Build a message once, then tune the segment with strategic controls.</p>
+
+                <div class="email-wb-form mt-2">
+                    <div class="form-group">
+                        <label for="wbCampaignSelect">Campaign</label>
+                        <select id="wbCampaignSelect"></select>
+                    </div>
+
+                    <div class="email-wb-mini-grid">
+                        <div class="form-group">
+                            <label for="wbObjective">Objective</label>
+                            <input id="wbObjective" type="text" value="re-engage donors" />
+                        </div>
+                        <div class="form-group">
+                            <label for="wbTone">Tone</label>
+                            <input id="wbTone" type="text" value="warm and confident" />
+                        </div>
+                        <div class="form-group">
+                            <label for="wbAskAmount">Ask Amount</label>
+                            <input id="wbAskAmount" type="number" min="1" step="0.01" value="100" />
+                        </div>
+                    </div>
+
+                    <div class="email-wb-actions">
+                        <button id="wbAIDraftBtn" class="btn btn-secondary" type="button">Generate AI Draft</button>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="wbSubject">Subject</label>
+                        <input id="wbSubject" type="text" placeholder="Compelling, specific subject line" />
+                    </div>
+
+                    <div class="form-group">
+                        <label for="wbBody">Body</label>
+                        <textarea id="wbBody" rows="8" placeholder="Use placeholders {name} and {campaign_name} for personalization"></textarea>
+                    </div>
+
+                    <h4 style="margin:0.1rem 0 0 0;">Audience Filters</h4>
+                    <div class="email-wb-mini-grid">
+                        <div class="form-group">
+                            <label for="wbDonorType">Donor Type</label>
+                            <select id="wbDonorType">
+                                <option value="">Any</option>
+                                <option value="individual">Individual</option>
+                                <option value="corporate">Corporate</option>
+                                <option value="foundation">Foundation</option>
+                                <option value="anonymous">Anonymous</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="wbMinTotal">Min Lifetime Given</label>
+                            <input id="wbMinTotal" type="number" min="0" step="0.01" value="0" />
+                        </div>
+                        <div class="form-group">
+                            <label for="wbGiftedWithin">Gifted Within (days)</label>
+                            <input id="wbGiftedWithin" type="number" min="0" step="1" value="0" />
+                        </div>
+                        <div class="form-group">
+                            <label for="wbLapsedDays">Lapsed At Least (days)</label>
+                            <input id="wbLapsedDays" type="number" min="0" step="1" value="0" />
+                        </div>
+                        <div class="form-group">
+                            <label for="wbTopN">Top N By Giving</label>
+                            <input id="wbTopN" type="number" min="0" step="1" value="0" />
+                        </div>
+                    </div>
+
+                    <div class="checkbox-group">
+                        <input id="wbCampaignDonorsOnly" type="checkbox" />
+                        <label for="wbCampaignDonorsOnly" style="margin:0;">Only include donors already giving to this campaign</label>
+                    </div>
+                </div>
+            </section>
+
+            <section class="email-wb-card">
+                <h3 class="email-wb-title">Preview, Quality, Send, Analytics</h3>
+                <p class="email-wb-note">Always preview and validate before sending; track outcomes instantly.</p>
+
+                <div class="email-wb-actions mt-2">
+                    <button id="wbPreviewBtn" class="btn btn-primary" type="button">Run Preview & Quality Check</button>
+                    <button id="wbRefreshAnalyticsBtn" class="btn btn-secondary" type="button">Refresh Analytics</button>
+                </div>
+
+                <div class="email-wb-metrics" id="wbPreviewMetrics">
+                    <div class="email-wb-metric"><div class="text-muted">Recipients</div><strong id="wbRecipients">0</strong></div>
+                    <div class="email-wb-metric"><div class="text-muted">Batches</div><strong id="wbBatches">0</strong></div>
+                    <div class="email-wb-metric"><div class="text-muted">Delivered</div><strong id="wbSent">0</strong></div>
+                    <div class="email-wb-metric"><div class="text-muted">Failed</div><strong id="wbFailed">0</strong></div>
+                </div>
+
+                <div class="email-wb-preview" id="wbPreviewPane">
+                    Run preview to see personalization sample, segment breakdown, and quality recommendations.
+                </div>
+
+                <div class="checkbox-group mt-2">
+                    <input id="wbSendConfirm" type="checkbox" />
+                    <label for="wbSendConfirm" style="margin:0;">I reviewed preview and approve sending this campaign email</label>
+                </div>
+
+                <div class="form-group mt-2">
+                    <label for="wbReviewerName">Human Reviewer Name</label>
+                    <input id="wbReviewerName" type="text" placeholder="Required for all outbound sends" />
+                </div>
+
+                <div class="email-wb-mini-grid">
+                    <div class="form-group">
+                        <label for="wbReviewerRole">Reviewer Role</label>
+                        <input id="wbReviewerRole" type="text" placeholder="e.g., Fundraising Manager" />
+                    </div>
+                    <div class="form-group">
+                        <label for="wbHumanConfirmText">Type Confirmation Phrase</label>
+                        <input id="wbHumanConfirmText" type="text" placeholder="I CONFIRM HUMAN REVIEW" />
+                    </div>
+                </div>
+
+                <div class="checkbox-group mt-1">
+                    <input id="wbContainsInternalDetails" type="checkbox" />
+                    <label for="wbContainsInternalDetails" style="margin:0;">Message includes internal campaign/program details</label>
+                </div>
+
+                <div class="checkbox-group mt-1">
+                    <input id="wbWarningAcknowledged" type="checkbox" />
+                    <label for="wbWarningAcknowledged" style="margin:0;">I acknowledge this outbound communication is authorized by a human reviewer</label>
+                </div>
+
+                <div id="wbSpecialWarning" class="email-wb-warning">
+                    Special warning: any outbound external communication requires explicit human authorization before transmission.
+                </div>
+
+                <div class="email-wb-actions mt-1">
+                    <button id="wbSendBtn" class="btn btn-danger" type="button">Send Campaign Email</button>
+                </div>
+
+                <div id="wbError" class="email-wb-error" role="status" aria-live="polite"></div>
+            </section>
+        </div>
+    </div>
+</div>
+
+{% if current_user.is_authenticated and current_user.role == 'admin' %}
+<div class="card mb-3">
+    <h2 style="margin-bottom:0.2rem;">External Communications Authorization Audit</h2>
+    <p class="text-muted" style="margin:0 0 0.7rem 0;">Read-only authorization trail with compliance filters.</p>
+
+    <div class="email-audit-grid">
+        <div class="form-group">
+            <label for="auditCampaignId">Campaign ID</label>
+            <input id="auditCampaignId" type="number" min="1" step="1" />
+        </div>
+        <div class="form-group">
+            <label for="auditUserId">User ID</label>
+            <input id="auditUserId" type="number" min="1" step="1" />
+        </div>
+        <div class="form-group">
+            <label for="auditBatchId">Batch ID</label>
+            <input id="auditBatchId" type="number" min="1" step="1" />
+        </div>
+        <div class="form-group">
+            <label for="auditChannel">Channel</label>
+            <input id="auditChannel" type="text" placeholder="email" />
+        </div>
+        <div class="form-group">
+            <label for="auditCommType">Communication Type</label>
+            <input id="auditCommType" type="text" placeholder="campaign_bulk_email" />
+        </div>
+        <div class="form-group">
+            <label for="auditReviewerName">Reviewer Name</label>
+            <input id="auditReviewerName" type="text" placeholder="contains..." />
+        </div>
+        <div class="form-group">
+            <label for="auditAuthorizedFrom">Authorized From</label>
+            <input id="auditAuthorizedFrom" type="datetime-local" />
+        </div>
+        <div class="form-group">
+            <label for="auditAuthorizedTo">Authorized To</label>
+            <input id="auditAuthorizedTo" type="datetime-local" />
+        </div>
+        <div class="form-group">
+            <label for="auditLimit">Limit</label>
+            <input id="auditLimit" type="number" min="1" max="200" step="1" value="50" />
+        </div>
+    </div>
+
+    <div class="email-wb-actions mt-2">
+        <button id="auditLoadBtn" class="btn btn-primary" type="button">Load Authorization Audit</button>
+        <button id="auditClearBtn" class="btn btn-secondary" type="button">Clear Filters</button>
+    </div>
+
+    <div id="auditError" class="email-wb-error" role="status" aria-live="polite"></div>
+
+    <div class="email-audit-table-wrap">
+        <table class="email-audit-table" id="auditTable">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Authorized At</th>
+                    <th>User</th>
+                    <th>Role</th>
+                    <th>Channel</th>
+                    <th>Type</th>
+                    <th>Campaign</th>
+                    <th>Batch</th>
+                    <th>Reviewer</th>
+                </tr>
+            </thead>
+            <tbody id="auditTableBody">
+                <tr><td colspan="9" class="text-muted">Load audit records to view authorization history.</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{% if not email_workbench_only %}
 <div class="card mb-3" style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:0.8rem;">
     <div>
         <h2 style="margin-bottom:0.2rem;">Compliance Evidence</h2>
@@ -48,9 +428,409 @@
     <h2>Trend Insight</h2>
     <p class="text-muted" id="trendInsight">Analyzing monthly pattern...</p>
 </div>
+{% endif %}
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <script>
+    const wbRole = "{{ current_user.role if current_user.is_authenticated else '' }}".toLowerCase();
+    const wbRoleEl = document.getElementById('emailWorkbenchRole');
+    if (wbRoleEl) {
+        wbRoleEl.textContent = `Role: ${wbRole || 'guest'}`;
+    }
+
+    const wbCanOperate = wbRole === 'admin' || wbRole === 'staff';
+    const wb = {
+        campaignSelect: document.getElementById('wbCampaignSelect'),
+        objective: document.getElementById('wbObjective'),
+        tone: document.getElementById('wbTone'),
+        ask: document.getElementById('wbAskAmount'),
+        subject: document.getElementById('wbSubject'),
+        body: document.getElementById('wbBody'),
+        donorType: document.getElementById('wbDonorType'),
+        minTotal: document.getElementById('wbMinTotal'),
+        giftedWithin: document.getElementById('wbGiftedWithin'),
+        lapsedDays: document.getElementById('wbLapsedDays'),
+        topN: document.getElementById('wbTopN'),
+        campaignDonorsOnly: document.getElementById('wbCampaignDonorsOnly'),
+        aiDraftBtn: document.getElementById('wbAIDraftBtn'),
+        previewBtn: document.getElementById('wbPreviewBtn'),
+        refreshAnalyticsBtn: document.getElementById('wbRefreshAnalyticsBtn'),
+        sendBtn: document.getElementById('wbSendBtn'),
+        sendConfirm: document.getElementById('wbSendConfirm'),
+        reviewerName: document.getElementById('wbReviewerName'),
+        reviewerRole: document.getElementById('wbReviewerRole'),
+        humanConfirmText: document.getElementById('wbHumanConfirmText'),
+        containsInternalDetails: document.getElementById('wbContainsInternalDetails'),
+        warningAcknowledged: document.getElementById('wbWarningAcknowledged'),
+        specialWarning: document.getElementById('wbSpecialWarning'),
+        recipients: document.getElementById('wbRecipients'),
+        batches: document.getElementById('wbBatches'),
+        sent: document.getElementById('wbSent'),
+        failed: document.getElementById('wbFailed'),
+        previewPane: document.getElementById('wbPreviewPane'),
+        error: document.getElementById('wbError'),
+    };
+    const audit = {
+        campaignId: document.getElementById('auditCampaignId'),
+        userId: document.getElementById('auditUserId'),
+        batchId: document.getElementById('auditBatchId'),
+        channel: document.getElementById('auditChannel'),
+        communicationType: document.getElementById('auditCommType'),
+        reviewerName: document.getElementById('auditReviewerName'),
+        authorizedFrom: document.getElementById('auditAuthorizedFrom'),
+        authorizedTo: document.getElementById('auditAuthorizedTo'),
+        limit: document.getElementById('auditLimit'),
+        loadBtn: document.getElementById('auditLoadBtn'),
+        clearBtn: document.getElementById('auditClearBtn'),
+        error: document.getElementById('auditError'),
+        tableBody: document.getElementById('auditTableBody'),
+    };
+    let wbAiAssistedDraft = false;
+
+    function wbSetError(message) {
+        wb.error.textContent = message || '';
+    }
+
+    function auditSetError(message) {
+        if (!audit.error) return;
+        audit.error.textContent = message || '';
+    }
+
+    function wbHitlPayload() {
+        return {
+            ai_assisted: wbAiAssistedDraft,
+            contains_internal_details: !!wb.containsInternalDetails.checked,
+            reviewer_name: (wb.reviewerName.value || '').trim(),
+            reviewer_role: (wb.reviewerRole.value || '').trim(),
+            warning_acknowledged: !!wb.warningAcknowledged.checked,
+            human_confirmation_text: (wb.humanConfirmText.value || '').trim(),
+        };
+    }
+
+    function wbHitlRequired() {
+        return true;
+    }
+
+    function wbAudiencePayload() {
+        return {
+            donor_type: (wb.donorType.value || '').trim(),
+            min_total_given: Number(wb.minTotal.value || 0),
+            gifted_within_days: Number(wb.giftedWithin.value || 0),
+            lapsed_days_min: Number(wb.lapsedDays.value || 0),
+            top_n_by_total_given: Number(wb.topN.value || 0),
+            campaign_donors_only: !!wb.campaignDonorsOnly.checked,
+        };
+    }
+
+    async function wbApi(url, options) {
+        const res = await fetch(url, options);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            throw new Error(String(data.error || 'Request failed'));
+        }
+        return data;
+    }
+
+    function wbSetBusy(button, busy, labelWhenIdle) {
+        if (!button) return;
+        if (busy) {
+            button.classList.add('is-loading');
+            button.disabled = true;
+        } else {
+            button.classList.remove('is-loading');
+            button.disabled = false;
+            if (labelWhenIdle) button.textContent = labelWhenIdle;
+        }
+    }
+
+    function wbSelectedCampaignId() {
+        return Number((wb.campaignSelect.value || '0'));
+    }
+
+    function auditAsIso(value) {
+        if (!value) return '';
+        const parsed = new Date(value);
+        if (Number.isNaN(parsed.getTime())) return '';
+        return parsed.toISOString();
+    }
+
+    function auditRenderRows(items) {
+        if (!audit.tableBody) return;
+        if (!Array.isArray(items) || !items.length) {
+            audit.tableBody.innerHTML = '<tr><td colspan="9" class="text-muted">No records found for the selected filter set.</td></tr>';
+            return;
+        }
+        audit.tableBody.innerHTML = items.map((row) => {
+            const reviewer = `${row.reviewer_name || ''}${row.reviewer_role ? ` (${row.reviewer_role})` : ''}`.trim();
+            return `
+                <tr>
+                    <td>${row.id ?? ''}</td>
+                    <td>${row.authorized_at ?? ''}</td>
+                    <td>${row.username || ''} (#${row.user_id || ''})</td>
+                    <td>${row.user_role || ''}</td>
+                    <td>${row.channel || ''}</td>
+                    <td>${row.communication_type || ''}</td>
+                    <td>${row.campaign_id ?? ''}</td>
+                    <td>${row.batch_id ?? ''}</td>
+                    <td>${reviewer}</td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    function auditQueryString() {
+        const qs = new URLSearchParams();
+        const pushIf = (key, value) => {
+            if (value === null || value === undefined) return;
+            const text = String(value).trim();
+            if (!text) return;
+            qs.set(key, text);
+        };
+        pushIf('campaign_id', audit.campaignId?.value || '');
+        pushIf('user_id', audit.userId?.value || '');
+        pushIf('batch_id', audit.batchId?.value || '');
+        pushIf('channel', audit.channel?.value || '');
+        pushIf('communication_type', audit.communicationType?.value || '');
+        pushIf('reviewer_name', audit.reviewerName?.value || '');
+        pushIf('authorized_from', auditAsIso(audit.authorizedFrom?.value || ''));
+        pushIf('authorized_to', auditAsIso(audit.authorizedTo?.value || ''));
+        pushIf('limit', audit.limit?.value || '50');
+        return qs.toString();
+    }
+
+    async function auditLoad() {
+        if (!audit.loadBtn) return;
+        wbSetBusy(audit.loadBtn, true);
+        auditSetError('');
+        try {
+            const query = auditQueryString();
+            const url = query ? `/admin/external-comms/audit?${query}` : '/admin/external-comms/audit';
+            const payload = await wbApi(url, { method: 'GET' });
+            auditRenderRows(payload.items || []);
+        } catch (err) {
+            auditSetError(err.message || 'Failed to load audit records.');
+        } finally {
+            wbSetBusy(audit.loadBtn, false, 'Load Authorization Audit');
+        }
+    }
+
+    function auditClearFilters() {
+        if (!audit.clearBtn) return;
+        [
+            audit.campaignId,
+            audit.userId,
+            audit.batchId,
+            audit.channel,
+            audit.communicationType,
+            audit.reviewerName,
+            audit.authorizedFrom,
+            audit.authorizedTo,
+        ].forEach((el) => {
+            if (el) el.value = '';
+        });
+        if (audit.limit) audit.limit.value = '50';
+        auditSetError('');
+        auditRenderRows([]);
+    }
+
+    function wbPreviewHtml(payload) {
+        const hints = Array.isArray(payload.quality_hints) ? payload.quality_hints : [];
+        const sample = Array.isArray(payload.sample_preview) ? payload.sample_preview : [];
+        const segments = payload.segment_breakdown || {};
+        const segmentText = Object.keys(segments).length
+            ? Object.entries(segments).map(([k, v]) => `${k}: ${v}`).join(' | ')
+            : 'No segment breakdown available';
+
+        const sampleBlocks = sample.map(item => {
+            const bodySafe = String(item.body || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            return `<div style="margin-bottom:0.65rem;"><strong>${item.donor_name || 'Supporter'}</strong> (${item.recipient_email || ''})<br><em>${item.subject || ''}</em><pre style="white-space:pre-wrap;margin:0.2rem 0 0 0;font-family:inherit;">${bodySafe}</pre></div>`;
+        }).join('');
+
+        const hintList = hints.length ? `<ul class="email-wb-list">${hints.map(h => `<li>${h}</li>`).join('')}</ul>` : '<div class="text-muted">No quality issues detected.</div>';
+
+        return `
+            <div><strong>Segment:</strong> ${segmentText}</div>
+            <div class="mt-1"><strong>Quality Hints</strong>${hintList}</div>
+            <div class="mt-1"><strong>Personalization Sample</strong><div class="mt-1">${sampleBlocks || '<span class="text-muted">No sample recipients.</span>'}</div></div>
+        `;
+    }
+
+    async function wbLoadCampaigns() {
+        wbSetError('');
+        try {
+            const campaigns = await wbApi('/api/v2/campaigns', { method: 'GET' });
+            wb.campaignSelect.innerHTML = '';
+            (campaigns || []).forEach(c => {
+                const opt = document.createElement('option');
+                opt.value = String(c.id);
+                opt.textContent = `${c.name} (${c.status})`;
+                wb.campaignSelect.appendChild(opt);
+            });
+            if (!wb.campaignSelect.value) {
+                wb.previewPane.textContent = 'Create at least one campaign to use the email workbench.';
+            }
+        } catch (err) {
+            wbSetError(err.message || 'Could not load campaigns.');
+        }
+    }
+
+    async function wbRefreshAnalytics() {
+        const campaignId = wbSelectedCampaignId();
+        if (!campaignId) return;
+        wbSetBusy(wb.refreshAnalyticsBtn, true);
+        wbSetError('');
+        try {
+            const payload = await wbApi(`/api/v2/campaigns/${campaignId}/emails/analytics`, { method: 'GET' });
+            wb.batches.textContent = String(payload.batch_count || 0);
+            wb.sent.textContent = String(payload.total_sent || 0);
+            wb.failed.textContent = String(payload.total_failed || 0);
+        } catch (err) {
+            wbSetError(err.message || 'Could not refresh analytics.');
+        } finally {
+            wbSetBusy(wb.refreshAnalyticsBtn, false, 'Refresh Analytics');
+        }
+    }
+
+    async function wbGenerateDraft() {
+        const campaignId = wbSelectedCampaignId();
+        if (!campaignId) {
+            wbSetError('Select a campaign first.');
+            return;
+        }
+        wbSetBusy(wb.aiDraftBtn, true);
+        wbSetError('');
+        try {
+            const payload = await wbApi(`/api/v2/campaigns/${campaignId}/emails/ai-draft`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    objective: wb.objective.value,
+                    tone: wb.tone.value,
+                    ask_amount: Number(wb.ask.value || 0),
+                    audience: wbAudiencePayload(),
+                }),
+            });
+            wb.subject.value = payload.subject || '';
+            wb.body.value = payload.body || '';
+            wbAiAssistedDraft = (payload.generated_by || '') === 'ai';
+            wb.specialWarning.style.display = 'block';
+            wb.previewPane.innerHTML = `<div><strong>Draft Source:</strong> ${payload.generated_by || 'unknown'}</div><div class="mt-1"><strong>Quality Hints</strong><ul class="email-wb-list">${(payload.quality_hints || []).map(h => `<li>${h}</li>`).join('') || '<li>No immediate issues detected.</li>'}</ul></div>`;
+        } catch (err) {
+            wbSetError(err.message || 'AI draft generation failed.');
+        } finally {
+            wbSetBusy(wb.aiDraftBtn, false, 'Generate AI Draft');
+        }
+    }
+
+    async function wbRunPreview() {
+        const campaignId = wbSelectedCampaignId();
+        if (!campaignId) {
+            wbSetError('Select a campaign first.');
+            return;
+        }
+        if (!wb.subject.value.trim() || !wb.body.value.trim()) {
+            wbSetError('Subject and body are required before preview.');
+            return;
+        }
+        wbSetBusy(wb.previewBtn, true);
+        wbSetError('');
+        try {
+            const payload = await wbApi(`/api/v2/campaigns/${campaignId}/emails/preview`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    subject: wb.subject.value,
+                    body: wb.body.value,
+                    audience: wbAudiencePayload(),
+                }),
+            });
+            wb.recipients.textContent = String(payload.total_recipients || 0);
+            wb.previewPane.innerHTML = wbPreviewHtml(payload);
+        } catch (err) {
+            wbSetError(err.message || 'Preview failed.');
+        } finally {
+            wbSetBusy(wb.previewBtn, false, 'Run Preview & Quality Check');
+        }
+    }
+
+    async function wbSendCampaignEmail() {
+        const campaignId = wbSelectedCampaignId();
+        if (!campaignId) {
+            wbSetError('Select a campaign first.');
+            return;
+        }
+        if (!wb.sendConfirm.checked) {
+            wbSetError('Please confirm review before sending.');
+            return;
+        }
+        if (!wb.subject.value.trim() || !wb.body.value.trim()) {
+            wbSetError('Subject and body are required before sending.');
+            return;
+        }
+        const requiredPhrase = 'I CONFIRM HUMAN REVIEW';
+        if (!wb.reviewerName.value.trim()) {
+            wbSetError('Reviewer name is required for outbound communication authorization.');
+            return;
+        }
+        if (!wb.warningAcknowledged.checked) {
+            wbSetError('You must acknowledge the outbound communication authorization warning.');
+            return;
+        }
+        if ((wb.humanConfirmText.value || '').trim() !== requiredPhrase) {
+            wbSetError(`Type the exact confirmation phrase: ${requiredPhrase}`);
+            return;
+        }
+
+        wbSetBusy(wb.sendBtn, true);
+        wbSetError('');
+        try {
+            const payload = await wbApi(`/api/v2/campaigns/${campaignId}/emails/send`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    subject: wb.subject.value,
+                    body: wb.body.value,
+                    audience: wbAudiencePayload(),
+                    compliance: wbHitlPayload(),
+                }),
+            });
+            wb.recipients.textContent = String(payload.total_recipients || 0);
+            wb.sent.textContent = String(payload.sent || 0);
+            wb.failed.textContent = String(payload.failed || 0);
+            wb.sendConfirm.checked = false;
+            wb.warningAcknowledged.checked = false;
+            wb.humanConfirmText.value = '';
+            await wbRefreshAnalytics();
+            wb.previewPane.innerHTML = `<div><strong>Send complete:</strong> status=${payload.status}, sent=${payload.sent}, failed=${payload.failed}.</div>`;
+        } catch (err) {
+            wbSetError(err.message || 'Send failed.');
+        } finally {
+            wbSetBusy(wb.sendBtn, false, 'Send Campaign Email');
+        }
+    }
+
+    if (!wbCanOperate) {
+        [wb.aiDraftBtn, wb.previewBtn, wb.sendBtn, wb.refreshAnalyticsBtn].forEach(btn => {
+            if (btn) btn.disabled = true;
+        });
+        wbSetError('Your role is read-only for campaign email operations. Ask an admin or staff user to run sends.');
+    } else {
+        wb.aiDraftBtn.addEventListener('click', wbGenerateDraft);
+        wb.previewBtn.addEventListener('click', wbRunPreview);
+        wb.sendBtn.addEventListener('click', wbSendCampaignEmail);
+        wb.refreshAnalyticsBtn.addEventListener('click', wbRefreshAnalytics);
+        wb.campaignSelect.addEventListener('change', wbRefreshAnalytics);
+    }
+
+    wb.specialWarning.style.display = 'block';
+    wbLoadCampaigns().then(() => wbRefreshAnalytics());
+
+    if (audit.loadBtn && audit.clearBtn) {
+        audit.loadBtn.addEventListener('click', auditLoad);
+        audit.clearBtn.addEventListener('click', auditClearFilters);
+        auditLoad();
+    }
+
     const chartData = {{ chart_data | tojson }};
     const ctx = document.getElementById('monthlyTrendChart');
     if (ctx) {

@@ -4,6 +4,8 @@ All endpoints require the 'admin' role.
 """
 from __future__ import annotations
 
+from datetime import datetime
+
 from flask import Blueprint, jsonify, request
 from flask_login import current_user, login_required
 from sqlalchemy import func, select
@@ -40,6 +42,8 @@ def list_org_users_route():
             "last_name": u.last_name,
             "role": u.role,
             "is_active": u.is_active,
+            "can_authorize_external_comms": bool(u.can_authorize_external_comms),
+            "effective_external_comms_authority": bool(u.role == "admin" or u.can_authorize_external_comms),
             "created_at": u.created_at.isoformat() if u.created_at else None,
             "last_login": u.last_login.isoformat() if u.last_login else None,
         }
@@ -65,6 +69,8 @@ def get_org_user_route(user_id: int):
         "last_name": user.last_name,
         "role": user.role,
         "is_active": user.is_active,
+        "can_authorize_external_comms": bool(user.can_authorize_external_comms),
+        "effective_external_comms_authority": bool(user.role == "admin" or user.can_authorize_external_comms),
         "phone": user.phone,
         "created_at": user.created_at.isoformat() if user.created_at else None,
     })
@@ -127,6 +133,124 @@ def update_user_status_route(user_id: int):
     user.is_active = bool(data["is_active"])
     db.session.commit()
     return jsonify({"id": user.id, "is_active": user.is_active})
+
+
+@admin_bp.patch("/users/<int:user_id>/permissions")
+@login_required
+@roles_required("admin")
+def update_user_permissions_route(user_id: int):
+    """Update fine-grained permission flags for a user in the same org.
+
+    Body: {"can_authorize_external_comms": true}
+    """
+    from ngo_homesuite.models.core import User, db
+
+    data = request.get_json(silent=True) or {}
+    if "can_authorize_external_comms" not in data:
+        return jsonify({"error": "can_authorize_external_comms is required"}), 400
+
+    stmt = select(User).where(User.id == user_id, User.organization_id == _org_id()).limit(1)
+    user = db.session.scalars(stmt).first()
+    if user is None:
+        return jsonify({"error": "not found"}), 404
+
+    user.can_authorize_external_comms = bool(data["can_authorize_external_comms"])
+    db.session.commit()
+    return jsonify(
+        {
+            "id": user.id,
+            "username": user.username,
+            "role": user.role,
+            "can_authorize_external_comms": bool(user.can_authorize_external_comms),
+            "effective_external_comms_authority": bool(user.role == "admin" or user.can_authorize_external_comms),
+        }
+    )
+
+
+def _parse_iso_dt(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    # Accept ISO timestamps with trailing Z.
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    return datetime.fromisoformat(text)
+
+
+@admin_bp.get("/external-comms/audit")
+@login_required
+@roles_required("admin")
+def list_external_comms_audit_route():
+    """Read-only audit list for outbound external communication authorizations."""
+    from ngo_homesuite.models.core import ExternalCommunicationAuthorization, db
+
+    campaign_id = request.args.get("campaign_id", type=int)
+    user_id = request.args.get("user_id", type=int)
+    batch_id = request.args.get("batch_id", type=int)
+    channel = (request.args.get("channel") or "").strip().lower()
+    communication_type = (request.args.get("communication_type") or "").strip().lower()
+    reviewer_name = (request.args.get("reviewer_name") or "").strip()
+    limit = max(1, min(int(request.args.get("limit", 50) or 50), 200))
+
+    try:
+        authorized_from = _parse_iso_dt(request.args.get("authorized_from"))
+        authorized_to = _parse_iso_dt(request.args.get("authorized_to"))
+    except ValueError:
+        return jsonify({"error": "authorized_from/authorized_to must be valid ISO timestamps"}), 400
+
+    stmt = select(ExternalCommunicationAuthorization).where(
+        ExternalCommunicationAuthorization.organization_id == _org_id(),
+    )
+    if campaign_id:
+        stmt = stmt.where(ExternalCommunicationAuthorization.campaign_id == campaign_id)
+    if user_id:
+        stmt = stmt.where(ExternalCommunicationAuthorization.user_id == user_id)
+    if batch_id:
+        stmt = stmt.where(ExternalCommunicationAuthorization.batch_id == batch_id)
+    if channel:
+        stmt = stmt.where(func.lower(ExternalCommunicationAuthorization.channel) == channel)
+    if communication_type:
+        stmt = stmt.where(func.lower(ExternalCommunicationAuthorization.communication_type) == communication_type)
+    if reviewer_name:
+        stmt = stmt.where(ExternalCommunicationAuthorization.reviewer_name.ilike(f"%{reviewer_name}%"))
+    if authorized_from is not None:
+        stmt = stmt.where(ExternalCommunicationAuthorization.authorized_at >= authorized_from)
+    if authorized_to is not None:
+        stmt = stmt.where(ExternalCommunicationAuthorization.authorized_at <= authorized_to)
+
+    stmt = stmt.order_by(
+        ExternalCommunicationAuthorization.authorized_at.desc(),
+        ExternalCommunicationAuthorization.id.desc(),
+    ).limit(limit)
+
+    records = list(db.session.scalars(stmt))
+    return jsonify(
+        {
+            "items": [
+                {
+                    "id": row.id,
+                    "organization_id": row.organization_id,
+                    "user_id": row.user_id,
+                    "username": row.username,
+                    "user_role": row.user_role,
+                    "channel": row.channel,
+                    "communication_type": row.communication_type,
+                    "campaign_id": row.campaign_id,
+                    "batch_id": row.batch_id,
+                    "warning_acknowledged": bool(row.warning_acknowledged),
+                    "confirmation_phrase": row.confirmation_phrase,
+                    "reviewer_name": row.reviewer_name,
+                    "reviewer_role": row.reviewer_role,
+                    "details": row.details_json or {},
+                    "authorized_at": row.authorized_at.isoformat() if row.authorized_at else None,
+                }
+                for row in records
+            ],
+            "count": len(records),
+        }
+    )
 
 
 @admin_bp.delete("/users/<int:user_id>")
@@ -274,6 +398,20 @@ def grant_readiness_route(grant_id: int):
     
     readiness = GrantPreSubmissionValidator.get_readiness_score(grant)
     return jsonify(readiness)
+
+
+@admin_bp.get("/grants/<int:grant_id>/budget-summary")
+@login_required
+@roles_required("admin", "staff")
+def grant_budget_summary_route(grant_id: int):
+    """Per-grant budget utilisation summary for funder reporting."""
+    from ngo_homesuite.grants.services import lifecycle as grant_svc
+    from ngo_homesuite.grants.exceptions import GrantNotFound
+    try:
+        summary = grant_svc.get_grant_budget_summary(grant_id, _org_id())
+    except GrantNotFound:
+        return jsonify({"error": "Grant not found"}), 404
+    return jsonify(summary), 200
 
 
 @admin_bp.get("/compliance/p2p/<int:page_id>/fraud-score")

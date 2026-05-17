@@ -14,6 +14,7 @@ from ngo_homesuite.models.core import (
     CampaignEmailDelivery,
     Donation,
     Donor,
+    ExternalCommunicationAuthorization,
     Organization,
     User,
     db,
@@ -66,6 +67,23 @@ def _admin_org_id(app) -> int:
         assert user is not None
         assert user.organization_id is not None
         return int(user.organization_id)
+
+
+def _human_authorization_payload(
+    *,
+    reviewer_name: str = "Test Reviewer",
+    reviewer_role: str = "Operations Lead",
+    ai_assisted: bool = False,
+    contains_internal_details: bool = False,
+) -> dict:
+    return {
+        "ai_assisted": ai_assisted,
+        "contains_internal_details": contains_internal_details,
+        "reviewer_name": reviewer_name,
+        "reviewer_role": reviewer_role,
+        "warning_acknowledged": True,
+        "human_confirmation_text": "I CONFIRM HUMAN REVIEW",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -295,6 +313,7 @@ def test_campaign_send_email_all_donors_persists_batch_and_deliveries(client, ap
                 "subject": "Impact update",
                 "body": "Hello {name}, support {campaign_name} today.",
                 "audience": {},
+                "compliance": _human_authorization_payload(),
             },
         )
 
@@ -352,6 +371,7 @@ def test_campaign_send_email_campaign_donors_only_filter(client, app):
                 "subject": "Campaign update",
                 "body": "Hi {name}, this is for {campaign_name}.",
                 "audience": {"campaign_donors_only": True},
+                "compliance": _human_authorization_payload(),
             },
         )
 
@@ -379,7 +399,12 @@ def test_campaign_email_analytics_reports_sent_and_failed(client, app):
     with mock.patch("ngo_homesuite.services.campaign_email_service.send_email", side_effect=[True, False]):
         send_rv = client.post(
             f"/api/v2/campaigns/{campaign_id}/emails/send",
-            json={"subject": "Metrics", "body": "Body text", "audience": {"donor_ids": donor_ids}},
+            json={
+                "subject": "Metrics",
+                "body": "Body text",
+                "audience": {"donor_ids": donor_ids},
+                "compliance": _human_authorization_payload(),
+            },
         )
     assert send_rv.status_code == 200
 
@@ -399,6 +424,77 @@ def test_viewer_cannot_send_campaign_email(client):
         json={"subject": "Nope", "body": "Not allowed"},
     )
     assert rv.status_code in (403, 302)
+
+
+def test_staff_without_external_comms_permission_cannot_send_campaign_email(client, app):
+    with app.app_context():
+        staff_user = User.query.filter_by(username="staff").first()
+        if staff_user is not None:
+            staff_user.can_authorize_external_comms = False
+            db.session.commit()
+
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "Staff Unauthorized Send Campaign"})
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+
+    client.post("/auth/logout", follow_redirects=False)
+    _login_staff(client)
+
+    rv = client.post(
+        f"/api/v2/campaigns/{campaign_id}/emails/send",
+        json={
+            "subject": "Attempted unauthorized send",
+            "body": "Hello {name}, update from {campaign_name}.",
+            "audience": {},
+            "compliance": _human_authorization_payload(),
+        },
+    )
+    assert rv.status_code == 403
+    payload = rv.get_json() or {}
+    assert payload.get("required_permission") == "can_authorize_external_comms"
+
+
+def test_staff_with_admin_granted_external_comms_permission_can_send(client, app):
+    org_id = _admin_org_id(app)
+    with app.app_context():
+        staff_user = User.query.filter_by(username="staff").first()
+        assert staff_user is not None
+        staff_user.can_authorize_external_comms = True
+
+        donor = Donor(
+            organization_id=org_id,
+            name="Staff Permitted Donor",
+            email="staff-permitted@example.org",
+            donor_type="individual",
+        )
+        db.session.add(donor)
+        db.session.commit()
+        donor_id = int(donor.id)
+
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "Staff Permitted Send Campaign"})
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+
+    client.post("/auth/logout", follow_redirects=False)
+    _login_staff(client)
+
+    with mock.patch("ngo_homesuite.services.campaign_email_service.send_email", return_value=True) as send_mock:
+        rv = client.post(
+            f"/api/v2/campaigns/{campaign_id}/emails/send",
+            json={
+                "subject": "Authorized by admin permission",
+                "body": "Hello {name}, update from {campaign_name}.",
+                "audience": {"donor_ids": [donor_id]},
+                "compliance": _human_authorization_payload(reviewer_name="Staff Reviewer", reviewer_role="Staff"),
+            },
+        )
+
+    assert rv.status_code == 200
+    payload = rv.get_json() or {}
+    assert payload.get("total_recipients") == 1
+    assert send_mock.call_count == 1
 
 
 def test_campaign_email_preview_returns_quality_hints_and_samples(client, app):
@@ -513,6 +609,7 @@ def test_campaign_send_email_respects_min_total_and_top_n_filters(client, app):
                 "subject": "Filtered blast",
                 "body": "Hi {name}, support {campaign_name}.",
                 "audience": {"min_total_given": 100.0, "top_n_by_total_given": 1},
+                "compliance": _human_authorization_payload(),
             },
         )
 
@@ -520,3 +617,110 @@ def test_campaign_send_email_respects_min_total_and_top_n_filters(client, app):
     payload = rv.get_json() or {}
     assert payload.get("total_recipients") == 1
     assert send_mock.call_count == 1
+
+
+def test_campaign_send_email_ai_assisted_requires_human_in_loop_confirmation(client):
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "AI HITL Guardrail Campaign"})
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+
+    rv = client.post(
+        f"/api/v2/campaigns/{campaign_id}/emails/send",
+        json={
+            "subject": "AI-assisted outbound",
+            "body": "Hello {name}, update from {campaign_name}",
+            "audience": {},
+            "compliance": {
+                "ai_assisted": True,
+                "contains_internal_details": False,
+                "reviewer_name": "",
+                "warning_acknowledged": False,
+                "human_confirmation_text": "",
+            },
+        },
+    )
+    assert rv.status_code == 400
+    payload = rv.get_json() or {}
+    assert payload.get("human_in_the_loop_required") is True
+    assert "Human reviewer name is required" in (payload.get("error") or "")
+
+
+def test_campaign_send_email_requires_human_authorization_for_non_ai_message(client):
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "Universal HITL Requirement"})
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+
+    rv = client.post(
+        f"/api/v2/campaigns/{campaign_id}/emails/send",
+        json={
+            "subject": "Standard external outreach",
+            "body": "Hello {name}, a regular update from {campaign_name}.",
+            "audience": {},
+        },
+    )
+    assert rv.status_code == 400
+    payload = rv.get_json() or {}
+    assert payload.get("human_in_the_loop_required") is True
+    assert "outbound external communication" in (payload.get("warning") or "")
+
+
+def test_campaign_send_email_internal_details_allows_confirmed_human_in_loop(client, app):
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "Internal Detail HITL Campaign"})
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+    org_id = _admin_org_id(app)
+
+    with app.app_context():
+        donor = Donor(organization_id=org_id, name="HITL Donor", email="hitl@example.org", donor_type="individual")
+        db.session.add(donor)
+        db.session.commit()
+        donor_id = int(donor.id)
+
+    with mock.patch("ngo_homesuite.services.campaign_email_service.send_email", return_value=True) as send_mock:
+        rv = client.post(
+            f"/api/v2/campaigns/{campaign_id}/emails/send",
+            json={
+                "subject": "Internal campaign performance update",
+                "body": "Hello {name}, this includes internal planning context for {campaign_name}.",
+                "audience": {"donor_ids": [donor_id]},
+                "compliance": {
+                    "ai_assisted": False,
+                    "contains_internal_details": True,
+                    "reviewer_name": "Alex Grant",
+                    "reviewer_role": "Fundraising Director",
+                    "warning_acknowledged": True,
+                    "human_confirmation_text": "I CONFIRM HUMAN REVIEW",
+                },
+            },
+        )
+
+    assert rv.status_code == 200
+    payload = rv.get_json() or {}
+    assert payload.get("total_recipients") == 1
+    assert send_mock.call_count == 1
+    assert int(payload.get("authorization_audit_id") or 0) > 0
+    assert payload.get("authorized_at")
+
+    with app.app_context():
+        batch = db.session.scalars(
+            db.select(CampaignEmailBatch).where(CampaignEmailBatch.campaign_id == campaign_id).order_by(CampaignEmailBatch.id.desc())
+        ).first()
+        assert batch is not None
+        hitl = (batch.audience_json or {}).get("_human_in_the_loop") or {}
+        assert hitl.get("required") is True
+        assert hitl.get("contains_internal_details") is True
+        assert hitl.get("reviewer_name") == "Alex Grant"
+
+        auth = db.session.scalars(
+            db.select(ExternalCommunicationAuthorization).where(
+                ExternalCommunicationAuthorization.id == int(payload.get("authorization_audit_id")),
+            )
+        ).first()
+        assert auth is not None
+        assert int(auth.user_id) > 0
+        assert auth.username
+        assert auth.authorized_at is not None
+        assert int(auth.batch_id or 0) == int(batch.id)

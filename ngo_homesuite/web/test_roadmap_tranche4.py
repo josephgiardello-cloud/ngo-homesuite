@@ -6,7 +6,7 @@ from datetime import date, datetime, UTC
 
 import pytest
 
-from ngo_homesuite.models.core import Beneficiary, Organization, ProgramCase, User, db
+from ngo_homesuite.models.core import Beneficiary, ExternalCommunicationAuthorization, Organization, ProgramCase, User, db
 
 
 @pytest.fixture(scope="module")
@@ -447,6 +447,116 @@ class TestAdminRoutes:
 
         rv = client.patch(f"/admin/users/{target_id}/role", json={"role": "superuser"})
         assert rv.status_code == 400
+
+    def test_admin_can_update_external_comms_permission(self, client, app):
+        org_id = _ensure_user(app, "admin_user2", "admin2@test.local", "admin", "AdminPass123!")
+        with app.app_context():
+            target = User.query.filter_by(username="perm_target").first()
+            if target is None:
+                target = User(
+                    username="perm_target",
+                    email="perm_target@test.local",
+                    role="staff",
+                    is_active=True,
+                    organization_id=org_id,
+                )
+                target.set_password("PermTarget123!")
+                db.session.add(target)
+                db.session.commit()
+            target_id = target.id
+
+        _login(client, "admin_user2", "AdminPass123!")
+        rv = client.patch(
+            f"/admin/users/{target_id}/permissions",
+            json={"can_authorize_external_comms": True},
+        )
+        assert rv.status_code == 200
+        payload = rv.get_json()
+        assert payload["can_authorize_external_comms"] is True
+        assert payload["effective_external_comms_authority"] is True
+
+    def test_admin_update_external_comms_permission_requires_flag(self, client, app):
+        _ensure_user(app, "admin_user2", "admin2@test.local", "admin", "AdminPass123!")
+        _login(client, "admin_user2", "AdminPass123!")
+
+        with app.app_context():
+            target = User.query.filter_by(username="perm_target").first()
+            target_id = target.id if target else 999999
+
+        rv = client.patch(f"/admin/users/{target_id}/permissions", json={})
+        assert rv.status_code == 400
+
+    def test_admin_can_list_external_comms_audit(self, client, app):
+        org_id = _ensure_user(app, "admin_user2", "admin2@test.local", "admin", "AdminPass123!")
+        with app.app_context():
+            admin_user = User.query.filter_by(username="admin_user2").first()
+            assert admin_user is not None
+            other_org = Organization.query.filter_by(slug="audit-other-org").first()
+            if other_org is None:
+                other_org = Organization(name="Audit Other Org", slug="audit-other-org", is_active=True)
+                db.session.add(other_org)
+                db.session.commit()
+
+            foreign_user = User.query.filter_by(username="foreign_admin").first()
+            if foreign_user is None:
+                foreign_user = User(
+                    username="foreign_admin",
+                    email="foreign_admin@test.local",
+                    role="admin",
+                    is_active=True,
+                    organization_id=other_org.id,
+                )
+                foreign_user.set_password("ForeignAdmin123!")
+                db.session.add(foreign_user)
+                db.session.commit()
+
+            owned = ExternalCommunicationAuthorization(
+                organization_id=org_id,
+                user_id=admin_user.id,
+                username="admin_user2",
+                user_role="admin",
+                channel="email",
+                communication_type="campaign_bulk_email",
+                campaign_id=101,
+                batch_id=202,
+                warning_acknowledged=True,
+                confirmation_phrase="I CONFIRM HUMAN REVIEW",
+                reviewer_name="Compliance Lead",
+                reviewer_role="Director",
+                details_json={"reason": "test"},
+            )
+            foreign = ExternalCommunicationAuthorization(
+                organization_id=other_org.id,
+                user_id=foreign_user.id,
+                username="foreign_admin",
+                user_role="admin",
+                channel="email",
+                communication_type="campaign_bulk_email",
+                warning_acknowledged=True,
+                confirmation_phrase="I CONFIRM HUMAN REVIEW",
+                reviewer_name="Other Org Reviewer",
+            )
+            db.session.add(owned)
+            db.session.add(foreign)
+            db.session.commit()
+
+        _login(client, "admin_user2", "AdminPass123!")
+
+        rv = client.get("/admin/external-comms/audit?channel=email&reviewer_name=Compliance")
+        assert rv.status_code == 200
+        payload = rv.get_json()
+        assert payload["count"] >= 1
+        usernames = {item["username"] for item in payload["items"]}
+        assert "admin_user2" in usernames
+        assert "foreign_admin" not in usernames
+
+    def test_admin_external_comms_audit_rejects_invalid_datetime(self, client, app):
+        _ensure_user(app, "admin_user2", "admin2@test.local", "admin", "AdminPass123!")
+        _login(client, "admin_user2", "AdminPass123!")
+
+        rv = client.get("/admin/external-comms/audit?authorized_from=not-a-date")
+        assert rv.status_code == 400
+        assert "authorized_from" in rv.get_json()["error"]
 
     def test_admin_get_org(self, client, app):
         _ensure_user(app, "admin_user2", "admin2@test.local", "admin", "AdminPass123!")

@@ -18,6 +18,7 @@ from ngo_homesuite.models.core import (
     CampaignEmailDelivery,
     Donation,
     Donor,
+    ExternalCommunicationAuthorization,
     db,
 )
 from ngo_homesuite.utils.email import send_email
@@ -294,9 +295,12 @@ def send_campaign_bulk_email(
     campaign_id: int,
     *,
     created_by_user_id: int | None,
+    created_by_username: str | None,
+    created_by_role: str | None,
     subject: str,
     body: str,
     audience: dict[str, Any] | None = None,
+    human_authorization: dict[str, Any] | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     subject_value = str(subject or "").strip()
@@ -305,6 +309,20 @@ def send_campaign_bulk_email(
         raise ValueError("subject is required")
     if not body_value:
         raise ValueError("body is required")
+
+    authorization = human_authorization if isinstance(human_authorization, dict) else {}
+    if created_by_user_id is None or int(created_by_user_id) <= 0:
+        raise ValueError("authorized user id is required for outbound external communication")
+    reviewer_name = str(authorization.get("reviewer_name") or "").strip()
+    warning_acknowledged = bool(authorization.get("warning_acknowledged", False))
+    confirmation_phrase = str(authorization.get("human_confirmation_text") or "").strip()
+    required_phrase = "I CONFIRM HUMAN REVIEW"
+    if not reviewer_name:
+        raise ValueError("reviewer_name is required for outbound external communication authorization")
+    if not warning_acknowledged:
+        raise ValueError("warning acknowledgement is required for outbound external communication authorization")
+    if confirmation_phrase != required_phrase:
+        raise ValueError(f"confirmation phrase must match '{required_phrase}'")
 
     campaign = _get_campaign_or_raise(campaign_id, organization_id)
     recipients = _resolve_recipients(organization_id, campaign.id, audience)
@@ -316,6 +334,28 @@ def send_campaign_bulk_email(
             "total_recipients": len(recipients),
             "sample_emails": [str(r.email) for r in recipients[:20]],
         }
+
+    authorization_audit = ExternalCommunicationAuthorization(
+        organization_id=int(organization_id),
+        user_id=int(created_by_user_id),
+        username=str(created_by_username or "unknown"),
+        user_role=str(created_by_role or "unknown"),
+        channel="email",
+        communication_type="campaign_bulk_email",
+        campaign_id=int(campaign.id),
+        warning_acknowledged=True,
+        confirmation_phrase=confirmation_phrase,
+        reviewer_name=reviewer_name,
+        reviewer_role=str(authorization.get("reviewer_role") or "").strip() or None,
+        details_json={
+            "subject": subject_value,
+            "contains_internal_details": bool(authorization.get("contains_internal_details", False)),
+            "ai_assisted": bool(authorization.get("ai_assisted", False)),
+            "requested_recipients": len(recipients),
+        },
+    )
+    db.session.add(authorization_audit)
+    db.session.flush()
 
     batch = CampaignEmailBatch(
         organization_id=int(organization_id),
@@ -331,6 +371,7 @@ def send_campaign_bulk_email(
     )
     db.session.add(batch)
     db.session.flush()
+    authorization_audit.batch_id = int(batch.id)
 
     sent = 0
     failed = 0
@@ -384,6 +425,8 @@ def send_campaign_bulk_email(
     return {
         "dry_run": False,
         "batch_id": int(batch.id),
+        "authorization_audit_id": int(authorization_audit.id),
+        "authorized_at": authorization_audit.authorized_at.isoformat() if authorization_audit.authorized_at else None,
         "campaign_id": int(campaign.id),
         "status": batch.status,
         "total_recipients": int(batch.total_recipients),

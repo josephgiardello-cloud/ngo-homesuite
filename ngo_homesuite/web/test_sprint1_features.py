@@ -649,3 +649,19 @@ def test_reports_page_renders_with_financial_totals(client, app):
     assert rv.status_code == 200
     body = rv.get_data(as_text=True)
     assert "Reports" in body
+    assert "Campaign Email Workbench" in body
+    assert "Generate AI Draft" in body
+    assert "External Communications Authorization Audit" in body
+    assert "/api/v2/campaigns/" in body
+
+
+def test_campaign_email_workbench_route_renders_dedicated_view(client):
+    _login_admin(client)
+
+    rv = client.get("/campaigns/email-workbench")
+    assert rv.status_code == 200
+    body = rv.get_data(as_text=True)
+    assert "Campaign Email Workbench" in body
+    assert "Human Reviewer Name" in body
+    assert "Special warning" in body
+    assert "Email Workbench" in body

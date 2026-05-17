@@ -300,8 +300,13 @@ def auto_migrate(db_path: str | None = None) -> None:
                 hash_val = hashlib.sha256(f.read()).hexdigest()
             sql = mf.read_text(encoding='utf-8')
             try:
-                if version in {12, 13}:
-                    required_tables = {"donations", "funds"} if version == 12 else {"recurring_donation_plans"}
+                if version in {12, 13, 19}:
+                    if version == 12:
+                        required_tables = {"donations", "funds"}
+                    elif version == 13:
+                        required_tables = {"recurring_donation_plans"}
+                    else:
+                        required_tables = {"users"}
                     names_csv = ", ".join(f"'{name}'" for name in sorted(required_tables))
                     existing_tables = {
                         str(row[0])

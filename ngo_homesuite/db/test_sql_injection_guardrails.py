@@ -14,6 +14,7 @@ SAFE_DYNAMIC_SQL_ALLOWLIST = {
     "ngo_homesuite/utils/import_export.py",
     "ngo_homesuite/utils/integrity_drift.py",
     "ngo_homesuite/services/activity_timeline_service.py",  # Uses text() with literal templates + parameterized queries
+    "ngo_homesuite/services/campaign_email_service.py",  # Uses SQLAlchemy select() constructs and bound values
     "ngo_homesuite/services/reminder_service.py",  # Uses select() with SQLAlchemy parameterized queries
 }
 
