@@ -68,6 +68,9 @@ class User(UserMixin, db.Model):
     oauth_provider = db.Column(db.String(32), nullable=True, index=True)     # 'google', 'github'
     oauth_provider_id = db.Column(db.String(256), nullable=True, index=True)  # provider user-id
 
+    # WebAuthn / passkeys (multiple credentials per account)
+    webauthn_credentials_json = db.Column(JSON, nullable=True)
+
     __table_args__ = (
         db.UniqueConstraint('oauth_provider', 'oauth_provider_id', name='uq_user_oauth_provider'),
     )
@@ -1032,6 +1035,61 @@ class Campaign(db.Model):
 
     def __repr__(self):
         return f'<Campaign {self.name} [{self.status}]>'
+
+
+class CampaignEmailBatch(db.Model):
+    """Bulk email send operation for a campaign audience."""
+
+    __tablename__ = 'campaign_email_batches'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaigns.id'), nullable=False, index=True)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+    subject = db.Column(db.String(300), nullable=False)
+    body = db.Column(db.Text, nullable=False)
+    audience_json = db.Column(JSON, nullable=True)
+    status = db.Column(db.String(30), nullable=False, default='queued', index=True)  # queued, sent, partial_failed, failed
+    total_recipients = db.Column(db.Integer, nullable=False, default=0)
+    sent_count = db.Column(db.Integer, nullable=False, default=0)
+    failed_count = db.Column(db.Integer, nullable=False, default=0)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    sent_at = db.Column(db.DateTime, nullable=True)
+
+    campaign = db.relationship('Campaign', backref='email_batches')
+    created_by = db.relationship('User', backref='campaign_email_batches')
+    deliveries = db.relationship(
+        'CampaignEmailDelivery',
+        backref='batch',
+        cascade='all, delete-orphan',
+        order_by='CampaignEmailDelivery.id',
+    )
+
+    def __repr__(self):
+        return f'<CampaignEmailBatch campaign={self.campaign_id} status={self.status}>'
+
+
+class CampaignEmailDelivery(db.Model):
+    """Per-recipient delivery tracking for campaign email sends."""
+
+    __tablename__ = 'campaign_email_deliveries'
+
+    id = db.Column(db.Integer, primary_key=True)
+    batch_id = db.Column(db.Integer, db.ForeignKey('campaign_email_batches.id'), nullable=False, index=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaigns.id'), nullable=False, index=True)
+    donor_id = db.Column(db.Integer, db.ForeignKey('donors.id'), nullable=True, index=True)
+    recipient_email = db.Column(db.String(255), nullable=False, index=True)
+    delivery_status = db.Column(db.String(30), nullable=False, default='pending', index=True)  # sent, failed
+    error_message = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    sent_at = db.Column(db.DateTime, nullable=True)
+
+    campaign = db.relationship('Campaign', backref='email_deliveries')
+    donor = db.relationship('Donor', backref='campaign_email_deliveries')
+
+    def __repr__(self):
+        return f'<CampaignEmailDelivery batch={self.batch_id} {self.delivery_status}>'
 
 
 # ---------------------------------------------------------------------------

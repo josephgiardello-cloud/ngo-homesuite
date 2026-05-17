@@ -985,3 +985,42 @@ def close_campaign_route(campaign_id: int):
     except LookupError:
         return jsonify({"error": "Campaign not found"}), 404
     return jsonify({"id": campaign.id, "status": campaign.status})
+
+
+@v2_bp.route("/campaigns/<int:campaign_id>/emails/send", methods=["POST"])
+@login_required
+@roles_required("admin", "staff")
+def campaign_send_emails_route(campaign_id: int):
+    """Send (or preview) a bulk campaign email to a donor audience."""
+    from ngo_homesuite.services.campaign_email_service import send_campaign_bulk_email
+
+    data = _json_or_400(["subject", "body"])
+    try:
+        payload = send_campaign_bulk_email(
+            _org_id(),
+            campaign_id,
+            created_by_user_id=int(getattr(current_user, "id", 0) or 0),
+            subject=str(data.get("subject") or ""),
+            body=str(data.get("body") or ""),
+            audience=data.get("audience") if isinstance(data.get("audience"), dict) else {},
+            dry_run=bool(data.get("dry_run", False)),
+        )
+    except LookupError:
+        return jsonify({"error": "Campaign not found"}), 404
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(payload), 200
+
+
+@v2_bp.route("/campaigns/<int:campaign_id>/emails/analytics", methods=["GET"])
+@login_required
+@roles_required("admin", "staff")
+def campaign_email_analytics_route(campaign_id: int):
+    """Return aggregate analytics for campaign bulk email sends."""
+    from ngo_homesuite.services.campaign_email_service import campaign_email_analytics
+
+    try:
+        payload = campaign_email_analytics(_org_id(), campaign_id)
+    except LookupError:
+        return jsonify({"error": "Campaign not found"}), 404
+    return jsonify(payload), 200

@@ -1,11 +1,23 @@
 """Tests for campaign V2 API routes."""
 from __future__ import annotations
 
+import unittest.mock as mock
+
 import pytest
+from sqlalchemy import select
 
 from ngo_homesuite.app_factory import create_app
 from ngo_homesuite.flask_config import TestingConfig
-from ngo_homesuite.models.core import Campaign, Organization, db
+from ngo_homesuite.models.core import (
+    Campaign,
+    CampaignEmailBatch,
+    CampaignEmailDelivery,
+    Donation,
+    Donor,
+    Organization,
+    User,
+    db,
+)
 
 
 @pytest.fixture(scope="module")
@@ -37,6 +49,23 @@ def _login_staff(client):
         follow_redirects=False,
     )
     assert rv.status_code in (302, 303)
+
+
+def _login_viewer(client):
+    rv = client.post(
+        "/auth/login",
+        data={"username": "viewer", "password": "viewer123!"},
+        follow_redirects=False,
+    )
+    assert rv.status_code in (302, 303)
+
+
+def _admin_org_id(app) -> int:
+    with app.app_context():
+        user = User.query.filter_by(username="admin").first()
+        assert user is not None
+        assert user.organization_id is not None
+        return int(user.organization_id)
 
 
 # ---------------------------------------------------------------------------
@@ -225,4 +254,148 @@ def test_staff_can_list_campaigns(client):
 def test_staff_cannot_create_campaign(client):
     _login_staff(client)
     rv = client.post("/api/v2/campaigns", json={"name": "Staff Should Fail"})
+    assert rv.status_code in (403, 302)
+
+
+# ---------------------------------------------------------------------------
+# CAMPAIGN BULK EMAIL
+# ---------------------------------------------------------------------------
+
+def test_campaign_send_email_requires_subject_and_body(client):
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "Email Validation Campaign"})
+    assert create_rv.status_code == 201
+    campaign_id = create_rv.get_json()["id"]
+
+    rv = client.post(
+        f"/api/v2/campaigns/{campaign_id}/emails/send",
+        json={"subject": "Only subject"},
+    )
+    assert rv.status_code == 400
+
+
+def test_campaign_send_email_all_donors_persists_batch_and_deliveries(client, app):
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "Bulk Send Campaign"})
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+    org_id = _admin_org_id(app)
+
+    with app.app_context():
+        d1 = Donor(organization_id=org_id, name="Campaign Donor A", email="campaign.a@example.org", donor_type="individual")
+        d2 = Donor(organization_id=org_id, name="Campaign Donor B", email="campaign.b@example.org", donor_type="individual")
+        d3 = Donor(organization_id=org_id, name="No Email Donor", email=None, donor_type="individual")
+        db.session.add_all([d1, d2, d3])
+        db.session.commit()
+
+    with mock.patch("ngo_homesuite.services.campaign_email_service.send_email", return_value=True) as send_mock:
+        rv = client.post(
+            f"/api/v2/campaigns/{campaign_id}/emails/send",
+            json={
+                "subject": "Impact update",
+                "body": "Hello {name}, support {campaign_name} today.",
+                "audience": {},
+            },
+        )
+
+    assert rv.status_code == 200
+    body = rv.get_json() or {}
+    assert body.get("total_recipients") >= 2
+    assert body.get("sent") >= 2
+    assert send_mock.call_count >= 2
+
+    with app.app_context():
+        batch = db.session.scalars(
+            db.select(CampaignEmailBatch).where(CampaignEmailBatch.campaign_id == campaign_id).order_by(CampaignEmailBatch.id.desc())
+        ).first()
+        assert batch is not None
+        assert batch.total_recipients >= 2
+        assert batch.sent_count >= 2
+        deliveries = list(
+            db.session.scalars(
+                db.select(CampaignEmailDelivery).where(CampaignEmailDelivery.batch_id == batch.id)
+            )
+        )
+        assert len(deliveries) == batch.total_recipients
+
+
+def test_campaign_send_email_campaign_donors_only_filter(client, app):
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "Campaign Donor Filter"})
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+    org_id = _admin_org_id(app)
+
+    with app.app_context():
+        d1 = Donor(organization_id=org_id, name="Linked Donor", email="linked@example.org", donor_type="individual")
+        d2 = Donor(organization_id=org_id, name="Unlinked Donor", email="unlinked@example.org", donor_type="individual")
+        db.session.add_all([d1, d2])
+        db.session.flush()
+        db.session.add(
+            Donation(
+                organization_id=org_id,
+                campaign_id=campaign_id,
+                donor_id=d1.id,
+                donor_name=d1.name,
+                donor_email=d1.email,
+                amount=50.0,
+                currency="USD",
+                status="received",
+            )
+        )
+        db.session.commit()
+
+    with mock.patch("ngo_homesuite.services.campaign_email_service.send_email", return_value=True) as send_mock:
+        rv = client.post(
+            f"/api/v2/campaigns/{campaign_id}/emails/send",
+            json={
+                "subject": "Campaign update",
+                "body": "Hi {name}, this is for {campaign_name}.",
+                "audience": {"campaign_donors_only": True},
+            },
+        )
+
+    assert rv.status_code == 200
+    body = rv.get_json() or {}
+    assert body.get("total_recipients") == 1
+    assert send_mock.call_count == 1
+
+
+def test_campaign_email_analytics_reports_sent_and_failed(client, app):
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "Campaign Analytics"})
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+    org_id = _admin_org_id(app)
+
+    with app.app_context():
+        d1 = Donor(organization_id=org_id, name="Analytics Donor 1", email="analytics1@example.org", donor_type="individual")
+        d2 = Donor(organization_id=org_id, name="Analytics Donor 2", email="analytics2@example.org", donor_type="individual")
+        db.session.add_all([d1, d2])
+        db.session.flush()
+        donor_ids = [int(d1.id), int(d2.id)]
+        db.session.commit()
+
+    with mock.patch("ngo_homesuite.services.campaign_email_service.send_email", side_effect=[True, False]):
+        send_rv = client.post(
+            f"/api/v2/campaigns/{campaign_id}/emails/send",
+            json={"subject": "Metrics", "body": "Body text", "audience": {"donor_ids": donor_ids}},
+        )
+    assert send_rv.status_code == 200
+
+    analytics_rv = client.get(f"/api/v2/campaigns/{campaign_id}/emails/analytics")
+    assert analytics_rv.status_code == 200
+    payload = analytics_rv.get_json() or {}
+    assert payload.get("campaign_id") == campaign_id
+    assert payload.get("batch_count", 0) >= 1
+    assert payload.get("total_sent", 0) >= 1
+    assert payload.get("total_failed", 0) >= 1
+
+
+def test_viewer_cannot_send_campaign_email(client):
+    _login_viewer(client)
+    rv = client.post(
+        "/api/v2/campaigns/1/emails/send",
+        json={"subject": "Nope", "body": "Not allowed"},
+    )
     assert rv.status_code in (403, 302)
