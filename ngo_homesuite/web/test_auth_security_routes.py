@@ -2,6 +2,8 @@ from __future__ import annotations
 # pyright: reportUnknownParameterType=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportMissingParameterType=false, reportCallIssue=false
 
 import pytest
+import pyotp
+import unittest.mock as mock
 
 from ngo_homesuite.app_factory import create_app
 from ngo_homesuite.flask_config import TestingConfig
@@ -274,3 +276,251 @@ def test_register_rejects_short_password(client, app):
     )
     assert rv.status_code == 200
     assert b"8" in rv.data or b"characters" in rv.data.lower() or b"password" in rv.data.lower()
+
+
+def test_mfa_enroll_confirm_and_login_requires_otp(client, app):
+    _ensure_user(app, "mfa_user1", "AuthPass123!")
+
+    # Log in to initialize enrollment.
+    rv_login = client.post(
+        "/auth/login",
+        data={"username": "mfa_user1", "password": "AuthPass123!"},
+        follow_redirects=False,
+    )
+    assert rv_login.status_code == 302
+
+    # Enroll MFA and retrieve TOTP secret.
+    rv_enroll = client.post("/auth/mfa/enroll", json={})
+    assert rv_enroll.status_code == 200
+    body = rv_enroll.get_json() or {}
+    secret = body.get("secret")
+    assert isinstance(secret, str) and secret
+    assert isinstance(body.get("backup_codes"), list) and len(body["backup_codes"]) >= 5
+
+    # Confirm MFA with valid TOTP code.
+    code = pyotp.TOTP(secret).now()
+    rv_confirm = client.post("/auth/mfa/confirm", json={"code": code})
+    assert rv_confirm.status_code == 200
+    assert (rv_confirm.get_json() or {}).get("status") == "enabled"
+
+    # Log out and ensure next login requires OTP.
+    client.post("/auth/logout", follow_redirects=False)
+    rv_no_otp = client.post(
+        "/auth/login",
+        data={"username": "mfa_user1", "password": "AuthPass123!"},
+        follow_redirects=False,
+    )
+    assert rv_no_otp.status_code == 200
+    assert b"verification code" in rv_no_otp.data.lower()
+
+    rv_with_otp = client.post(
+        "/auth/login",
+        data={
+            "username": "mfa_user1",
+            "password": "AuthPass123!",
+            "otp_code": pyotp.TOTP(secret).now(),
+        },
+        follow_redirects=False,
+    )
+    assert rv_with_otp.status_code == 302
+    assert "/dashboard" in (rv_with_otp.headers.get("Location") or "")
+
+
+def test_mfa_backup_code_can_authenticate_once(client, app):
+    _ensure_user(app, "mfa_user2", "AuthPass123!")
+
+    rv_login = client.post(
+        "/auth/login",
+        data={"username": "mfa_user2", "password": "AuthPass123!"},
+        follow_redirects=False,
+    )
+    assert rv_login.status_code == 302
+
+    rv_enroll = client.post("/auth/mfa/enroll", json={})
+    assert rv_enroll.status_code == 200
+    payload = rv_enroll.get_json() or {}
+    secret = payload["secret"]
+    backup = payload["backup_codes"][0]
+
+    rv_confirm = client.post("/auth/mfa/confirm", json={"code": pyotp.TOTP(secret).now()})
+    assert rv_confirm.status_code == 200
+
+    client.post("/auth/logout", follow_redirects=False)
+
+    # Backup code works once.
+    rv_backup_ok = client.post(
+        "/auth/login",
+        data={"username": "mfa_user2", "password": "AuthPass123!", "otp_code": backup},
+        follow_redirects=False,
+    )
+    assert rv_backup_ok.status_code == 302
+
+    client.post("/auth/logout", follow_redirects=False)
+
+    # Reuse of the same backup code should fail.
+    rv_backup_reuse = client.post(
+        "/auth/login",
+        data={"username": "mfa_user2", "password": "AuthPass123!", "otp_code": backup},
+        follow_redirects=False,
+    )
+    assert rv_backup_reuse.status_code == 200
+    assert b"invalid verification code" in rv_backup_reuse.data.lower()
+
+
+# ---------------------------------------------------------------------------
+# OAuth / SSO login
+# ---------------------------------------------------------------------------
+
+def _make_oauth_app():
+    """App with fake Google + GitHub client IDs so OAuth routes are registered."""
+    class _OAuthTestConfig(TestingConfig):
+        GOOGLE_CLIENT_ID = 'fake-google-id'
+        GOOGLE_CLIENT_SECRET = 'fake-google-secret'
+        GITHUB_CLIENT_ID = 'fake-github-id'
+        GITHUB_CLIENT_SECRET = 'fake-github-secret'
+    return create_app(_OAuthTestConfig)
+
+
+@pytest.fixture(scope='module')
+def oauth_app():
+    return _make_oauth_app()
+
+
+@pytest.fixture()
+def oauth_client(oauth_app):
+    return oauth_app.test_client()
+
+
+def _stub_token_exchange(provider, token, userinfo):
+    """Return a context manager that patches authorize_access_token and userinfo fetch."""
+    import ngo_homesuite.web.auth_routes as ar
+
+    orig_create = ar._oauth.create_client
+
+    def _create_client(name):
+        if name != provider:
+            return orig_create(name)
+        client = mock.MagicMock()
+        client.authorize_access_token.return_value = token
+        client.userinfo.return_value = userinfo          # Google path
+        # GitHub path: client.get('user') and client.get('user/emails')
+        user_resp = mock.MagicMock()
+        user_resp.json.return_value = userinfo
+        client.get.return_value = user_resp
+        return client
+
+    return mock.patch.object(ar._oauth, 'create_client', side_effect=_create_client)
+
+
+def test_oauth_google_creates_new_user_and_logs_in(oauth_client, oauth_app):
+    """A first-time Google OAuth login should create a new user and redirect to dashboard."""
+    token = {'access_token': 'tok', 'token_type': 'Bearer',
+             'userinfo': {'sub': 'google-uid-001', 'email': 'oauth_google@example.com', 'name': 'Oauth User'}}
+
+    with _stub_token_exchange('google', token, token['userinfo']):
+        rv = oauth_client.get('/auth/oauth/google/callback', follow_redirects=False)
+
+    assert rv.status_code == 302
+    assert '/dashboard' in (rv.headers.get('Location') or '')
+
+    with oauth_app.app_context():
+        user = User.query.filter_by(email='oauth_google@example.com').first()
+        assert user is not None
+        assert user.oauth_provider == 'google'
+        assert user.oauth_provider_id == 'google-uid-001'
+        assert user.password_hash == '!oauth'
+
+
+def test_oauth_google_links_existing_email_account(oauth_client, oauth_app):
+    """OAuth login with a matching email should link the provider to the existing account."""
+    with oauth_app.app_context():
+        existing = User(
+            username='preexisting_email_user',
+            email='preexisting@example.com',
+            role='viewer',
+        )
+        existing.set_password('SomePass1!')
+        db.session.add(existing)
+        db.session.commit()
+        existing_id = existing.id
+
+    token = {'access_token': 'tok', 'token_type': 'Bearer',
+             'userinfo': {'sub': 'google-uid-link', 'email': 'preexisting@example.com', 'name': 'Pre Existing'}}
+
+    with _stub_token_exchange('google', token, token['userinfo']):
+        rv = oauth_client.get('/auth/oauth/google/callback', follow_redirects=False)
+
+    assert rv.status_code == 302
+    with oauth_app.app_context():
+        user = db.session.get(User, existing_id)
+        assert user.oauth_provider == 'google'
+        assert user.oauth_provider_id == 'google-uid-link'
+        # Password should remain intact (it was an existing password account)
+        assert user.password_hash != '!oauth'
+
+
+def test_oauth_repeated_login_reuses_account(oauth_client, oauth_app):
+    """Second OAuth login with the same provider ID should reuse the existing user."""
+    token = {'access_token': 'tok', 'token_type': 'Bearer',
+             'userinfo': {'sub': 'google-uid-repeat', 'email': 'oauth_repeat@example.com', 'name': 'Repeat User'}}
+
+    with _stub_token_exchange('google', token, token['userinfo']):
+        oauth_client.get('/auth/oauth/google/callback', follow_redirects=False)
+
+    # Second login — same provider UID
+    with _stub_token_exchange('google', token, token['userinfo']):
+        rv2 = oauth_client.get('/auth/oauth/google/callback', follow_redirects=False)
+
+    assert rv2.status_code == 302
+    with oauth_app.app_context():
+        count = User.query.filter_by(email='oauth_repeat@example.com').count()
+        assert count == 1, 'Should not duplicate user on repeated OAuth login'
+
+
+def test_oauth_github_creates_new_user(oauth_client, oauth_app):
+    """GitHub OAuth login creates a new user from GitHub profile data."""
+    gh_profile = {'id': 999001, 'email': 'oauth_github@example.com', 'name': 'GH User', 'login': 'gh_user_001'}
+    token = {'access_token': 'gh-tok', 'token_type': 'bearer'}
+
+    with _stub_token_exchange('github', token, gh_profile):
+        rv = oauth_client.get('/auth/oauth/github/callback', follow_redirects=False)
+
+    assert rv.status_code == 302
+    assert '/dashboard' in (rv.headers.get('Location') or '')
+    with oauth_app.app_context():
+        user = User.query.filter_by(email='oauth_github@example.com').first()
+        assert user is not None
+        assert user.oauth_provider == 'github'
+        assert user.oauth_provider_id == '999001'
+
+
+def test_oauth_unknown_provider_redirects_to_login(oauth_client, oauth_app):
+    """Requesting an unknown OAuth provider should redirect back to login with an error."""
+    rv = oauth_client.get('/auth/oauth/unknown_provider', follow_redirects=False)
+    assert rv.status_code == 302
+    assert '/auth/login' in (rv.headers.get('Location') or '')
+
+
+def test_oauth_callback_failed_token_exchange_redirects_to_login(oauth_client, oauth_app):
+    """If token exchange raises, redirect to login with error flash."""
+    import ngo_homesuite.web.auth_routes as ar
+
+    def _bad_client(name):
+        client = mock.MagicMock()
+        client.authorize_access_token.side_effect = Exception('state mismatch')
+        return client
+
+    with mock.patch.object(ar._oauth, 'create_client', side_effect=_bad_client):
+        rv = oauth_client.get('/auth/oauth/google/callback', follow_redirects=False)
+
+    assert rv.status_code == 302
+    assert '/auth/login' in (rv.headers.get('Location') or '')
+
+
+def test_login_template_contains_oauth_buttons(oauth_client, oauth_app):
+    """Login page HTML should include Google and GitHub SSO link targets."""
+    rv = oauth_client.get('/auth/login')
+    assert rv.status_code == 200
+    body = rv.data
+    assert b'/auth/oauth/google' in body
+    assert b'/auth/oauth/github' in body

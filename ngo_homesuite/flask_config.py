@@ -2,6 +2,8 @@
 
 from datetime import timedelta
 
+from sqlalchemy.pool import StaticPool
+
 from ngo_homesuite.config import get_runtime_settings
 
 
@@ -113,13 +115,13 @@ class DevelopmentConfig(Config):
 
 class TestingConfig(Config):
     """Testing configuration."""
-    
+
     DEBUG = True
     TESTING = True
     SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
     SQLALCHEMY_ENGINE_OPTIONS = {
-        'pool_pre_ping': True,
-        'pool_recycle': 3600,
+        'connect_args': {'check_same_thread': False},
+        'poolclass': StaticPool,
     }
     WTF_CSRF_ENABLED = False
     RATELIMIT_ENABLED = False
@@ -153,3 +155,12 @@ def get_config():
     env = _RUNTIME_SETTINGS.flask_env
     selected = config.get(env, DevelopmentConfig)
     return selected
+
+
+    # OAuth / SSO providers (set via environment variables)
+    import os as _os
+    GOOGLE_CLIENT_ID = _os.environ.get('GOOGLE_CLIENT_ID', '')
+    GOOGLE_CLIENT_SECRET = _os.environ.get('GOOGLE_CLIENT_SECRET', '')
+    GITHUB_CLIENT_ID = _os.environ.get('GITHUB_CLIENT_ID', '')
+    GITHUB_CLIENT_SECRET = _os.environ.get('GITHUB_CLIENT_SECRET', '')
+    OAUTH_REDIRECT_BASE = _os.environ.get('OAUTH_REDIRECT_BASE', '')  # e.g. https://app.example.com

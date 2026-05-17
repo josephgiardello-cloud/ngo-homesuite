@@ -5,6 +5,7 @@ Handles user login, registration, logout, and password management.
 """
 
 from flask import Blueprint, render_template, redirect, url_for, flash, request, session, abort
+from authlib.integrations.flask_client import OAuth
 from flask_login import login_user, logout_user, login_required, current_user
 from wtforms import StringField, PasswordField, BooleanField, SubmitField
 from wtforms.validators import DataRequired, Email, EqualTo, ValidationError, Length
@@ -137,6 +138,16 @@ def login():
             flash('Your account has been deactivated. Please contact support.', 'error')
             return redirect(url_for('auth.login'))
         
+        otp_code = (request.form.get('otp_code') or '').strip()
+        if bool(user.mfa_enabled):
+            if not otp_code:
+                flash('Verification code required for this account.', 'error')
+                return render_template('auth/login.html', form=form, mfa_required=True)
+            if not user.verify_mfa_code(otp_code):
+                db.session.commit()
+                flash('Invalid verification code.', 'error')
+                return render_template('auth/login.html', form=form, mfa_required=True)
+
         # Successful login — clear lockout counters and rotate session.
         user.failed_login_count = 0
         user.locked_until = None
@@ -199,3 +210,243 @@ def before_request():
     if current_user.is_authenticated:
         current_user.last_login = datetime.now(timezone.utc)
         db.session.commit()
+
+
+def _request_data() -> dict:
+    payload = request.get_json(silent=True)
+    if isinstance(payload, dict):
+        return payload
+    return request.form.to_dict() if request.form else {}
+
+
+@auth_bp.post('/mfa/enroll')
+@login_required
+def mfa_enroll():
+    """Initialize TOTP secret and backup codes for current user."""
+    secret = current_user.ensure_mfa_secret()
+    backup_codes = current_user.generate_mfa_backup_codes()
+    provisioning_uri = current_user.mfa_provisioning_uri()
+    db.session.commit()
+    return {
+        'secret': secret,
+        'provisioning_uri': provisioning_uri,
+        'backup_codes': backup_codes,
+        'mfa_enabled': bool(current_user.mfa_enabled),
+    }, 200
+
+
+@auth_bp.post('/mfa/confirm')
+@login_required
+def mfa_confirm():
+    """Confirm TOTP setup and enable MFA for current user."""
+    data = _request_data()
+    code = str(data.get('code') or '').strip()
+    if not code:
+        return {'error': 'code is required'}, 400
+    if not current_user.mfa_totp_secret:
+        return {'error': 'mfa enrollment has not been initialized'}, 400
+    if not current_user.verify_mfa_code(code):
+        db.session.commit()
+        return {'error': 'invalid code'}, 400
+    current_user.mfa_enabled = True
+    db.session.commit()
+    return {'status': 'enabled'}, 200
+
+
+@auth_bp.post('/mfa/disable')
+@login_required
+def mfa_disable():
+    """Disable MFA for current user after code verification."""
+    data = _request_data()
+    code = str(data.get('code') or '').strip()
+    if not current_user.mfa_enabled:
+        return {'status': 'already_disabled'}, 200
+    if not code:
+        return {'error': 'code is required'}, 400
+    if not current_user.verify_mfa_code(code):
+        db.session.commit()
+        return {'error': 'invalid code'}, 400
+    current_user.mfa_enabled = False
+    current_user.mfa_totp_secret = None
+    current_user.mfa_backup_codes_json = []
+    db.session.commit()
+    return {'status': 'disabled'}, 200
+
+
+@auth_bp.post('/mfa/backup-codes/rotate')
+@login_required
+def mfa_rotate_backup_codes():
+    """Rotate backup codes for current user.
+
+    Requires current MFA code when MFA is enabled.
+    """
+    data = _request_data()
+    code = str(data.get('code') or '').strip()
+    if current_user.mfa_enabled:
+        if not code:
+            return {'error': 'code is required'}, 400
+        if not current_user.verify_mfa_code(code):
+            db.session.commit()
+            return {'error': 'invalid code'}, 400
+    backup_codes = current_user.generate_mfa_backup_codes()
+    db.session.commit()
+    return {'backup_codes': backup_codes}, 200
+
+# ---------------------------------------------------------------------------
+# OAuth registry (authlib)
+# ---------------------------------------------------------------------------
+_oauth = OAuth()
+
+_OAUTH_PROVIDERS: dict[str, dict] = {
+    'google': {
+        'server_metadata_url': 'https://accounts.google.com/.well-known/openid-configuration',
+        'client_kwargs': {'scope': 'openid email profile'},
+    },
+    'github': {
+        'access_token_url': 'https://github.com/login/oauth/access_token',
+        'access_token_params': None,
+        'authorize_url': 'https://github.com/login/oauth/authorize',
+        'authorize_params': None,
+        'api_base_url': 'https://api.github.com/',
+        'client_kwargs': {'scope': 'user:email read:user'},
+    },
+}
+
+
+def _init_oauth(app) -> None:
+    """Register OAuth providers using app config."""
+    _oauth.init_app(app)
+    for name, params in _OAUTH_PROVIDERS.items():
+        client_id = app.config.get(f'{name.upper()}_CLIENT_ID', '')
+        client_secret = app.config.get(f'{name.upper()}_CLIENT_SECRET', '')
+        if client_id and client_secret:
+            _oauth.register(name=name, client_id=client_id, client_secret=client_secret, **params)
+
+
+def _get_oauth_userinfo(provider_name: str, token: dict) -> tuple[str | None, str | None, str | None]:
+    """Return (provider_user_id, email, display_name) from an OAuth token/userinfo response.
+
+    Returns (None, None, None) when the provider response cannot be parsed.
+    """
+    client = _oauth.create_client(provider_name)
+    if provider_name == 'google':
+        userinfo = token.get('userinfo') or client.userinfo()
+        uid = str(userinfo.get('sub') or '')
+        email = str(userinfo.get('email') or '')
+        name = userinfo.get('name') or ''
+    elif provider_name == 'github':
+        resp = client.get('user', token=token)
+        userinfo = resp.json()
+        uid = str(userinfo.get('id') or '')
+        # GitHub may not expose email in /user; fall back to /user/emails
+        email = str(userinfo.get('email') or '')
+        if not email:
+            emails_resp = client.get('user/emails', token=token)
+            for entry in emails_resp.json():
+                if entry.get('primary') and entry.get('verified'):
+                    email = str(entry.get('email') or '')
+                    break
+        name = userinfo.get('name') or userinfo.get('login') or ''
+    else:
+        return None, None, None
+    return (uid or None, email or None, name or '')
+
+
+@auth_bp.get('/oauth/<provider>')
+def oauth_login(provider: str):
+    """Redirect to OAuth provider's authorization page."""
+    if provider not in _OAUTH_PROVIDERS:
+        flash('Unknown OAuth provider.', 'error')
+        return redirect(url_for('auth.login'))
+
+    client = _oauth.create_client(provider)
+    if client is None:
+        flash(f'{provider.title()} login is not configured on this server.', 'error')
+        return redirect(url_for('auth.login'))
+
+    redirect_uri = url_for('auth.oauth_callback', provider=provider, _external=True)
+    return client.authorize_redirect(redirect_uri)
+
+
+@auth_bp.get('/oauth/<provider>/callback')
+def oauth_callback(provider: str):
+    """Handle OAuth provider callback, resolve user, and log them in."""
+    if provider not in _OAUTH_PROVIDERS:
+        flash('Unknown OAuth provider.', 'error')
+        return redirect(url_for('auth.login'))
+
+    client = _oauth.create_client(provider)
+    if client is None:
+        flash(f'{provider.title()} login is not configured on this server.', 'error')
+        return redirect(url_for('auth.login'))
+
+    try:
+        token = client.authorize_access_token()
+    except Exception:
+        flash('OAuth authorization failed. Please try again.', 'error')
+        return redirect(url_for('auth.login'))
+
+    provider_uid, email, display_name = _get_oauth_userinfo(provider, token)
+    if not provider_uid or not email:
+        flash('Could not retrieve account information from the provider.', 'error')
+        return redirect(url_for('auth.login'))
+
+    # 1. Look for existing user linked to this provider identity.
+    user = db.session.scalars(
+        select(User).where(
+            User.oauth_provider == provider,
+            User.oauth_provider_id == provider_uid,
+        ).limit(1)
+    ).first()
+
+    if user is None:
+        # 2. Try to link by email (existing password account).
+        user = db.session.scalars(
+            select(User).where(User.email == email).limit(1)
+        ).first()
+        if user is not None:
+            user.oauth_provider = provider
+            user.oauth_provider_id = provider_uid
+            db.session.commit()
+
+    if user is None:
+        # 3. Auto-create a new account from the OAuth identity.
+        parts = (display_name or '').split(' ', 1)
+        first = parts[0] if parts else ''
+        last = parts[1] if len(parts) > 1 else ''
+        base_username = (email.split('@')[0] or provider)[:75].replace(' ', '_')
+        # Ensure username uniqueness
+        username = base_username
+        suffix = 1
+        while db.session.scalars(
+            select(User).where(User.username == username).limit(1)
+        ).first() is not None:
+            username = f'{base_username}{suffix}'
+            suffix += 1
+
+        user = User(
+            username=username,
+            email=email,
+            first_name=first,
+            last_name=last,
+            password_hash='!oauth',   # sentinel — not a valid argon2 hash
+            role='viewer',
+            oauth_provider=provider,
+            oauth_provider_id=provider_uid,
+        )
+        db.session.add(user)
+        db.session.commit()
+
+    if not user.is_active:
+        flash('Your account has been deactivated. Please contact support.', 'error')
+        return redirect(url_for('auth.login'))
+
+    # Clear session before logging in (session fixation prevention).
+    session.clear()
+    login_user(user)
+    flash(f'Welcome, {user.first_name or user.username}!', 'success')
+
+    next_page = request.args.get('next')
+    if _is_safe_next_path(next_page):
+        return redirect(next_page)
+    return redirect(url_for('main.dashboard'))

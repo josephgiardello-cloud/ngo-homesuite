@@ -24,6 +24,7 @@ from ngo_homesuite.models.core import db, User, Organization, Donor, Donation, P
 from ngo_homesuite.errors import init_error_handlers
 from ngo_homesuite.app.container import AppContainer
 from ngo_homesuite.db.migrate import auto_migrate
+from ngo_homesuite.db.rls import register_rls_listeners
 from ngo_homesuite.observability import (
     InMemoryMetrics,
     configure_json_logging,
@@ -79,6 +80,7 @@ def create_app(config=None):
     
     # Initialize extensions
     db.init_app(app)
+    register_rls_listeners(app)
     migrate = Migrate(app, db)
     limiter = Limiter(
         key_func=get_remote_address,
@@ -121,6 +123,7 @@ def create_app(config=None):
     # Register blueprints
     from ngo_homesuite.web.main_routes import main_bp
     from ngo_homesuite.web.auth_routes import auth_bp
+    from ngo_homesuite.web.auth_routes import _init_oauth
     from ngo_homesuite.web.ai_routes import ai_bp
     from ngo_homesuite.web.grants_routes import grants_bp
     from ngo_homesuite.web.membership_routes import membership_bp
@@ -146,6 +149,7 @@ def create_app(config=None):
 
     app.register_blueprint(main_bp)
     app.register_blueprint(auth_bp)
+    _init_oauth(app)
     app.register_blueprint(ai_bp)
     app.register_blueprint(grants_bp)
     app.register_blueprint(membership_bp)
@@ -193,6 +197,9 @@ def create_app(config=None):
         request_id = request.headers.get('X-Request-ID', '').strip() or str(uuid.uuid4())
         g.request_id = request_id
         g.request_start_perf = time.perf_counter()
+        g.organization_id = None
+        if current_user.is_authenticated:
+            g.organization_id = getattr(current_user, 'organization_id', None)
         set_request_id(request_id)
 
     @app.teardown_request

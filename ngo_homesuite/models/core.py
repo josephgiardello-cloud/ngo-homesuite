@@ -10,11 +10,14 @@ Core entities:
 """
 
 from datetime import datetime, timezone
+import secrets
+import hashlib
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError, VerificationError
 from sqlalchemy.dialects.sqlite import JSON
+import pyotp
 
 db = SQLAlchemy()
 password_hasher = PasswordHasher()
@@ -55,6 +58,19 @@ class User(UserMixin, db.Model):
     # Account lockout after repeated failed logins
     failed_login_count = db.Column(db.Integer, default=0, nullable=False)
     locked_until = db.Column(db.DateTime, nullable=True)
+
+    # Multi-factor authentication (TOTP + one-time backup codes)
+    mfa_enabled = db.Column(db.Boolean, default=False, nullable=False)
+    mfa_totp_secret = db.Column(db.String(64), nullable=True)
+    mfa_backup_codes_json = db.Column(JSON, nullable=True)
+
+    # OAuth / SSO login
+    oauth_provider = db.Column(db.String(32), nullable=True, index=True)     # 'google', 'github'
+    oauth_provider_id = db.Column(db.String(256), nullable=True, index=True)  # provider user-id
+
+    __table_args__ = (
+        db.UniqueConstraint('oauth_provider', 'oauth_provider_id', name='uq_user_oauth_provider'),
+    )
     
     def set_password(self, password):
         """Hash and set password."""
@@ -79,6 +95,55 @@ class User(UserMixin, db.Model):
     
     def __repr__(self):
         return f'<User {self.username}>'
+
+    def ensure_mfa_secret(self) -> str:
+        """Create and persist a TOTP secret if the user does not already have one."""
+        if not self.mfa_totp_secret:
+            self.mfa_totp_secret = pyotp.random_base32()
+        return self.mfa_totp_secret
+
+    def mfa_provisioning_uri(self, issuer_name: str = 'NGO HomeSuite') -> str:
+        """Return otpauth provisioning URI for authenticator apps."""
+        secret = self.ensure_mfa_secret()
+        totp = pyotp.TOTP(secret)
+        account = self.email or self.username
+        return totp.provisioning_uri(name=account, issuer_name=issuer_name)
+
+    def generate_mfa_backup_codes(self, count: int = 10) -> list[str]:
+        """Generate one-time backup codes and store only their hashes."""
+        generated: list[str] = []
+        stored_hashes: list[str] = []
+        for _ in range(max(1, int(count))):
+            code = secrets.token_hex(4).upper()
+            generated.append(code)
+            stored_hashes.append(hashlib.sha256(code.encode('utf-8')).hexdigest())
+        self.mfa_backup_codes_json = stored_hashes
+        return generated
+
+    def verify_mfa_code(self, code: str, *, valid_window: int = 1) -> bool:
+        """Verify TOTP code or one-time backup code.
+
+        Backup codes are consumed after successful verification.
+        """
+        raw = (code or '').strip().replace(' ', '')
+        if not raw:
+            return False
+
+        if self.mfa_totp_secret:
+            try:
+                if pyotp.TOTP(self.mfa_totp_secret).verify(raw, valid_window=valid_window):
+                    return True
+            except Exception:
+                pass
+
+        hashed = hashlib.sha256(raw.upper().encode('utf-8')).hexdigest()
+        current_hashes = list(self.mfa_backup_codes_json or [])
+        if hashed in current_hashes:
+            current_hashes.remove(hashed)
+            self.mfa_backup_codes_json = current_hashes
+            return True
+
+        return False
 
 
 class Organization(db.Model):
