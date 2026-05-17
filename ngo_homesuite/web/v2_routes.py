@@ -1012,6 +1012,53 @@ def campaign_send_emails_route(campaign_id: int):
     return jsonify(payload), 200
 
 
+@v2_bp.route("/campaigns/<int:campaign_id>/emails/preview", methods=["POST"])
+@login_required
+@roles_required("admin", "staff")
+def campaign_preview_emails_route(campaign_id: int):
+    """Preview recipient count, personalization, and quality hints before sending."""
+    from ngo_homesuite.services.campaign_email_service import preview_campaign_email
+
+    data = _json_or_400(["subject", "body"])
+    try:
+        payload = preview_campaign_email(
+            _org_id(),
+            campaign_id,
+            subject=str(data.get("subject") or ""),
+            body=str(data.get("body") or ""),
+            audience=data.get("audience") if isinstance(data.get("audience"), dict) else {},
+        )
+    except LookupError:
+        return jsonify({"error": "Campaign not found"}), 404
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(payload), 200
+
+
+@v2_bp.route("/campaigns/<int:campaign_id>/emails/ai-draft", methods=["POST"])
+@login_required
+@roles_required("admin", "staff")
+def campaign_ai_draft_route(campaign_id: int):
+    """Generate an AI-assisted campaign email draft with fallback when AI is unavailable."""
+    from ngo_homesuite.services.campaign_email_service import generate_ai_campaign_email_draft
+
+    data = request.get_json(silent=True) or {}
+    try:
+        payload = generate_ai_campaign_email_draft(
+            _org_id(),
+            campaign_id,
+            objective=str(data.get("objective") or ""),
+            tone=str(data.get("tone") or ""),
+            audience=data.get("audience") if isinstance(data.get("audience"), dict) else {},
+            ask_amount=float(data.get("ask_amount")) if data.get("ask_amount") is not None else None,
+        )
+    except LookupError:
+        return jsonify({"error": "Campaign not found"}), 404
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(payload), 200
+
+
 @v2_bp.route("/campaigns/<int:campaign_id>/emails/analytics", methods=["GET"])
 @login_required
 @roles_required("admin", "staff")

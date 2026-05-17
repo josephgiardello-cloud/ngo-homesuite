@@ -399,3 +399,124 @@ def test_viewer_cannot_send_campaign_email(client):
         json={"subject": "Nope", "body": "Not allowed"},
     )
     assert rv.status_code in (403, 302)
+
+
+def test_campaign_email_preview_returns_quality_hints_and_samples(client, app):
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "Preview Campaign"})
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+    org_id = _admin_org_id(app)
+
+    with app.app_context():
+        d1 = Donor(organization_id=org_id, name="Preview Donor", email="preview@example.org", donor_type="individual")
+        db.session.add(d1)
+        db.session.flush()
+        preview_donor_id = int(d1.id)
+        db.session.commit()
+
+    rv = client.post(
+        f"/api/v2/campaigns/{campaign_id}/emails/preview",
+        json={
+            "subject": "Hi",
+            "body": "Support our campaign.",
+            "audience": {"donor_ids": [preview_donor_id]},
+        },
+    )
+    assert rv.status_code == 200
+    payload = rv.get_json() or {}
+    assert payload.get("total_recipients", 0) >= 1
+    assert isinstance(payload.get("quality_hints"), list)
+    assert isinstance(payload.get("sample_preview"), list)
+    assert payload["sample_preview"][0]["recipient_email"] == "preview@example.org"
+
+
+def test_campaign_ai_draft_uses_fallback_when_ai_unavailable(client, app):
+    _login_staff(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "AI Draft Campaign"})
+    # staff cannot create; create as admin then log back as staff
+    if create_rv.status_code != 201:
+        client.post("/auth/logout", follow_redirects=False)
+        _login_admin(client)
+        create_rv = client.post("/api/v2/campaigns", json={"name": "AI Draft Campaign"})
+        assert create_rv.status_code == 201
+        client.post("/auth/logout", follow_redirects=False)
+        _login_staff(client)
+    campaign_id = int(create_rv.get_json()["id"])
+
+    with mock.patch("ngo_homesuite.ai.apex_client.ApexClient.query", side_effect=Exception("offline")):
+        rv = client.post(
+            f"/api/v2/campaigns/{campaign_id}/emails/ai-draft",
+            json={"objective": "re-engage lapsed donors", "tone": "optimistic"},
+        )
+    assert rv.status_code == 200
+    payload = rv.get_json() or {}
+    assert payload.get("generated_by") in ("fallback", "ai")
+    assert "subject" in payload and payload["subject"]
+    assert "body" in payload and payload["body"]
+
+
+def test_campaign_send_email_respects_min_total_and_top_n_filters(client, app):
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "Filtered Audience Campaign"})
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+    org_id = _admin_org_id(app)
+
+    with app.app_context():
+        d1 = Donor(organization_id=org_id, name="High Donor", email="high@example.org", donor_type="individual")
+        d2 = Donor(organization_id=org_id, name="Low Donor", email="low@example.org", donor_type="individual")
+        d3 = Donor(organization_id=org_id, name="Mid Donor", email="mid@example.org", donor_type="individual")
+        db.session.add_all([d1, d2, d3])
+        db.session.flush()
+
+        db.session.add_all(
+            [
+                Donation(
+                    organization_id=org_id,
+                    campaign_id=campaign_id,
+                    donor_id=d1.id,
+                    donor_name=d1.name,
+                    donor_email=d1.email,
+                    amount=500.0,
+                    currency="USD",
+                    status="received",
+                ),
+                Donation(
+                    organization_id=org_id,
+                    campaign_id=campaign_id,
+                    donor_id=d2.id,
+                    donor_name=d2.name,
+                    donor_email=d2.email,
+                    amount=20.0,
+                    currency="USD",
+                    status="received",
+                ),
+                Donation(
+                    organization_id=org_id,
+                    campaign_id=campaign_id,
+                    donor_id=d3.id,
+                    donor_name=d3.name,
+                    donor_email=d3.email,
+                    amount=120.0,
+                    currency="USD",
+                    status="received",
+                ),
+            ]
+        )
+        db.session.commit()
+
+    with mock.patch("ngo_homesuite.services.campaign_email_service.send_email", return_value=True) as send_mock:
+        rv = client.post(
+            f"/api/v2/campaigns/{campaign_id}/emails/send",
+            json={
+                "subject": "Filtered blast",
+                "body": "Hi {name}, support {campaign_name}.",
+                "audience": {"min_total_given": 100.0, "top_n_by_total_given": 1},
+            },
+        )
+
+    assert rv.status_code == 200
+    payload = rv.get_json() or {}
+    assert payload.get("total_recipients") == 1
+    assert send_mock.call_count == 1
