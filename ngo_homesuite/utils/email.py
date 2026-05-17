@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import smtplib
+from datetime import datetime, timezone
 from email.message import EmailMessage
 from typing import Any
 
@@ -27,6 +28,91 @@ def _render_message(template: str | None, context: dict[str, Any] | None) -> str
         except Exception:
             pass
     return str(context.get("text") or "Notification from NGO HomeSuite")
+
+
+def email_connectivity_smoke(*, probe: bool = False) -> dict[str, Any]:
+    """Return non-destructive readiness/probe results for configured email providers.
+
+    When ``probe`` is false, this reports configuration readiness only.
+    When ``probe`` is true, it additionally performs provider connectivity checks
+    without sending an actual message.
+    """
+    sendgrid_key = os.getenv("SENDGRID_API_KEY")
+    smtp_host = _setting("MAIL_SERVER")
+    smtp_port = int(_setting("MAIL_PORT", "25") or "25")
+    smtp_user = _setting("MAIL_USERNAME")
+    smtp_password = _setting("MAIL_PASSWORD")
+    use_tls = (_setting("MAIL_USE_TLS", "false") or "false").lower() in {"1", "true", "yes"}
+    default_sender = _setting("DEFAULT_MAIL_SENDER", "noreply@ngohomesuite.local")
+
+    sendgrid_configured = bool(sendgrid_key)
+    smtp_configured = bool(smtp_host)
+
+    result: dict[str, Any] = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "probe": bool(probe),
+        "default_mail_sender": default_sender,
+        "providers": {
+            "sendgrid": {
+                "configured": sendgrid_configured,
+                "probed": False,
+                "ok": None,
+                "error": None,
+            },
+            "smtp": {
+                "configured": smtp_configured,
+                "host": smtp_host,
+                "port": smtp_port,
+                "use_tls": use_tls,
+                "probed": False,
+                "ok": None,
+                "error": None,
+            },
+        },
+        "ready": bool(sendgrid_configured or smtp_configured),
+    }
+
+    if not probe:
+        return result
+
+    if sendgrid_configured:
+        provider = result["providers"]["sendgrid"]
+        provider["probed"] = True
+        try:
+            resp = requests.get(
+                "https://api.sendgrid.com/v3/user/account",
+                headers={"Authorization": f"Bearer {sendgrid_key}"},
+                timeout=10,
+            )
+            if 200 <= resp.status_code < 300:
+                provider["ok"] = True
+            else:
+                provider["ok"] = False
+                provider["error"] = f"sendgrid_http_{resp.status_code}"
+        except Exception as exc:  # noqa: BLE001
+            provider["ok"] = False
+            provider["error"] = str(exc)
+
+    if smtp_configured:
+        provider = result["providers"]["smtp"]
+        provider["probed"] = True
+        try:
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
+                server.ehlo()
+                if use_tls:
+                    server.starttls()
+                    server.ehlo()
+                if smtp_user and smtp_password:
+                    server.login(smtp_user, smtp_password)
+            provider["ok"] = True
+        except Exception as exc:  # noqa: BLE001
+            provider["ok"] = False
+            provider["error"] = str(exc)
+
+    sendgrid_ok = result["providers"]["sendgrid"]["ok"] is True
+    smtp_ok = result["providers"]["smtp"]["ok"] is True
+    result["ready"] = bool(sendgrid_ok or smtp_ok)
+    return result
 
 
 def send_email(*, to: str, subject: str, template: str | None = None, context: dict[str, Any] | None = None) -> bool:

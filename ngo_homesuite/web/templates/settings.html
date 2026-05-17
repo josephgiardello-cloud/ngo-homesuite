@@ -149,6 +149,25 @@
         </div>
     </div>
 
+    {% if current_user.is_authenticated and current_user.role in ['admin', 'staff'] %}
+    <div class="card" style="margin-top:1.25rem; padding:1.25rem;">
+        <h2 style="margin:0 0 0.35rem 0;">Email Integration Smoke Check</h2>
+        <p class="text-muted" style="margin:0 0 0.85rem 0;">
+            Validate outbound email readiness without sending any message. Use quick mode for config checks and deep mode for live connectivity probes.
+        </p>
+
+        <div class="actions-row" style="margin-top:0.5rem;">
+            <button id="emailSmokeConfigBtn" class="btn btn-secondary" type="button">Run Config Check</button>
+            <button id="emailSmokeProbeBtn" class="btn btn-primary" type="button">Run Connectivity Probe</button>
+        </div>
+
+        <div id="emailSmokeError" class="flash flash-error" style="display:none;margin-top:0.85rem;"></div>
+        <div id="emailSmokeSuccess" class="flash flash-success" style="display:none;margin-top:0.85rem;"></div>
+
+        <pre id="emailSmokeOutput" style="display:none;margin-top:0.85rem;padding:0.8rem;border:1px solid var(--border);border-radius:8px;background:var(--surface-soft);font-size:0.85rem;white-space:pre-wrap;"></pre>
+    </div>
+    {% endif %}
+
     <script>
     (function() {
         const state = { schema: { donor: [], campaign: [] } };
@@ -295,6 +314,57 @@
         els.reloadBtn.addEventListener('click', () => { loadSchema().catch((err) => setError(err.message)); });
 
         loadSchema().catch((err) => setError(err.message));
+    })();
+
+    (function() {
+        const configBtn = document.getElementById('emailSmokeConfigBtn');
+        const probeBtn = document.getElementById('emailSmokeProbeBtn');
+        const errorEl = document.getElementById('emailSmokeError');
+        const successEl = document.getElementById('emailSmokeSuccess');
+        const outputEl = document.getElementById('emailSmokeOutput');
+
+        if (!configBtn || !probeBtn || !errorEl || !successEl || !outputEl) {
+            return;
+        }
+
+        function setError(message) {
+            errorEl.style.display = message ? 'block' : 'none';
+            errorEl.textContent = message || '';
+        }
+
+        function setSuccess(message) {
+            successEl.style.display = message ? 'block' : 'none';
+            successEl.textContent = message || '';
+        }
+
+        async function runSmoke(probe) {
+            setError('');
+            setSuccess('');
+            outputEl.style.display = 'none';
+            outputEl.textContent = '';
+
+            const response = await fetch('/integrations/email/smoke', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ probe: !!probe }),
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(String(payload.error || 'Email smoke check failed'));
+            }
+
+            const mode = probe ? 'connectivity probe' : 'config check';
+            setSuccess(`Email smoke ${mode} complete. Ready=${Boolean(payload.ready) ? 'yes' : 'no'}.`);
+            outputEl.style.display = 'block';
+            outputEl.textContent = JSON.stringify(payload, null, 2);
+        }
+
+        configBtn.addEventListener('click', () => {
+            runSmoke(false).catch((err) => setError(err.message));
+        });
+        probeBtn.addEventListener('click', () => {
+            runSmoke(true).catch((err) => setError(err.message));
+        });
     })();
     </script>
 

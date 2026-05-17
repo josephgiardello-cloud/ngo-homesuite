@@ -703,3 +703,5 @@ def test_settings_page_renders_custom_fields_schema_admin_ui(client):
     body = rv.get_data(as_text=True)
     assert "Custom Fields Schema" in body
     assert "/admin/custom-fields/schema" in body
+    assert "Email Integration Smoke Check" in body
+    assert "/integrations/email/smoke" in body

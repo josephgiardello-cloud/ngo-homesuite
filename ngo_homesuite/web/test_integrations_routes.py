@@ -5,6 +5,7 @@ import hmac
 import json
 import time
 from datetime import datetime, timedelta, timezone
+from unittest import mock
 
 import pytest
 
@@ -202,3 +203,49 @@ def test_calendar_sync_and_ops_routes(client, app):
 def test_ops_routes_require_authentication(client):
     rv = client.get("/integrations/ops/status")
     assert rv.status_code in {302, 401, 403}
+
+
+def test_email_smoke_requires_authentication(client):
+    rv = client.post("/integrations/email/smoke", json={"probe": False})
+    assert rv.status_code in {302, 401, 403}
+
+
+def test_email_smoke_returns_readiness(client, app):
+    _ensure_user(app, "email_smoke_staff", "email_smoke_staff@test.local", "staff", "email_smoke_staff_pass_123")
+    _login(client, "email_smoke_staff", "email_smoke_staff_pass_123")
+
+    with mock.patch("ngo_homesuite.utils.email.email_connectivity_smoke", return_value={
+        "probe": False,
+        "ready": True,
+        "providers": {
+            "sendgrid": {"configured": False, "probed": False, "ok": None, "error": None},
+            "smtp": {"configured": True, "probed": False, "ok": None, "error": None, "host": "smtp.example.org", "port": 587, "use_tls": True},
+        },
+    }):
+        rv = client.post("/integrations/email/smoke", json={"probe": False})
+
+    assert rv.status_code == 200
+    payload = rv.get_json()
+    assert payload["ready"] is True
+    assert payload["providers"]["smtp"]["configured"] is True
+
+
+def test_email_smoke_probe_mode_passes_flag(client, app):
+    _ensure_user(app, "email_smoke_admin", "email_smoke_admin@test.local", "admin", "email_smoke_admin_pass_123")
+    _login(client, "email_smoke_admin", "email_smoke_admin_pass_123")
+
+    with mock.patch("ngo_homesuite.utils.email.email_connectivity_smoke", return_value={
+        "probe": True,
+        "ready": False,
+        "providers": {
+            "sendgrid": {"configured": True, "probed": True, "ok": False, "error": "sendgrid_http_401"},
+            "smtp": {"configured": False, "probed": False, "ok": None, "error": None, "host": None, "port": 25, "use_tls": False},
+        },
+    }) as smoke_mock:
+        rv = client.post("/integrations/email/smoke", json={"probe": True})
+
+    assert rv.status_code == 200
+    smoke_mock.assert_called_once_with(probe=True)
+    payload = rv.get_json()
+    assert payload["probe"] is True
+    assert payload["ready"] is False

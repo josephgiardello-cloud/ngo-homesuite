@@ -149,6 +149,32 @@ def stripe_webhook_route():
             record_integration_event(current_app, kind="stripe_webhook", status="error", details={"event_id": eid, "error": str(exc)})
             return jsonify({"error": str(exc)}), 422
 
+    elif event_type == "charge.refunded":
+        from ngo_homesuite.services.payment_service import PaymentService, WebhookProcessingError
+        charge_obj = ((event.get("data") or {}).get("object") or {})
+        try:
+            donation = PaymentService().handle_charge_refunded(charge_obj)
+            details = {"event_id": eid, "event_type": event_type, "donation_id": donation.id if donation else None}
+            record_integration_event(current_app, kind="stripe_webhook", status="processed", details=details)
+            return jsonify({"ok": True, "status": "processed", "event_id": eid}), 200
+        except WebhookProcessingError as exc:
+            current_app.logger.warning("stripe charge.refunded processing error: %s", exc)
+            record_integration_event(current_app, kind="stripe_webhook", status="error", details={"event_id": eid, "error": str(exc)})
+            return jsonify({"error": str(exc)}), 422
+
+    elif event_type == "payment_intent.payment_failed":
+        from ngo_homesuite.services.payment_service import PaymentService, WebhookProcessingError
+        pi_obj = ((event.get("data") or {}).get("object") or {})
+        try:
+            donation = PaymentService().handle_payment_failed(pi_obj)
+            details = {"event_id": eid, "event_type": event_type, "donation_id": donation.id if donation else None}
+            record_integration_event(current_app, kind="stripe_webhook", status="processed", details=details)
+            return jsonify({"ok": True, "status": "processed", "event_id": eid}), 200
+        except WebhookProcessingError as exc:
+            current_app.logger.warning("stripe payment_intent.payment_failed processing error: %s", exc)
+            record_integration_event(current_app, kind="stripe_webhook", status="error", details={"event_id": eid, "error": str(exc)})
+            return jsonify({"error": str(exc)}), 422
+
     record_integration_event(current_app, kind="stripe_webhook", status="ignored", details={"event_id": eid, "event_type": event_type})
     return jsonify({"ok": True, "status": "ignored", "event_id": eid}), 200
 
@@ -240,6 +266,34 @@ def integrations_job_detail_route(job_id: str):
     if job is None:
         return jsonify({"error": "Job not found."}), 404
     return jsonify(job)
+
+
+@integrations_bp.post("/email/smoke")
+@login_required
+@roles_required("admin", "staff")
+def email_smoke_route():
+    """Run a non-destructive email integration readiness/probe check.
+
+    Body: {"probe": true|false}
+    """
+    from ngo_homesuite.utils.email import email_connectivity_smoke
+
+    data = request.get_json(silent=True) or {}
+    probe = bool(data.get("probe", False))
+    result = email_connectivity_smoke(probe=probe)
+    status = "ok" if bool(result.get("ready")) else "not_ready"
+    record_integration_event(
+        current_app,
+        kind="email_smoke",
+        status=status,
+        details={
+            "probe": probe,
+            "ready": bool(result.get("ready")),
+            "sendgrid_configured": bool((result.get("providers") or {}).get("sendgrid", {}).get("configured")),
+            "smtp_configured": bool((result.get("providers") or {}).get("smtp", {}).get("configured")),
+        },
+    )
+    return jsonify(result)
 
 
 # ---------------------------------------------------------------------------
