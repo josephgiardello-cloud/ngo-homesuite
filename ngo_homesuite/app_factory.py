@@ -135,6 +135,7 @@ def create_app(config=None):
     from ngo_homesuite.web.reporting_routes import reporting_bp
     from ngo_homesuite.web.admin_routes import admin_bp
     from ngo_homesuite.web.admin_grants_routes import grant_admin_bp
+    from ngo_homesuite.web.budget_transactions_routes import budget_transactions_bp
     from ngo_homesuite.web.volunteer_routes import volunteer_bp
     from ngo_homesuite.api.v1 import api_v1_bp
     from ngo_homesuite.web.v2_routes import v2_bp
@@ -162,6 +163,7 @@ def create_app(config=None):
     app.register_blueprint(reporting_bp)
     app.register_blueprint(admin_bp)
     app.register_blueprint(grant_admin_bp)
+    app.register_blueprint(budget_transactions_bp)
     app.register_blueprint(volunteer_bp)
     app.register_blueprint(api_v1_bp)
     app.register_blueprint(v2_bp)
