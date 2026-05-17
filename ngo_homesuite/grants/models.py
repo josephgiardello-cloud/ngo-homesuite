@@ -336,6 +336,56 @@ class GrantApprovalChainConfig(db.Model):
     def __repr__(self):
         return f"<GrantApprovalChainConfig org={self.organization_id} action={self.action_type} priority={self.priority}>"
 
+
+class GrantScore(db.Model):
+    """TONY grant scoring results.
+    
+    Stores risk scores, recommendations, and financial metrics from TONY scoring engine.
+    """
+
+    __tablename__ = "grant_scores"
+
+    id = db.Column(db.Integer, primary_key=True)
+    grant_id = db.Column(db.Integer, db.ForeignKey("grants.id"), nullable=False, index=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False, index=True)
+
+    # Scoring metadata
+    preset = db.Column(db.String(50), default="balanced", nullable=False)  # conservative, balanced, lenient
+    scored_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False, index=True)
+
+    # Risk scores (0-1)
+    base_risk_probability = db.Column(db.Float, nullable=False)
+    final_risk_probability = db.Column(db.Float, nullable=False, index=True)
+
+    # Descriptors
+    risk_descriptor = db.Column(db.String(100), nullable=False)  # Low Risk, Moderate Risk, High Risk
+    grant_recommendation_label = db.Column(db.String(50), nullable=False)  # Standard, Conditional, Elevated Risk
+    grant_recommendation_text = db.Column(db.Text, nullable=False)
+
+    # Altman Z-score
+    altman_zscore = db.Column(db.Float, nullable=True)
+    altman_zone = db.Column(db.String(20), nullable=True)  # safe, grey, distress
+
+    # Organizational health (0-1)
+    organizational_health_score = db.Column(db.Float, nullable=False)
+
+    # Core features (stored as JSON for full traceability)
+    features = db.Column(JSON, nullable=False)  # continuity_months, operating_margin, etc.
+    financial_snapshot = db.Column(JSON, nullable=False)  # revenue, expenses, assets, etc.
+    risk_factors = db.Column(JSON, nullable=False)  # list of identified risk factors
+
+    # Timestamps
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
+
+    # Relationships
+    grant = db.relationship("Grant", backref="scores")
+    organization = db.relationship("Organization", backref="grant_scores")
+
+    def __repr__(self):
+        return f"<GrantScore grant={self.grant_id} risk={self.final_risk_probability:.2f} [{self.grant_recommendation_label}]>"
+
+
 __all__ = [
     "Grant",
     "GrantDisbursement",
@@ -348,4 +398,5 @@ __all__ = [
     "GrantApprovalRequest",
     "GrantApprovalDecision",
     "GrantApprovalChainConfig",
+    "GrantScore",
 ]

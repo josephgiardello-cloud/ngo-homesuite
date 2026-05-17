@@ -1,0 +1,288 @@
+{
+  "weights": {
+    "continuity_months": 0.35,
+    "operating_margin": 0.2,
+    "program_expense_ratio": 0.2,
+    "liabilities_to_assets": 0.15,
+    "revenue_volatility": 0.1
+  },
+  "thresholds": {
+    "continuity_low": 6.0,
+    "continuity_moderate": 3.0,
+    "risk_probability_high": 0.66,
+    "risk_probability_moderate": 0.4
+  },
+  "entity_thresholds": {
+    "hospital": {
+      "continuity_low": 4.0,
+      "continuity_moderate": 2.0,
+      "risk_probability_high": 0.7,
+      "risk_probability_moderate": 0.45
+    },
+    "foundation": {
+      "continuity_low": 10.0,
+      "continuity_moderate": 6.0,
+      "risk_probability_high": 0.62,
+      "risk_probability_moderate": 0.35
+    },
+    "nonprofit_small": {
+      "continuity_low": 8.0,
+      "continuity_moderate": 4.0,
+      "risk_probability_high": 0.64,
+      "risk_probability_moderate": 0.38
+    }
+  },
+  "labeling": {
+    "risk_points_cutoff": 3,
+    "severe_margin": -0.1,
+    "weak_program_ratio": 0.55,
+    "high_revenue_volatility": 0.35
+  },
+  "normalization": {
+    "continuity_months": {
+      "center": 6.0,
+      "scale": 3.0,
+      "low": -24.0,
+      "high": 120.0,
+      "positive": true
+    },
+    "operating_margin": {
+      "center": 0.03,
+      "scale": 0.08,
+      "low": -0.5,
+      "high": 0.5,
+      "positive": true
+    },
+    "program_expense_ratio": {
+      "center": 0.7,
+      "scale": 0.12,
+      "low": 0.0,
+      "high": 1.0,
+      "positive": true
+    },
+    "liabilities_to_assets": {
+      "center": 0.6,
+      "scale": 0.2,
+      "low": 0.0,
+      "high": 2.0,
+      "positive": false
+    },
+    "revenue_volatility": {
+      "center": 0.2,
+      "scale": 0.12,
+      "low": 0.0,
+      "high": 2.0,
+      "positive": false
+    }
+  },
+  "sources": {
+    "propublica": {
+      "base_url": "https://projects.propublica.org/nonprofits/api/v2"
+    }
+  },
+  "model": {
+    "random_state": 42,
+    "max_iter": 1000,
+    "class_weight": "balanced",
+    "cache_models": true,
+    "pretrained_model_path": "",
+    "calibration_curve_file": "",
+    "save_trained_if_missing": false,
+    "reference_profiles_file": "",
+    "reference_profiles": [
+      {
+        "continuity_months": 1.5,
+        "operating_margin": -0.12,
+        "program_expense_ratio": 0.45,
+        "liabilities_to_assets": 1.05,
+        "revenue_volatility": 0.4,
+        "risk_label": 1
+      },
+      {
+        "continuity_months": 2.5,
+        "operating_margin": -0.03,
+        "program_expense_ratio": 0.58,
+        "liabilities_to_assets": 0.88,
+        "revenue_volatility": 0.3,
+        "risk_label": 1
+      },
+      {
+        "continuity_months": 5.0,
+        "operating_margin": 0.01,
+        "program_expense_ratio": 0.7,
+        "liabilities_to_assets": 0.62,
+        "revenue_volatility": 0.18,
+        "risk_label": 0
+      },
+      {
+        "continuity_months": 9.0,
+        "operating_margin": 0.08,
+        "program_expense_ratio": 0.82,
+        "liabilities_to_assets": 0.35,
+        "revenue_volatility": 0.08,
+        "risk_label": 0
+      },
+      {
+        "continuity_months": 11.0,
+        "operating_margin": 0.12,
+        "program_expense_ratio": 0.86,
+        "liabilities_to_assets": 0.28,
+        "revenue_volatility": 0.05,
+        "risk_label": 0
+      },
+      {
+        "continuity_months": 0.8,
+        "operating_margin": -0.2,
+        "program_expense_ratio": 0.4,
+        "liabilities_to_assets": 1.2,
+        "revenue_volatility": 0.6,
+        "risk_label": 1
+      }
+    ]
+  },
+  "scoring_preset": "balanced",
+  "scoring_presets": {
+    "conservative": {
+      "benchmark_gap": 0.28,
+      "confidence_penalty": 0.24,
+      "donor_penalty": 0.18,
+      "cashflow_penalty": 0.16,
+      "compliance_penalty": 0.10,
+      "irs_penalty": 0.18,
+      "altman_penalty": 0.25,
+      "trend_relief": 0.12,
+      "charity_relief": 0.10
+    },
+    "balanced": {
+      "benchmark_gap": 0.25,
+      "confidence_penalty": 0.20,
+      "donor_penalty": 0.15,
+      "cashflow_penalty": 0.15,
+      "compliance_penalty": 0.10,
+      "irs_penalty": 0.15,
+      "altman_penalty": 0.20,
+      "trend_relief": 0.20,
+      "charity_relief": 0.15
+    },
+    "lenient": {
+      "benchmark_gap": 0.20,
+      "confidence_penalty": 0.16,
+      "donor_penalty": 0.12,
+      "cashflow_penalty": 0.12,
+      "compliance_penalty": 0.08,
+      "irs_penalty": 0.12,
+      "altman_penalty": 0.12,
+      "trend_relief": 0.24,
+      "charity_relief": 0.18
+    }
+  },
+  "altman_z": {
+    "safe_threshold": 2.6,
+    "distress_threshold": 1.1
+  },
+  "peer_benchmark": {
+    "mode": "percentile_only",
+    "zscore_clip": 3.0,
+    "percentile_weight": 0.7,
+    "zscore_weight": 0.3,
+    "keys": ["size_band", "ntee_code", "state"],
+    "min_group_rows": 20
+  },
+  "time_weighting": {
+    "enabled": true,
+    "half_life_years": 2.5
+  },
+  "uncertainty": {
+    "enabled": true,
+    "simulations": 250,
+    "feature_noise_scale": 0.12
+  },
+  "scenario_testing": {
+    "scenarios": [
+      {
+        "name": "moderate_stress",
+        "revenue_shock_pct": 0.1,
+        "expense_shock_pct": 0.06,
+        "reserve_haircut_pct": 0.1,
+        "donor_loss_pct": 0.08
+      },
+      {
+        "name": "severe_stress",
+        "revenue_shock_pct": 0.2,
+        "expense_shock_pct": 0.12,
+        "reserve_haircut_pct": 0.2,
+        "donor_loss_pct": 0.15
+      }
+    ]
+  },
+  "final_index": {
+    "ml_weight": 0.7,
+    "health_weight": 0.3
+  },
+  "entity_profiles": {
+    "hospital": {
+      "weights": {
+        "continuity_months": 0.28,
+        "operating_margin": 0.24,
+        "program_expense_ratio": 0.12,
+        "liabilities_to_assets": 0.22,
+        "revenue_volatility": 0.14
+      },
+      "normalization": {
+        "continuity_months": {"center": 4.5, "scale": 2.2},
+        "liabilities_to_assets": {"center": 0.75, "scale": 0.24}
+      },
+      "final_index": {
+        "ml_weight": 0.75,
+        "health_weight": 0.25
+      }
+    },
+    "foundation": {
+      "weights": {
+        "continuity_months": 0.42,
+        "operating_margin": 0.18,
+        "program_expense_ratio": 0.16,
+        "liabilities_to_assets": 0.12,
+        "revenue_volatility": 0.12
+      },
+      "normalization": {
+        "continuity_months": {"center": 10.0, "scale": 4.0},
+        "revenue_volatility": {"center": 0.16, "scale": 0.1}
+      },
+      "final_index": {
+        "ml_weight": 0.66,
+        "health_weight": 0.34
+      }
+    },
+    "nonprofit_small": {
+      "weights": {
+        "continuity_months": 0.34,
+        "operating_margin": 0.23,
+        "program_expense_ratio": 0.16,
+        "liabilities_to_assets": 0.14,
+        "revenue_volatility": 0.13
+      },
+      "normalization": {
+        "continuity_months": {"center": 7.5, "scale": 3.0},
+        "operating_margin": {"center": 0.025, "scale": 0.09}
+      },
+      "final_index": {
+        "ml_weight": 0.68,
+        "health_weight": 0.32
+      }
+    }
+  },
+  "column_aliases": {
+    "year": ["year", "tax_year", "fiscal_year", "tax_prd_yr"],
+    "revenue": ["revenue", "total_revenue", "totrevenue", "amount"],
+    "expenses": ["expenses", "total_expenses", "totfuncexpns"],
+    "assets": ["assets", "total_assets", "totassetsend"],
+    "liabilities": ["liabilities", "total_liabilities", "totliabend"],
+    "net_assets": ["net_assets", "unrestricted_net_assets", "totnetassetsend"],
+    "program_expenses": ["program_expenses", "program_service_expenses", "program_services"],
+    "executive_compensation": ["executive_compensation", "officers_compensation", "compnsatncurrofcr", "executive_salary", "leadership_compensation"],
+    "staff_salaries": ["staff_salaries", "salaries_and_wages", "salary_wages", "employee_salaries", "salariesothercomp"],
+    "admin_salaries": ["admin_salaries", "management_and_general", "mgmtandgenlexpns", "administrative_salaries"],
+    "total_salaries": ["total_salaries", "salary_wages_total", "totalsalaries", "compensation_total"]
+  }
+}

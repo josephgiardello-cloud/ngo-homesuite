@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col-md-8">
+            <h1>📊 Generate Reports</h1>
+            <p class="text-muted">Create comprehensive risk reports in HTML, PDF, or JSON formats</p>
+        </div>
+        <div class="col-md-4">
+            <a href="{{ url_for('tony.tony_home') }}" class="btn btn-secondary">← Back to TONY</a>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-lg-8">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body p-4">
+                    <h5 class="card-title mb-4">Report Generator</h5>
+                    
+                    <form id="reportForm">
+                        <div class="mb-3">
+                            <label for="format" class="form-label">Output Format</label>
+                            <select class="form-select" id="format" name="format" required>
+                                <option value="html" selected>Interactive HTML Report</option>
+                                <option value="pdf">PDF Document</option>
+                                <option value="json">JSON Data Export</option>
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Report Sections</label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="includeVisualizations" checked>
+                                <label class="form-check-label" for="includeVisualizations">Include Visualizations</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="includeSummary" checked>
+                                <label class="form-check-label" for="includeSummary">Executive Summary</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="includeRecommendations" checked>
+                                <label class="form-check-label" for="includeRecommendations">Risk Recommendations</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="includeDetails" checked>
+                                <label class="form-check-label" for="includeDetails">Detailed Grant Analysis</label>
+                            </div>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary btn-lg">
+                            <span class="spinner-border spinner-border-sm me-2" id="spinner" style="display:none;"></span>
+                            Generate Report
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-4">
+            <div class="card border-0 shadow-sm bg-light">
+                <div class="card-body">
+                    <h6 class="card-title">Report Contents</h6>
+                    <ul class="small mb-0">
+                        <li>Portfolio risk overview</li>
+                        <li>Individual grant scores</li>
+                        <li>Financial health analysis</li>
+                        <li>Compliance assessment</li>
+                        <li>Risk visualizations</li>
+                        <li>Actionable recommendations</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.getElementById('reportForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const spinner = document.getElementById('spinner');
+    spinner.style.display = 'inline-block';
+
+    try {
+        const format = document.getElementById('format').value;
+        const response = await fetch('{{ url_for("tony.generate_report") }}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ format: format })
+        });
+        
+        if (response.ok) {
+            if (format === 'pdf') {
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `tony_report_${new Date().toISOString().split('T')[0]}.pdf`;
+                a.click();
+            } else if (format === 'json') {
+                const data = await response.json();
+                const element = document.createElement('a');
+                element.setAttribute('href', 'data:application/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(data, null, 2)));
+                element.setAttribute('download', `tony_report_${new Date().toISOString().split('T')[0]}.json`);
+                element.style.display = 'none';
+                document.body.appendChild(element);
+                element.click();
+                document.body.removeChild(element);
+            } else {
+                const html = await response.text();
+                const newWindow = window.open('', '_blank');
+                newWindow.document.write(html);
+                newWindow.document.close();
+            }
+        } else {
+            alert('Error generating report. Please try again.');
+        }
+    } catch (error) {
+        alert('Error: ' + error.message);
+    } finally {
+        spinner.style.display = 'none';
+    }
+});
+</script>
+{% endblock %}

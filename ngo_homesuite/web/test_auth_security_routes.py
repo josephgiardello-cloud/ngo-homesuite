@@ -112,7 +112,9 @@ def test_security_headers_present_on_web_response(client):
     assert rv.headers.get("X-Permitted-Cross-Domain-Policies") == "none"
     assert rv.headers.get("Cross-Origin-Opener-Policy") == "same-origin"
     assert rv.headers.get("Cross-Origin-Resource-Policy") == "same-origin"
-    assert "Content-Security-Policy" in rv.headers
+    csp = rv.headers.get("Content-Security-Policy", "")
+    assert "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com" in csp
+    assert "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com" in csp
 
 
 # ---------------------------------------------------------------------------

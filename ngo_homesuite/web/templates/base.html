@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
     <!-- marked.js: fast, safe Markdown renderer for AI assistant responses -->
     <script src="https://cdn.jsdelivr.net/npm/marked@13/marked.min.js"></script>
-    <script src="https://unpkg.com/htmx.org@1.9.12" integrity="sha384-3xX4rRr8A9fP6VW4Zx9j4m3KnnNAQwA8V3hM4sD5CM5f8PchPpV4fcbQ4L2QfY2E" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.12" integrity="sha384-ujb1lZYygJmzgSwoxRggbCHcjc0rB2XoQrxeTUQyRjrOnlCoYta87iKBWq3EsdM2" crossorigin="anonymous"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
     <style>
         :root {
@@ -141,6 +141,10 @@
             display: block;
         }
 
+        .container.container-guest {
+            display: block;
+        }
+
         .sidebar {
             background: var(--surface);
             border: 1px solid var(--border);
@@ -203,6 +207,14 @@
             padding: 1.25rem;
             border-radius: 12px;
             box-shadow: var(--shadow);
+        }
+
+        .content.content-guest {
+            width: 100%;
+            background: transparent;
+            border: none;
+            box-shadow: none;
+            padding: 0;
         }
 
         @media (min-width: 860px) {
@@ -772,7 +784,7 @@
             {% endif %}
         {% endwith %}
         
-        <div class="container">
+        <div class="container {% if not current_user.is_authenticated %}container-guest{% endif %}">
             {% if current_user.is_authenticated %}
             <aside class="sidebar" id="mainSidebar">
                 <ul>
@@ -787,11 +799,20 @@
                     <li><a href="{{ url_for('main.task_board') }}" class="{{ 'active' if active_page == 'task_board' else '' }}">Task Board</a></li>
                     <li><a href="{{ url_for('main.p2p_manage') }}" class="{{ 'active' if active_page == 'p2p' else '' }}">P2P</a></li>
                     <li><a href="{{ url_for('main.reports_page') }}" class="{{ 'active' if active_page == 'reports' else '' }}">Reports</a></li>
+                    {% if current_user.role == 'admin' %}
+                    <li><a href="{{ url_for('main.tony_scoring') }}" class="{{ 'active' if active_page == 'tony_scoring' else '' }}">📊 TONY Scoring</a></li>
+                    {% if tony_full_url %}
+                        <li><a href="{{ tony_full_url }}" class="{{ 'active' if active_page == 'tony' else '' }}">📊 TONY Full Program</a></li>
+                    {% endif %}
+                    <li style="margin-top:0.75rem; border-top:1px solid var(--border); padding-top:0.75rem;">
+                        <a href="{{ url_for('main.org_settings') }}" class="{{ 'active' if active_page == 'settings' else '' }}">⚙ Settings</a>
+                    </li>
+                    {% endif %}
                 </ul>
             </aside>
             {% endif %}
 
-            <section class="content">
+            <section class="content {% if not current_user.is_authenticated %}content-guest{% endif %}">
                 {% block content %}{% endblock %}
             </section>
         </div>

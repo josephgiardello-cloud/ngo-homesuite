@@ -1,0 +1,1044 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TONY Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Manrope:wght@400;500;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <style>
+    :root {
+      --paper: #f4f2eb;
+      --ink: #1f2a37;
+      --ink-muted: #5a6472;
+      --accent: #0f766e;
+      --accent-2: #b45309;
+      --line: #d7d9dd;
+      --card: #ffffff;
+      --good: #047857;
+      --bad: #b91c1c;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Manrope", sans-serif;
+      background:
+        radial-gradient(circle at 0% 0%, rgba(15, 118, 110, 0.15), transparent 35%),
+        radial-gradient(circle at 90% 10%, rgba(180, 83, 9, 0.14), transparent 30%),
+        linear-gradient(180deg, #fbfaf7, var(--paper));
+      color: var(--ink);
+    }
+
+    .shell {
+      max-width: 1360px;
+      margin: 0 auto;
+      padding: 1.2rem 1rem 2.6rem;
+    }
+
+    .masthead {
+      border: 1px solid var(--line);
+      background: linear-gradient(120deg, #ffffff 0%, #f4f7f6 100%);
+      border-radius: 18px;
+      padding: 1rem 1.1rem;
+      margin-bottom: 1rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 1rem;
+    }
+
+    .masthead h1 {
+      margin: 0;
+      font-family: "Fraunces", serif;
+      font-size: 1.9rem;
+      color: #12343b;
+      letter-spacing: -0.01em;
+    }
+
+    .masthead p {
+      margin: 0.35rem 0 0;
+      color: var(--ink-muted);
+      font-size: 0.95rem;
+    }
+
+    .layout {
+      display: grid;
+      gap: 1rem;
+      grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
+      align-items: start;
+    }
+
+    .panel-stack {
+      display: grid;
+      gap: 1rem;
+      position: sticky;
+      top: 0.8rem;
+    }
+
+    .content-stack {
+      display: grid;
+      gap: 1rem;
+    }
+
+    .hero {
+      display: grid;
+      gap: 1rem;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    }
+
+    .card {
+      background: var(--card);
+      border-radius: 16px;
+      padding: 1rem 1rem 1.05rem;
+      border: 1px solid var(--line);
+      box-shadow: 0 8px 26px rgba(15, 23, 42, 0.08);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card::after {
+      content: "";
+      position: absolute;
+      inset: auto -30% -55% auto;
+      width: 190px;
+      height: 190px;
+      background: radial-gradient(circle at center, rgba(18, 116, 154, 0.12), transparent 65%);
+      pointer-events: none;
+    }
+
+    h2 {
+      margin: 0 0 0.3rem;
+      font-family: "Fraunces", serif;
+      font-size: 1.2rem;
+      color: #15344a;
+    }
+
+    .eyebrow {
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #0f766e;
+      font-size: 0.76rem;
+      font-weight: 700;
+      margin: 0;
+    }
+
+    .metric {
+      font-family: "Fraunces", serif;
+      font-size: 2rem;
+      color: var(--accent-2);
+      margin: 0.3rem 0;
+    }
+
+    .metric-small {
+      font-family: "Fraunces", serif;
+      font-size: 1.35rem;
+      color: #0f766e;
+      margin: 0.2rem 0;
+    }
+
+    .charts { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+
+    .chart-frame {
+      min-height: 340px;
+      border-radius: 12px;
+      border: 1px solid #e4e9f0;
+      background: linear-gradient(180deg, #ffffff, #fbfdff);
+      padding: 0.4rem;
+    }
+
+    .chart-target {
+      width: 100%;
+      height: 320px;
+    }
+
+    .control-card form {
+      display: grid;
+      gap: 0.55rem;
+    }
+
+    label {
+      font-size: 0.82rem;
+      color: #334155;
+      font-weight: 600;
+    }
+
+    input, button {
+      border-radius: 10px;
+      border: 1px solid #c4cad2;
+      padding: 0.52rem 0.62rem;
+      font-family: inherit;
+      font-size: 0.9rem;
+    }
+
+    button {
+      cursor: pointer;
+      border: none;
+      background: linear-gradient(135deg, #0f766e, #0e7490);
+      color: #fff;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+    }
+
+    button:hover { filter: brightness(1.05); }
+
+    .banner {
+      border-radius: 12px;
+      padding: 0.75rem 0.95rem;
+      margin-bottom: 1rem;
+      font-size: 0.95rem;
+    }
+    .banner.ok { background: rgba(16, 185, 129, 0.12); color: var(--good); border: 1px solid rgba(16, 185, 129, 0.35); }
+    .banner.warn { background: rgba(245, 158, 11, 0.14); color: #92400e; border: 1px solid rgba(245, 158, 11, 0.42); }
+    .banner.err { background: rgba(220, 38, 38, 0.12); color: var(--bad); border: 1px solid rgba(220, 38, 38, 0.35); }
+    table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    th, td {
+      padding: 0.66rem 0.6rem;
+      border-bottom: 1px solid #edf1f5;
+      text-align: left;
+      font-size: 0.88rem;
+      vertical-align: middle;
+    }
+
+    th {
+      color: #0f172a;
+      font-weight: 800;
+      background: #f3f7fb;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      font-size: 0.75rem;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+
+    tbody tr:nth-child(even) {
+      background: #fbfdff;
+    }
+
+    tbody tr:hover {
+      background: #eef6ff;
+    }
+
+    td.num {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      color: #0f1f35;
+    }
+
+    td.year {
+      font-weight: 700;
+      color: #1e293b;
+    }
+
+    .pill {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 0.18rem 0.5rem;
+      font-size: 0.76rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      margin-top: 0.2rem;
+      border: 1px solid transparent;
+    }
+
+    .pill.good { color: #065f46; background: #d1fae5; border-color: #a7f3d0; }
+    .pill.warn { color: #92400e; background: #fef3c7; border-color: #fde68a; }
+    .pill.bad { color: #991b1b; background: #fee2e2; border-color: #fecaca; }
+    .mini-grid {
+      display: grid;
+      gap: 0.75rem;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    }
+    .mini {
+      background: rgba(255, 255, 255, 0.72);
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 0.75rem;
+    }
+    .mini p { margin: 0.1rem 0; }
+
+    .muted { color: var(--ink-muted); font-size: 0.84rem; }
+
+    .masthead-actions {
+      display: grid;
+      gap: 0.45rem;
+      justify-items: end;
+    }
+
+    .mode-toggle {
+      display: inline-flex;
+      gap: 0.35rem;
+      padding: 0.2rem;
+      border: 1px solid #c9d0d9;
+      border-radius: 999px;
+      background: #f8fafc;
+    }
+
+    .mode-toggle a {
+      text-decoration: none;
+      padding: 0.32rem 0.7rem;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: #334155;
+    }
+
+    .mode-toggle a.active {
+      color: #ffffff;
+      background: #0f766e;
+    }
+
+    .source-flag {
+      margin-top: 0.42rem;
+      display: inline-block;
+      border: 1px solid #f3d39a;
+      background: #fff7e8;
+      color: #9a5900;
+      border-radius: 999px;
+      padding: 0.16rem 0.48rem;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+    }
+
+    .secondary-btn {
+      background: #ffffff;
+      color: #0f172a;
+      border: 1px solid #c4cad2;
+      border-radius: 10px;
+      padding: 0.45rem 0.7rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .dev-modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.5);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      padding: 1rem;
+    }
+
+    .dev-modal.open {
+      display: flex;
+    }
+
+    .dev-panel {
+      width: min(920px, 100%);
+      max-height: 88vh;
+      overflow: auto;
+      background: #ffffff;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 1rem;
+      box-shadow: 0 20px 50px rgba(15, 23, 42, 0.25);
+    }
+
+    .dev-grid {
+      display: grid;
+      gap: 1rem;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    }
+
+    .dev-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 0.8rem;
+    }
+
+    @media (max-width: 1100px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      .panel-stack {
+        position: static;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="masthead">
+      <div>
+        <h1>TONY Risk & Compliance Desk</h1>
+        <p>Ingest, score, calibrate, and benchmark governance/fiduciary posture in one workflow.</p>
+      </div>
+      <div class="masthead-actions">
+        <p class="muted">Use the left panel to run analyses. Results render on the right.</p>
+        <div class="mode-toggle" aria-label="Dashboard detail mode">
+          <a href="/?mode=basic" class="{% if view_mode != 'full' %}active{% endif %}">Basic Mode</a>
+          <a href="/?mode=full" class="{% if view_mode == 'full' %}active{% endif %}">Full Mode</a>
+        </div>
+        <button type="button" class="secondary-btn" id="open-dev-tools">Developer Tools</button>
+      </div>
+    </section>
+
+    {% if status_message %}
+    <div class="banner ok">{{ status_message }}</div>
+    {% endif %}
+    {% if error_message %}
+    <div class="banner err">{{ error_message }}</div>
+    {% endif %}
+    {% if summary.get('data_confidence_score') is not none and summary.get('data_confidence_score') < 0.55 %}
+    <div class="banner warn">Data confidence is currently low. Scores may be directionally useful but should not be treated as decision-grade without richer records.</div>
+    {% endif %}
+    {% if summary.get('donor_top_share') is not none and summary.get('donor_top_share') > 0.35 %}
+    <div class="banner warn">Donor concentration appears elevated (top donor share {{ (summary.get('donor_top_share') * 100) | round(1) }}%). Diversification review recommended.</div>
+    {% endif %}
+
+    <section class="layout">
+      <aside class="panel-stack">
+      <article class="card control-card">
+        <h2>Upload Financial File</h2>
+        <p class="eyebrow">CSV / Excel / PDF</p>
+        <form method="post" enctype="multipart/form-data">
+          <input type="hidden" name="action" value="upload" />
+          <input type="hidden" name="view_mode" value="{{ view_mode }}" />
+
+          <label for="data_file">Data File</label>
+          <input id="data_file" name="data_file" type="file" required />
+
+          <label for="entity_type_upload">Entity Type</label>
+          <input id="entity_type_upload" name="entity_type" value="{{ form_state.entity_type }}" placeholder="nonprofit" />
+
+          <label for="horizon_upload">Horizon (months)</label>
+          <input id="horizon_upload" name="horizon" type="number" min="1" value="{{ form_state.horizon }}" />
+
+          <button type="submit">Ingest + Score</button>
+        </form>
+      </article>
+
+      <article class="card control-card">
+        <h2>Fetch from ProPublica</h2>
+        <p class="eyebrow">External EIN lookup (year-based 990 trend)</p>
+        <form method="post">
+          <input type="hidden" name="action" value="propublica" />
+          <input type="hidden" name="view_mode" value="{{ view_mode }}" />
+
+          <label for="ein">EIN</label>
+          <input id="ein" name="ein" value="{{ form_state.ein }}" placeholder="530196605" required />
+
+          <label for="years">Years (optional, comma-separated)</label>
+          <input id="years" name="years" value="{{ form_state.years }}" placeholder="2021,2022,2023" />
+
+          <label for="entity_type_pp">Entity Type</label>
+          <input id="entity_type_pp" name="entity_type" value="{{ form_state.entity_type }}" placeholder="nonprofit" />
+
+          <p class="muted" style="margin:0;">Scoring window is inferred from returned filing years.</p>
+
+          <button type="submit">Fetch + Score</button>
+        </form>
+      </article>
+      </aside>
+
+      <section class="content-stack">
+
+    <section class="hero">
+      <article class="card">
+        <p class="eyebrow">Descriptor</p>
+        <p class="metric" style="font-size:1.55rem;">{{ summary.descriptor or "No Data" }}</p>
+        <p>Source: {{ metadata.source or "No source loaded" }}</p>
+      </article>
+      <article class="card">
+        <p class="eyebrow">Grant Recommendation</p>
+        <p class="metric-small">{{ summary.get('grant_recommendation', {}).get('label', 'Standard') }}</p>
+        {% set reasons = summary.get('grant_recommendation', {}).get('reasons', []) %}
+        {% if reasons %}
+        <p class="muted">Flags: {{ reasons|join(', ') }}</p>
+        {% else %}
+        <p class="muted">No major fiscal red flags from standard inputs.</p>
+        {% endif %}
+      </article>
+      <article class="card">
+        <p class="eyebrow">Continuity</p>
+        <p class="metric">{{ summary.continuity_months if summary.continuity_months is not none else "-" }}</p>
+        <p>Raw months of unrestricted net assets available.</p>
+        {% if summary.continuity_months_model is not none %}
+        <p class="muted">Model continuity (stability capped): {{ summary.continuity_months_model }}</p>
+        {% endif %}
+        {% if summary.continuity_inputs %}
+        <p class="muted">
+          Inputs: Net assets {{ summary.continuity_inputs.unrestricted_net_assets }} / Monthly burn {{ summary.continuity_inputs.monthly_burn if summary.continuity_inputs.monthly_burn is not none else "n/a" }}
+        </p>
+        {% endif %}
+      </article>
+      <article class="card">
+        <p class="eyebrow">Model Risk</p>
+        <p class="metric">{{ summary.risk_probability if summary.risk_probability is not none else "-" }}</p>
+        <p>Probability from logistic regression over derived financial features.</p>
+        {% if summary.get('calibrated_risk_probability') is not none %}
+        <p class="muted">Calibrated probability: {{ summary.get('calibrated_risk_probability') }}</p>
+        {% endif %}
+        {% if summary.get('composite_risk_probability') is not none %}
+        <p class="muted">Composite risk: {{ summary.get('composite_risk_probability') }}</p>
+        {% endif %}
+        {% if summary.get('risk_probability_ci_low') is not none and summary.get('risk_probability_ci_high') is not none %}
+        <p class="muted">Uncertainty (80%): {{ summary.get('risk_probability_ci_low') }} - {{ summary.get('risk_probability_ci_high') }}</p>
+        {% endif %}
+        {% if summary.get('final_risk_index') is not none %}
+        <p class="muted">Final Risk Index: {{ summary.get('final_risk_index') }} / 100</p>
+        {% endif %}
+      </article>
+
+      <article class="card">
+        <p class="eyebrow">Operating Margin</p>
+        <p class="metric-small">
+          {% if summary.get('standard_grant_metrics', {}).get('operating_margin') is not none %}
+            {{ (summary.get('standard_grant_metrics', {}).get('operating_margin') * 100) | round(1) }}%
+          {% else %}
+            n/a
+          {% endif %}
+        </p>
+        <p class="muted">Year-over-year operating surplus ratio.</p>
+      </article>
+
+      <article class="card">
+        <p class="eyebrow">Program Expense Ratio</p>
+        <p class="metric-small">
+          {% if summary.get('standard_grant_metrics', {}).get('program_expense_ratio') is not none %}
+            {{ (summary.get('standard_grant_metrics', {}).get('program_expense_ratio') * 100) | round(1) }}%
+          {% else %}
+            n/a
+          {% endif %}
+        </p>
+        <p class="muted">Share of spend directed to program delivery.</p>
+      </article>
+
+      <article class="card">
+        <p class="eyebrow">Leverage (Liabilities/Assets)</p>
+        <p class="metric-small">
+          {% if summary.get('standard_grant_metrics', {}).get('liabilities_to_assets') is not none %}
+            {{ summary.get('standard_grant_metrics', {}).get('liabilities_to_assets') }}
+          {% else %}
+            n/a
+          {% endif %}
+        </p>
+        <p class="muted">Balance-sheet pressure indicator.</p>
+      </article>
+
+      <article class="card">
+        <p class="eyebrow">Altman Z''</p>
+        <p class="metric-small">
+          {% if summary.get('standard_grant_metrics', {}).get('altman_z_score') is not none %}
+            {{ summary.get('standard_grant_metrics', {}).get('altman_z_score') }}
+          {% else %}
+            n/a
+          {% endif %}
+        </p>
+        <p class="muted">
+          Zone: {{ summary.get('standard_grant_metrics', {}).get('altman_zone', 'unknown') }}
+        </p>
+      </article>
+
+      <article class="card">
+        <p class="eyebrow">Revenue Growth (YoY)</p>
+        <p class="metric-small">
+          {% if summary.get('standard_grant_metrics', {}).get('revenue_growth_yoy') is not none %}
+            {{ (summary.get('standard_grant_metrics', {}).get('revenue_growth_yoy') * 100) | round(1) }}%
+          {% else %}
+            n/a
+          {% endif %}
+        </p>
+        <p class="muted">Most recent year-over-year revenue change.</p>
+      </article>
+
+      <article class="card">
+        <p class="eyebrow">Months Cash on Hand</p>
+        <p class="metric-small">
+          {% if summary.get('standard_grant_metrics', {}).get('months_cash_on_hand') is not none %}
+            {{ summary.get('standard_grant_metrics', {}).get('months_cash_on_hand') }}
+          {% else %}
+            n/a
+          {% endif %}
+        </p>
+        <p class="muted">Liquidity cushion at current burn.</p>
+      </article>
+
+      <article class="card">
+        <p class="eyebrow">Data Confidence</p>
+        <p class="metric-small">
+          {% if summary.get('data_confidence_score') is not none %}
+            {{ (summary.get('data_confidence_score') * 100) | round(1) }}%
+          {% else %}
+            n/a
+          {% endif %}
+        </p>
+        <p class="muted">Coverage and history-depth quality of source records.</p>
+        {% if summary.get('data_confidence_score') is not none %}
+          {% if summary.get('data_confidence_score') >= 0.75 %}
+          <span class="pill good">High confidence</span>
+          {% elif summary.get('data_confidence_score') >= 0.45 %}
+          <span class="pill warn">Medium confidence</span>
+          {% else %}
+          <span class="pill bad">Low confidence</span>
+          {% endif %}
+        {% endif %}
+      </article>
+
+      <article class="card">
+        <p class="eyebrow">External Signals</p>
+        <p class="metric-small">
+          IRS Risk: {% if summary.get('irs_teos_status_risk') is not none %}{{ summary.get('irs_teos_status_risk') }}{% else %}n/a{% endif %}
+        </p>
+        <p class="muted">
+          Charity Navigator: {% if summary.get('charity_navigator_score') is not none %}{{ (summary.get('charity_navigator_score') * 100) | round(1) }}%{% else %}n/a{% endif %}
+        </p>
+        {% if summary.get('irs_teos_status_risk') is none and summary.get('charity_navigator_score') is none %}
+        <span class="source-flag">Source missing</span>
+        {% endif %}
+      </article>
+
+      {% if view_mode == 'full' %}
+      <article class="card">
+        <p class="eyebrow">Peer Benchmark</p>
+        <p class="metric-small">
+          {% if summary.get('peer_benchmark_score') is not none %}
+            {{ (summary.get('peer_benchmark_score') * 100) | round(1) }}%
+          {% else %}
+            n/a
+          {% endif %}
+        </p>
+        <p class="muted">Relative standing against reference profile cohort.</p>
+        {% if summary.get('peer_benchmark_score') is not none %}
+          {% if summary.get('peer_benchmark_score') >= 0.7 %}
+          <span class="pill good">Above peer median</span>
+          {% elif summary.get('peer_benchmark_score') >= 0.45 %}
+          <span class="pill warn">Near peer median</span>
+          {% else %}
+          <span class="pill bad">Below peer median</span>
+          {% endif %}
+        {% endif %}
+      </article>
+      {% endif %}
+
+      {% if view_mode == 'full' %}
+
+      <article class="card">
+        <p class="eyebrow">Donor Concentration</p>
+        <p class="metric-small">
+          {% if summary.get('donor_top_share') is not none %}
+            {{ (summary.get('donor_top_share') * 100) | round(1) }}%
+          {% else %}
+            n/a
+          {% endif %}
+        </p>
+        <p class="muted">Estimated share from largest funding source.</p>
+        {% if summary.get('donor_top_share') is not none %}
+          {% if summary.get('donor_top_share') <= 0.2 %}
+          <span class="pill good">Well diversified</span>
+          {% elif summary.get('donor_top_share') <= 0.35 %}
+          <span class="pill warn">Manageable concentration</span>
+          {% else %}
+          <span class="pill bad">High concentration</span>
+          {% endif %}
+        {% endif %}
+      </article>
+
+      <article class="card">
+        <p class="eyebrow">Cashflow Durability</p>
+        <p class="metric-small">
+          {% if summary.get('cashflow_durability_score') is not none %}
+            {{ (summary.get('cashflow_durability_score') * 100) | round(1) }}%
+          {% else %}
+            n/a
+          {% endif %}
+        </p>
+        <p class="muted">
+          {% if summary.get('months_cash_on_hand_stress') is not none %}
+          Stress cash runway: {{ summary.get('months_cash_on_hand_stress') }} months
+          {% else %}
+          Stress cash runway unavailable
+          {% endif %}
+        </p>
+        {% if summary.get('cashflow_durability_score') is not none %}
+          {% if summary.get('cashflow_durability_score') >= 0.7 %}
+          <span class="pill good">Durable cash profile</span>
+          {% elif summary.get('cashflow_durability_score') >= 0.45 %}
+          <span class="pill warn">Moderate durability</span>
+          {% else %}
+          <span class="pill bad">Fragile under stress</span>
+          {% endif %}
+        {% endif %}
+      </article>
+
+      <article class="card">
+        <p class="eyebrow">Compensation Burden</p>
+        <p class="metric-small">
+          {% if summary.get('salaries_to_expense_ratio') is not none %}
+            {{ (summary.get('salaries_to_expense_ratio') * 100) | round(1) }}%
+          {% else %}
+            n/a
+          {% endif %}
+        </p>
+        <p class="muted">Total salary spend compared to total expenses.</p>
+        <p class="muted">
+          Exec: {% if summary.get('executive_salary_ratio') is not none %}{{ (summary.get('executive_salary_ratio') * 100) | round(1) }}%{% else %}n/a{% endif %}
+          | Staff: {% if summary.get('staff_salary_ratio') is not none %}{{ (summary.get('staff_salary_ratio') * 100) | round(1) }}%{% else %}n/a{% endif %}
+          | Admin: {% if summary.get('admin_salary_ratio') is not none %}{{ (summary.get('admin_salary_ratio') * 100) | round(1) }}%{% else %}n/a{% endif %}
+        </p>
+        {% if summary.get('staff_salary_ratio') is none and summary.get('admin_salary_ratio') is none %}
+        <span class="source-flag">Staff/Admin compensation unavailable from source</span>
+        {% endif %}
+      </article>
+      {% endif %}
+    </section>
+
+    {% if view_mode == 'full' %}
+    <section class="card" style="margin-top: 1rem; overflow-x: auto;">
+      <h2>Model Diagnostics</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Metric</th>
+            <th>Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Final Risk Index</td><td class="num">{{ summary.get('final_risk_index', 'n/a') }}</td></tr>
+          <tr><td>Composite Risk Probability</td><td class="num">{{ summary.get('composite_risk_probability', 'n/a') }}</td></tr>
+          <tr><td>Calibrated Risk Probability</td><td class="num">{{ summary.get('calibrated_risk_probability', 'n/a') }}</td></tr>
+          <tr><td>Time Weighted Health Score</td><td class="num">{{ summary.get('time_weighted_health_score', 'n/a') }}</td></tr>
+          <tr><td>Uncertainty CI Low</td><td class="num">{{ summary.get('risk_probability_ci_low', 'n/a') }}</td></tr>
+          <tr><td>Uncertainty CI High</td><td class="num">{{ summary.get('risk_probability_ci_high', 'n/a') }}</td></tr>
+          <tr><td>Trend Stability Score</td><td class="num">{{ summary.get('trend_metrics', {}).get('trend_stability_score', 'n/a') }}</td></tr>
+          <tr><td>Continuity Delta</td><td class="num">{{ summary.get('trend_metrics', {}).get('continuity_delta', 'n/a') }}</td></tr>
+          <tr><td>Operating Margin Delta</td><td class="num">{{ summary.get('trend_metrics', {}).get('operating_margin_delta', 'n/a') }}</td></tr>
+          <tr><td>Leverage Improvement</td><td class="num">{{ summary.get('trend_metrics', {}).get('leverage_improvement', 'n/a') }}</td></tr>
+          <tr><td>Composite Benchmark Gap</td><td class="num">{{ summary.get('composite_components', {}).get('benchmark_gap', 'n/a') }}</td></tr>
+          <tr><td>Composite Confidence Penalty</td><td class="num">{{ summary.get('composite_components', {}).get('confidence_penalty', 'n/a') }}</td></tr>
+          <tr><td>Composite Compliance Penalty</td><td class="num">{{ summary.get('composite_components', {}).get('compliance_penalty', 'n/a') }}</td></tr>
+          <tr><td>Composite Donor Penalty</td><td class="num">{{ summary.get('composite_components', {}).get('donor_penalty', 'n/a') }}</td></tr>
+          <tr><td>Composite Cashflow Penalty</td><td class="num">{{ summary.get('composite_components', {}).get('cashflow_penalty', 'n/a') }}</td></tr>
+          <tr><td>Composite IRS Penalty</td><td class="num">{{ summary.get('composite_components', {}).get('irs_penalty', 'n/a') }}</td></tr>
+          <tr><td>Composite Charity Relief</td><td class="num">{{ summary.get('composite_components', {}).get('charity_relief', 'n/a') }}</td></tr>
+          <tr><td>ML Blend Weight</td><td class="num">{{ summary.get('final_index_ml_weight', 'n/a') }}</td></tr>
+          <tr><td>Health Blend Weight</td><td class="num">{{ summary.get('final_index_health_weight', 'n/a') }}</td></tr>
+        </tbody>
+      </table>
+    </section>
+    {% endif %}
+
+    <section class="charts">
+      <article class="card"><div class="chart-frame"><div id="trend" class="chart-target"></div></div></article>
+      <article class="card"><div class="chart-frame"><div id="mix" class="chart-target"></div></div></article>
+      <article class="card"><div class="chart-frame"><div id="risk" class="chart-target"></div></div></article>
+    </section>
+
+    <section class="card" style="margin-top: 1rem; overflow-x: auto;">
+      <h2>Feature History {% if view_mode == 'basic' %}(Standard){% else %}(Full){% endif %}</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Year</th>
+            <th>Continuity (Raw)</th>
+            <th>Operating Margin</th>
+            <th>Program Expense Ratio</th>
+            <th>Liabilities / Assets</th>
+            <th>Volatility</th>
+            <th>Risk</th>
+            {% if view_mode == 'full' %}
+            <th>Continuity (Model)</th>
+            <th>Exec Salary</th>
+            <th>Staff Salary</th>
+            <th>Admin Salary</th>
+            <th>Total Salaries</th>
+            <th>Exec % Exp</th>
+            <th>Staff % Exp</th>
+            <th>Admin % Exp</th>
+            <th>Total % Exp</th>
+            {% endif %}
+          </tr>
+        </thead>
+        <tbody id="history-body"></tbody>
+      </table>
+      {% if view_mode == 'basic' %}
+      <p class="muted" style="margin-top:0.55rem;">Switch to Full Mode for diagnostics, component breakdowns, and compensation-level details.</p>
+      {% endif %}
+    </section>
+
+    {% if calibration_result %}
+    <section class="card" style="margin-top: 1rem;">
+      <h2>Calibration Results</h2>
+      <div class="mini-grid">
+        <div class="mini">
+          <p class="eyebrow">Rows</p>
+          <p class="metric" style="font-size:1.4rem;">{{ calibration_result.metrics.rows }}</p>
+        </div>
+        <div class="mini">
+          <p class="eyebrow">Brier Before</p>
+          <p class="metric" style="font-size:1.4rem;">{{ calibration_result.metrics.brier_before }}</p>
+        </div>
+        <div class="mini">
+          <p class="eyebrow">Brier After</p>
+          <p class="metric" style="font-size:1.4rem;">{{ calibration_result.metrics.brier_after }}</p>
+        </div>
+        <div class="mini">
+          <p class="eyebrow">AUC Before</p>
+          <p class="metric" style="font-size:1.4rem;">{{ calibration_result.metrics.auc_before if calibration_result.metrics.auc_before is not none else "n/a" }}</p>
+        </div>
+        <div class="mini">
+          <p class="eyebrow">AUC After</p>
+          <p class="metric" style="font-size:1.4rem;">{{ calibration_result.metrics.auc_after if calibration_result.metrics.auc_after is not none else "n/a" }}</p>
+        </div>
+      </div>
+      <div class="chart-frame" style="margin-top:1rem;"><div id="calibration" class="chart-target"></div></div>
+    </section>
+    {% endif %}
+
+    {% if compliance_result %}
+    <section class="card" style="margin-top: 1rem;">
+      <h2>Compliance Gap Results</h2>
+      <div class="mini-grid">
+        <div class="mini">
+          <p class="eyebrow">Overall Score</p>
+          <p class="metric" style="font-size:1.4rem;">{{ compliance_result.overall_score }}%</p>
+        </div>
+        <div class="mini">
+          <p class="eyebrow">Controls Met</p>
+          <p class="metric" style="font-size:1.4rem;">{{ compliance_result.controls_met }} / {{ compliance_result.controls_total }}</p>
+        </div>
+        <div class="mini">
+          <p class="eyebrow">High Missing</p>
+          <p class="metric" style="font-size:1.4rem;">{{ compliance_result.severity_missing.high }}</p>
+        </div>
+        <div class="mini">
+          <p class="eyebrow">Medium Missing</p>
+          <p class="metric" style="font-size:1.4rem;">{{ compliance_result.severity_missing.medium }}</p>
+        </div>
+      </div>
+      <div class="chart-frame" style="margin-top:1rem;"><div id="compliance" class="chart-target"></div></div>
+
+      {% if compliance_result.priority_gaps %}
+      <h3 style="margin-top:1rem;">Priority Gaps</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Control</th>
+            <th>Domain</th>
+            <th>Severity</th>
+            <th>Requirement</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for gap in compliance_result.priority_gaps %}
+          <tr>
+            <td>{{ gap.id }}</td>
+            <td>{{ gap.domain }}</td>
+            <td>{{ gap.severity }}</td>
+            <td>{{ gap.requirement }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </section>
+    {% endif %}
+      </section>
+    </section>
+
+    <section id="dev-modal" class="dev-modal" aria-hidden="true">
+      <div class="dev-panel" role="dialog" aria-modal="true" aria-labelledby="dev-tools-title">
+        <div class="dev-head">
+          <div>
+            <h2 id="dev-tools-title">Developer Tools</h2>
+            <p class="muted" style="margin:0;">Calibration and compliance baselines live here to keep the main workflow clean.</p>
+          </div>
+          <button type="button" class="secondary-btn" id="close-dev-tools">Close</button>
+        </div>
+
+        <div class="dev-grid">
+          <article class="card control-card">
+            <h2>Calibrate with External Labels</h2>
+            <p class="eyebrow">Uses bundled baseline if no upload is selected</p>
+            <form method="post" enctype="multipart/form-data">
+              <input type="hidden" name="action" value="calibrate" />
+              <input type="hidden" name="view_mode" value="{{ view_mode }}" />
+
+              <label for="calibration_file">Calibration File (optional)</label>
+              <input id="calibration_file" name="calibration_file" type="file" />
+              <p style="margin:0; color:#7c2d12; font-size:0.85rem;">
+                Required columns: risk_probability, outcome (0/1)
+              </p>
+              <p class="muted" style="margin:0;">
+                Default baseline: tony-core/baselines/calibration_external_benchmark.csv
+              </p>
+
+              <button type="submit">Run Calibration</button>
+            </form>
+          </article>
+
+          <article class="card control-card">
+            <h2>Compliance Gap Audit</h2>
+            <p class="eyebrow">Uses bundled profile if no upload is selected</p>
+            <form method="post" enctype="multipart/form-data">
+              <input type="hidden" name="action" value="compliance" />
+              <input type="hidden" name="view_mode" value="{{ view_mode }}" />
+
+              <label for="compliance_file">Compliance Profile JSON (optional)</label>
+              <input id="compliance_file" name="compliance_file" type="file" />
+              <p style="margin:0; color:#7c2d12; font-size:0.85rem;">
+                Domains: governance, filings, fiduciary, third_party, policy, incident, access
+              </p>
+              <p class="muted" style="margin:0;">
+                Default profile: tony-core/baselines/compliance_external_baseline_profile.json
+              </p>
+
+              <button type="submit">Run Compliance Audit</button>
+            </form>
+          </article>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const plotConfig = {
+      responsive: true,
+      displaylogo: false,
+      modeBarButtonsToRemove: [
+        "lasso2d",
+        "select2d",
+        "autoScale2d",
+        "toggleSpikelines",
+        "hoverClosestCartesian",
+        "hoverCompareCartesian"
+      ],
+      toImageButtonOptions: {
+        format: "png",
+        filename: "tony-chart",
+        scale: 2,
+      },
+    };
+
+    const renderPlot = (id, figJson) => {
+      if (!figJson || figJson === "{}") {
+        return;
+      }
+      const parsed = JSON.parse(figJson);
+      const data = parsed.data || [];
+      const layout = parsed.layout || {};
+      Plotly.newPlot(id, data, layout, plotConfig);
+    };
+
+    const charts = {{ charts|tojson }};
+    const history = JSON.parse({{ history|tojson }});
+    const viewMode = {{ view_mode|tojson }};
+    renderPlot("trend", charts.trend);
+    renderPlot("mix", charts.mix);
+    renderPlot("risk", charts.risk);
+    const calibrationChart = {{ calibration_chart|tojson }};
+    if (calibrationChart && calibrationChart !== "{}") {
+      const target = document.getElementById("calibration");
+      if (target) {
+        renderPlot("calibration", calibrationChart);
+      }
+    }
+
+    const complianceChart = {{ compliance_chart|tojson }};
+    if (complianceChart && complianceChart !== "{}") {
+      const target = document.getElementById("compliance");
+      if (target) {
+        renderPlot("compliance", complianceChart);
+      }
+    }
+
+    const tbody = document.getElementById("history-body");
+    const basicColumns = [
+      "year",
+      "continuity_months",
+      "operating_margin",
+      "program_expense_ratio",
+      "liabilities_to_assets",
+      "revenue_volatility",
+      "risk_probability",
+    ];
+    const fullColumns = [
+      "year",
+      "continuity_months",
+      "operating_margin",
+      "program_expense_ratio",
+      "liabilities_to_assets",
+      "revenue_volatility",
+      "risk_probability",
+      "continuity_months_model",
+      "executive_compensation",
+      "staff_salaries",
+      "admin_salaries",
+      "total_salaries",
+      "executive_salary_ratio",
+      "staff_salary_ratio",
+      "admin_salary_ratio",
+      "salaries_to_expense_ratio",
+    ];
+    const activeColumns = viewMode === "full" ? fullColumns : basicColumns;
+
+    history.forEach((row) => {
+      const tr = document.createElement("tr");
+      activeColumns.forEach((columnName) => {
+        const value = row[columnName];
+        const td = document.createElement("td");
+        const isYear = columnName === "year";
+        const isNumeric = typeof value === "number";
+        if (isYear) {
+          td.className = "year";
+        } else if (isNumeric) {
+          td.className = "num";
+        }
+        td.textContent = value ?? "";
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+
+    const devModal = document.getElementById("dev-modal");
+    const openDevTools = document.getElementById("open-dev-tools");
+    const closeDevTools = document.getElementById("close-dev-tools");
+
+    if (openDevTools && devModal) {
+      openDevTools.addEventListener("click", () => {
+        devModal.classList.add("open");
+        devModal.setAttribute("aria-hidden", "false");
+      });
+    }
+
+    if (closeDevTools && devModal) {
+      closeDevTools.addEventListener("click", () => {
+        devModal.classList.remove("open");
+        devModal.setAttribute("aria-hidden", "true");
+      });
+    }
+
+    if (devModal) {
+      devModal.addEventListener("click", (event) => {
+        if (event.target === devModal) {
+          devModal.classList.remove("open");
+          devModal.setAttribute("aria-hidden", "true");
+        }
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && devModal.classList.contains("open")) {
+          devModal.classList.remove("open");
+          devModal.setAttribute("aria-hidden", "true");
+        }
+      });
+    }
+  </script>
+</body>
+</html>

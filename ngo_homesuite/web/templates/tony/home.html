@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col-md-8">
+            <h1>🎯 TONY - Grant Risk Scoring & Nonprofit Analysis</h1>
+            <p class="text-muted">Complete grant management toolkit with risk assessment, compliance checking, and portfolio analysis</p>
+        </div>
+        <div class="col-md-4 text-end">
+            <div class="badge bg-success p-2">{{ org.name }}</div>
+        </div>
+    </div>
+
+    <!-- Feature Grid -->
+    <div class="row g-3 mb-4">
+        <!-- Ingest -->
+        <div class="col-md-6 col-lg-4">
+            <div class="card h-100 border-0 shadow-sm hover-shadow">
+                <div class="card-body">
+                    <h5 class="card-title">📥 Ingest Grants</h5>
+                    <p class="card-text text-muted small">Import grants from CSV or Excel files. TONY automatically normalizes and validates the data.</p>
+                    <a href="{{ url_for('tony.ingest_grants') }}" class="btn btn-sm btn-outline-primary">Start Ingestion →</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Score -->
+        <div class="col-md-6 col-lg-4">
+            <div class="card h-100 border-0 shadow-sm hover-shadow">
+                <div class="card-body">
+                    <h5 class="card-title">⚖️ Score Grants</h5>
+                    <p class="card-text text-muted small">Analyze grant risk using TONY's 4-layer scoring algorithm. Includes financial health, continuity, and org metrics.</p>
+                    <a href="{{ url_for('tony.score_grants') }}" class="btn btn-sm btn-outline-primary">Score Grants →</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Report -->
+        <div class="col-md-6 col-lg-4">
+            <div class="card h-100 border-0 shadow-sm hover-shadow">
+                <div class="card-body">
+                    <h5 class="card-title">📊 Generate Reports</h5>
+                    <p class="card-text text-muted small">Create comprehensive HTML, PDF, or JSON reports with risk assessments, visualizations, and recommendations.</p>
+                    <a href="{{ url_for('tony.generate_report') }}" class="btn btn-sm btn-outline-primary">Generate Report →</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Compliance -->
+        <div class="col-md-6 col-lg-4">
+            <div class="card h-100 border-0 shadow-sm hover-shadow">
+                <div class="card-body">
+                    <h5 class="card-title">✅ Compliance Check</h5>
+                    <p class="card-text text-muted small">Evaluate grants against TONY's control catalog and best practices. Get detailed compliance scores.</p>
+                    <a href="{{ url_for('tony.check_compliance') }}" class="btn btn-sm btn-outline-primary">Check Compliance →</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Calibration -->
+        <div class="col-md-6 col-lg-4">
+            <div class="card h-100 border-0 shadow-sm hover-shadow">
+                <div class="card-body">
+                    <h5 class="card-title">⚙️ Model Calibration</h5>
+                    <p class="card-text text-muted small">Fine-tune TONY's risk model with your historical grant data for more accurate predictions.</p>
+                    <a href="{{ url_for('tony.calibrate_model') }}" class="btn btn-sm btn-outline-primary">Calibrate Model →</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Evaluation -->
+        <div class="col-md-6 col-lg-4">
+            <div class="card h-100 border-0 shadow-sm hover-shadow">
+                <div class="card-body">
+                    <h5 class="card-title">📈 Evaluate Results</h5>
+                    <p class="card-text text-muted small">Measure TONY's scoring accuracy and model performance using your actual grant outcomes.</p>
+                    <a href="{{ url_for('tony.evaluate_results') }}" class="btn btn-sm btn-outline-primary">Evaluate Performance →</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Dashboard -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-gradient border-0">
+                    <h5 class="mb-0">📊 Interactive Dashboard</h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted mb-3">Real-time grant portfolio visualization, risk distribution charts, and key metrics.</p>
+                    <a href="{{ url_for('tony.tony_dashboard') }}" class="btn btn-primary">Open Interactive Dashboard →</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- About TONY -->
+    <div class="row mt-5">
+        <div class="col-lg-8">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-light border-0">
+                    <h6 class="mb-0">About TONY</h6>
+                </div>
+                <div class="card-body">
+                    <p>TONY is a comprehensive nonprofit and grant analysis toolkit designed to help organizations assess grant risk, ensure compliance, and optimize their grant portfolio.</p>
+                    
+                    <h6 class="mt-3">Key Capabilities:</h6>
+                    <ul>
+                        <li><strong>Data Ingestion:</strong> Import grants from CSV, Excel, or direct database connections</li>
+                        <li><strong>4-Layer Risk Scoring:</strong> Analyzes financial health, operational sustainability, organizational capacity, and external factors</li>
+                        <li><strong>Compliance Evaluation:</strong> Checks against best practices and regulatory requirements</li>
+                        <li><strong>Predictive Calibration:</strong> Improves accuracy using your historical grant outcomes</li>
+                        <li><strong>Comprehensive Reporting:</strong> HTML, PDF, and JSON export formats with visualizations</li>
+                        <li><strong>Performance Analytics:</strong> Measure model accuracy and iterate on scoring logic</li>
+                    </ul>
+
+                    <h6 class="mt-3">Scoring Presets:</h6>
+                    <ul>
+                        <li><strong>Conservative:</strong> Higher risk thresholds for risk-averse organizations</li>
+                        <li><strong>Balanced:</strong> Standard risk assessment (recommended)</li>
+                        <li><strong>Lenient:</strong> Lower thresholds for flexibility-focused organizations</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-4">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-light border-0">
+                    <h6 class="mb-0">Quick Stats</h6>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <small class="text-muted">Organization</small>
+                        <p class="h6">{{ org.name }}</p>
+                    </div>
+                    <div class="mb-3">
+                        <small class="text-muted">System Version</small>
+                        <p class="h6">TONY 1.1.0</p>
+                    </div>
+                    <div class="mb-3">
+                        <small class="text-muted">Features Available</small>
+                        <p class="h6">
+                            <span class="badge bg-success">Ingest</span>
+                            <span class="badge bg-success">Score</span>
+                            <span class="badge bg-success">Report</span>
+                            <span class="badge bg-success">Compliance</span>
+                        </p>
+                    </div>
+                    <hr>
+                    <small class="text-muted d-block">
+                        <strong>Pro Tip:</strong> Start by ingesting your grant data, then run scoring to assess your portfolio risk profile.
+                    </small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.hover-shadow {
+    transition: box-shadow 0.2s, transform 0.2s;
+}
+.hover-shadow:hover {
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15) !important;
+    transform: translateY(-2px);
+}
+.bg-gradient {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white !important;
+}
+</style>
+{% endblock %}

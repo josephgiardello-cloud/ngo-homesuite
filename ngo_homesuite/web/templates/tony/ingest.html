@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col-md-8">
+            <h1>📥 Ingest Grants</h1>
+            <p class="text-muted">Import and normalize grant data from CSV or Excel files</p>
+        </div>
+        <div class="col-md-4">
+            <a href="{{ url_for('tony.tony_home') }}" class="btn btn-secondary">← Back to TONY</a>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-lg-8">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body p-4">
+                    <h5 class="card-title mb-4">Upload Grant Data</h5>
+                    
+                    <form id="ingestForm" enctype="multipart/form-data">
+                        <div class="mb-3">
+                            <label for="grantFile" class="form-label">Select CSV or Excel File</label>
+                            <input type="file" class="form-control form-control-lg" id="grantFile" name="file" accept=".csv,.xlsx,.xls" required>
+                            <small class="text-muted">Supported: CSV (.csv), Excel (.xlsx, .xls)</small>
+                        </div>
+
+                        <div class="alert alert-info small">
+                            <strong>Required Columns:</strong> Your file should contain grant information including year, amounts, organization name, and financial details.
+                        </div>
+
+                        <button type="submit" class="btn btn-primary btn-lg">
+                            <span class="spinner-border spinner-border-sm me-2" id="spinner" style="display:none;"></span>
+                            Ingest Data
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-4">
+            <div class="card border-0 shadow-sm bg-light">
+                <div class="card-body">
+                    <h6 class="card-title">Format Requirements</h6>
+                    <ul class="small mb-0">
+                        <li>Year column (required)</li>
+                        <li>Organization name</li>
+                        <li>Financial metrics</li>
+                        <li>Grant amounts</li>
+                        <li>Status information</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="results" class="row mt-4" style="display:none;">
+        <div class="col-12">
+            <div class="alert alert-success">
+                <h5>✓ Ingestion Successful</h5>
+                <p id="resultCount"></p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.getElementById('ingestForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const spinner = document.getElementById('spinner');
+    spinner.style.display = 'inline-block';
+
+    const formData = new FormData(document.getElementById('ingestForm'));
+    
+    try {
+        const response = await fetch('{{ url_for("tony.ingest_grants") }}', {
+            method: 'POST',
+            body: formData
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            document.getElementById('resultCount').textContent = `Ingested ${data.count} grants successfully.`;
+            document.getElementById('results').style.display = 'block';
+        } else {
+            alert('Error during ingestion. Please check your file format.');
+        }
+    } catch (error) {
+        alert('Error: ' + error.message);
+    } finally {
+        spinner.style.display = 'none';
+    }
+});
+</script>
+{% endblock %}

@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block title %}Settings - NGO HomeSuite{% endblock %}
+
+{% block content %}
+<div style="max-width:640px;">
+    <div style="margin-bottom:1.5rem;">
+        <h1 style="margin-bottom:0.35rem;">Organization Settings</h1>
+        <p class="text-muted">Update your organization's profile and contact information.</p>
+    </div>
+
+    {% if not org %}
+    <div class="card" style="padding:1.5rem; text-align:center;">
+        <p class="text-muted" style="margin-bottom:1rem;">No organization is configured yet.</p>
+        <a href="{{ url_for('main.org_setup') }}" class="btn btn-primary">Set up organization</a>
+    </div>
+    {% else %}
+
+    {% if error %}
+    <div class="flash flash-error" style="margin-bottom:1rem;">{{ error }}</div>
+    {% endif %}
+
+    <div class="card" style="padding:1.75rem;">
+        <form method="post" action="{{ url_for('main.org_settings') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+
+            <div class="form-group">
+                <label for="name">Organization name <span style="color:var(--danger)">*</span></label>
+                <input type="text" id="name" name="name" required value="{{ org.name }}" />
+            </div>
+
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem;">
+                <div class="form-group">
+                    <label for="email">Contact email</label>
+                    <input type="email" id="email" name="email" value="{{ org.email or '' }}" />
+                </div>
+                <div class="form-group">
+                    <label for="phone">Phone</label>
+                    <input type="text" id="phone" name="phone" value="{{ org.phone or '' }}" />
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="website">Website</label>
+                <input type="url" id="website" name="website" value="{{ org.website or '' }}" />
+            </div>
+
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem;">
+                <div class="form-group">
+                    <label for="country">Country</label>
+                    <input type="text" id="country" name="country" value="{{ org.country or '' }}" />
+                </div>
+                <div class="form-group">
+                    <label for="city">City</label>
+                    <input type="text" id="city" name="city" value="{{ org.city or '' }}" />
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="mission">Mission statement</label>
+                <textarea id="mission" name="mission" rows="3">{{ org.mission or '' }}</textarea>
+            </div>
+
+            <div style="display:flex; gap:0.75rem; justify-content:flex-end; margin-top:1.5rem; padding-top:1rem; border-top:1px solid var(--border);">
+                <button type="submit" class="btn btn-primary">Save Changes</button>
+            </div>
+        </form>
+    </div>
+
+    <div class="card" style="margin-top:1.25rem; padding:1.25rem;">
+        <div style="font-weight:600; margin-bottom:0.5rem;">Organization info</div>
+        <table style="width:100%; border-collapse:collapse; font-size:0.9rem;">
+            <tr><td class="text-muted" style="padding:0.35rem 0.75rem 0.35rem 0; width:140px;">Slug</td><td>{{ org.slug }}</td></tr>
+            <tr><td class="text-muted" style="padding:0.35rem 0.75rem 0.35rem 0;">Created</td><td>{{ org.created_at.strftime('%B %d, %Y') if org.created_at else '—' }}</td></tr>
+            <tr><td class="text-muted" style="padding:0.35rem 0.75rem 0.35rem 0;">Status</td>
+                <td><span style="color:{{ 'var(--success-text)' if org.is_active else 'var(--danger)' }}">{{ 'Active' if org.is_active else 'Inactive' }}</span></td>
+            </tr>
+        </table>
+    </div>
+
+    {% endif %}
+</div>
+{% endblock %}

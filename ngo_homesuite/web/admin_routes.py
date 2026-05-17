@@ -221,3 +221,254 @@ def list_roles_route():
             {"role": "viewer", "count": counts.get("viewer", 0), "description": "Read-only access to non-PII data"},
         ]
     })
+
+
+# ---------------------------------------------------------------------------
+# Compliance checks
+# ---------------------------------------------------------------------------
+
+@admin_bp.get("/compliance/audit")
+@login_required
+@roles_required("admin")
+def compliance_audit_route():
+    """Run full compliance audit for organization."""
+    from ngo_homesuite.compliance.monitoring import ComplianceMonitoringService
+    
+    results = ComplianceMonitoringService.run_full_compliance_audit(_org_id())
+    return jsonify(results)
+
+
+@admin_bp.get("/compliance/grant-deadlines")
+@login_required
+@roles_required("admin")
+def compliance_grant_deadlines_route():
+    """Check grant deadlines and alert on overdue/approaching."""
+    from ngo_homesuite.compliance.monitoring import ComplianceMonitoringService
+    
+    alerts = ComplianceMonitoringService.check_grant_deadlines(_org_id())
+    return jsonify(alerts)
+
+
+@admin_bp.get("/compliance/drift")
+@login_required
+@roles_required("admin")
+def compliance_drift_route():
+    """Detect compliance drift indicators."""
+    from ngo_homesuite.compliance.monitoring import ComplianceMonitoringService
+    
+    drift = ComplianceMonitoringService.detect_compliance_drift(_org_id())
+    return jsonify(drift)
+
+
+@admin_bp.get("/compliance/grant/<int:grant_id>/readiness")
+@login_required
+@roles_required("admin")
+def grant_readiness_route(grant_id: int):
+    """Check grant pre-submission readiness."""
+    from ngo_homesuite.models.core import Grant, db
+    from ngo_homesuite.compliance.grant_validator import GrantPreSubmissionValidator
+    
+    grant = db.session.get(Grant, grant_id)
+    if not grant or grant.organization_id != _org_id():
+        return jsonify({"error": "not found"}), 404
+    
+    readiness = GrantPreSubmissionValidator.get_readiness_score(grant)
+    return jsonify(readiness)
+
+
+@admin_bp.get("/compliance/p2p/<int:page_id>/fraud-score")
+@login_required
+@roles_required("admin")
+def p2p_fraud_score_route(page_id: int):
+    """Get fraud risk score for P2P page."""
+    from ngo_homesuite.models.core import P2PPage, db
+    from ngo_homesuite.compliance.p2p_fraud_detector import P2PFraudDetector
+    
+    page = db.session.get(P2PPage, page_id)
+    if not page or page.organization_id != _org_id():
+        return jsonify({"error": "not found"}), 404
+    
+    fraud_score = P2PFraudDetector.get_fraud_score(page)
+    return jsonify(fraud_score)
+
+
+# ---------------------------------------------------------------------------
+# TONY Grant Scoring
+# ---------------------------------------------------------------------------
+
+@admin_bp.post("/tony/score-grant/<int:grant_id>")
+@login_required
+@roles_required("admin")
+def tony_score_grant_route(grant_id: int):
+    """Score a grant using TONY algorithm.
+    
+    Query params:
+    - preset: 'conservative', 'balanced', or 'lenient' (default: balanced)
+    """
+    from ngo_homesuite.models.core import Grant, GrantScore, db
+    from ngo_homesuite.compliance.tony_scoring import TonyScorer
+    
+    preset = request.args.get("preset", "balanced").lower()
+    if preset not in ("conservative", "balanced", "lenient"):
+        return jsonify({"error": "preset must be conservative, balanced, or lenient"}), 400
+    
+    grant = db.session.get(Grant, grant_id)
+    if not grant or grant.organization_id != _org_id():
+        return jsonify({"error": "not found"}), 404
+    
+    try:
+        score_result = TonyScorer.score_grant(grant_id, _org_id(), preset)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": f"Scoring failed: {str(e)}"}), 500
+    
+    # Store score in database
+    existing_score = (
+        db.session.query(GrantScore)
+        .filter(
+            GrantScore.grant_id == grant_id,
+            GrantScore.preset == preset,
+        )
+        .first()
+    )
+    
+    if existing_score:
+        # Update existing score
+        existing_score.base_risk_probability = score_result["base_risk_probability"]
+        existing_score.final_risk_probability = score_result["final_risk_probability"]
+        existing_score.risk_descriptor = score_result["risk_descriptor"]
+        existing_score.grant_recommendation_label = score_result["grant_recommendation"]["label"]
+        existing_score.grant_recommendation_text = score_result["grant_recommendation"]["recommendation"]
+        existing_score.altman_zscore = score_result["altman_zscore"]
+        existing_score.altman_zone = score_result["altman_zone"]
+        existing_score.organizational_health_score = score_result["organizational_health"]
+        existing_score.features = score_result["features"]
+        existing_score.financial_snapshot = score_result["financial_snapshot"]
+        existing_score.risk_factors = score_result["grant_recommendation"]["risk_factors"]
+        db.session.commit()
+    else:
+        # Create new score
+        score_obj = GrantScore(
+            grant_id=grant_id,
+            organization_id=_org_id(),
+            preset=preset,
+            base_risk_probability=score_result["base_risk_probability"],
+            final_risk_probability=score_result["final_risk_probability"],
+            risk_descriptor=score_result["risk_descriptor"],
+            grant_recommendation_label=score_result["grant_recommendation"]["label"],
+            grant_recommendation_text=score_result["grant_recommendation"]["recommendation"],
+            altman_zscore=score_result["altman_zscore"],
+            altman_zone=score_result["altman_zone"],
+            organizational_health_score=score_result["organizational_health"],
+            features=score_result["features"],
+            financial_snapshot=score_result["financial_snapshot"],
+            risk_factors=score_result["grant_recommendation"]["risk_factors"],
+        )
+        db.session.add(score_obj)
+        db.session.commit()
+    
+    return jsonify(score_result)
+
+
+@admin_bp.get("/tony/score/<int:grant_id>")
+@login_required
+@roles_required("admin")
+def tony_get_score_route(grant_id: int):
+    """Get latest TONY score for a grant."""
+    from ngo_homesuite.models.core import Grant, GrantScore, db
+    
+    grant = db.session.get(Grant, grant_id)
+    if not grant or grant.organization_id != _org_id():
+        return jsonify({"error": "not found"}), 404
+    
+    # Get latest score (any preset)
+    latest_score = (
+        db.session.query(GrantScore)
+        .filter(GrantScore.grant_id == grant_id)
+        .order_by(GrantScore.scored_at.desc())
+        .first()
+    )
+    
+    if not latest_score:
+        return jsonify({"error": "no scores found"}), 404
+    
+    return jsonify({
+        "id": latest_score.id,
+        "grant_id": latest_score.grant_id,
+        "preset": latest_score.preset,
+        "scored_at": latest_score.scored_at.isoformat(),
+        "base_risk_probability": latest_score.base_risk_probability,
+        "final_risk_probability": latest_score.final_risk_probability,
+        "risk_descriptor": latest_score.risk_descriptor,
+        "grant_recommendation_label": latest_score.grant_recommendation_label,
+        "grant_recommendation_text": latest_score.grant_recommendation_text,
+        "altman_zscore": latest_score.altman_zscore,
+        "altman_zone": latest_score.altman_zone,
+        "organizational_health_score": latest_score.organizational_health_score,
+        "features": latest_score.features,
+        "financial_snapshot": latest_score.financial_snapshot,
+        "risk_factors": latest_score.risk_factors,
+    })
+
+
+@admin_bp.get("/tony/audit")
+@login_required
+@roles_required("admin")
+def tony_organization_audit_route():
+    """Run full TONY audit for all organization grants.
+    
+    Query params:
+    - preset: scoring preset (default: balanced)
+    - limit: max grants to score (default: no limit)
+    """
+    from ngo_homesuite.compliance.tony_scoring import TonyScoringService
+    
+    preset = request.args.get("preset", "balanced").lower()
+    limit = request.args.get("limit", type=int)
+    
+    try:
+        audit = TonyScoringService.run_organization_audit(_org_id(), preset)
+        return jsonify(audit)
+    except Exception as e:
+        return jsonify({"error": f"Audit failed: {str(e)}"}), 500
+
+
+@admin_bp.get("/tony/recommendations")
+@login_required
+@roles_required("admin")
+def tony_recommendations_route():
+    """Get grants requiring action based on latest TONY scores.
+    
+    Returns grants with risk level >= Conditional.
+    """
+    from ngo_homesuite.models.core import Grant, GrantScore, db
+    
+    # Get grants with conditional or elevated risk (latest score per grant)
+    subquery = (
+        select(GrantScore.grant_id, func.max(GrantScore.scored_at))
+        .where(GrantScore.organization_id == _org_id())
+        .group_by(GrantScore.grant_id)
+        .subquery()
+    )
+    
+    risky_scores = (
+        db.session.query(GrantScore)
+        .join(subquery, (GrantScore.grant_id == subquery.c.grant_id) & (GrantScore.scored_at == subquery.c.max_1))
+        .filter(GrantScore.grant_recommendation_label.in_(["Conditional", "Elevated Risk"]))
+        .order_by(GrantScore.final_risk_probability.desc())
+        .all()
+    )
+    
+    return jsonify([
+        {
+            "grant_id": s.grant_id,
+            "grant_name": s.grant.name if s.grant else "Unknown",
+            "risk_level": s.grant_recommendation_label,
+            "risk_probability": s.final_risk_probability,
+            "recommendation": s.grant_recommendation_text,
+            "risk_factors": s.risk_factors,
+            "scored_at": s.scored_at.isoformat(),
+        }
+        for s in risky_scores
+    ])

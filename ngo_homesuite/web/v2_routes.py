@@ -864,124 +864,124 @@ def dispatch_reminders_admin():
     if reminder_type in ("overdue", "both"):
         result["overdue"] = dispatch_overdue_task_reminders(_org_id())
 
-
-    # ---------------------------------------------------------------------------
-    # Campaign routes
-    # ---------------------------------------------------------------------------
-
-    @v2_bp.route("/campaigns", methods=["GET"])
-    @login_required
-    @roles_required("admin", "staff")
-    def list_campaigns_route():
-        """List campaigns for the current org."""
-        from ngo_homesuite.services.campaign_service import list_campaigns
-        status = request.args.get("status")
-        campaign_type = request.args.get("campaign_type")
-        campaigns = list_campaigns(_org_id(), status=status, campaign_type=campaign_type)
-        return jsonify([
-            {
-                "id": c.id,
-                "name": c.name,
-                "slug": c.slug,
-                "description": c.description,
-                "campaign_type": c.campaign_type,
-                "status": c.status,
-                "goal_amount": float(c.goal_amount),
-                "raised_amount": float(c.raised_amount),
-                "currency": c.currency,
-                "start_date": str(c.start_date) if c.start_date else None,
-                "end_date": str(c.end_date) if c.end_date else None,
-                "created_at": c.created_at.isoformat() if c.created_at else None,
-            }
-            for c in campaigns
-        ])
-
-
-    @v2_bp.route("/campaigns", methods=["POST"])
-    @login_required
-    @roles_required("admin")
-    def create_campaign_route():
-        """Create a new campaign."""
-        from ngo_homesuite.services.campaign_service import create_campaign
-        data = _json_or_400(["name"])
-        start_date = None
-        end_date = None
-        if data.get("start_date"):
-            try:
-                start_date = _parse_iso_date(data["start_date"])
-            except ValueError:
-                return jsonify({"error": "Invalid start_date format, use YYYY-MM-DD"}), 400
-        if data.get("end_date"):
-            try:
-                end_date = _parse_iso_date(data["end_date"])
-            except ValueError:
-                return jsonify({"error": "Invalid end_date format, use YYYY-MM-DD"}), 400
-        try:
-            campaign = create_campaign(
-                _org_id(),
-                name=data["name"],
-                campaign_type=data.get("campaign_type", "general"),
-                status=data.get("status", "draft"),
-                description=data.get("description"),
-                goal_amount=float(data.get("goal_amount", 0)),
-                currency=data.get("currency", "USD"),
-                start_date=start_date,
-                end_date=end_date,
-                fund_id=data.get("fund_id"),
-                notes=data.get("notes"),
-                slug=data.get("slug"),
-            )
-        except ValueError as exc:
-            return jsonify({"error": str(exc)}), 400
-        return jsonify({"id": campaign.id, "slug": campaign.slug}), 201
-
-
-    @v2_bp.route("/campaigns/<int:campaign_id>", methods=["GET"])
-    @login_required
-    @roles_required("admin", "staff")
-    def get_campaign_route(campaign_id: int):
-        """Get campaign detail + live stats."""
-        from ngo_homesuite.services.campaign_service import campaign_stats
-        try:
-            stats = campaign_stats(campaign_id, _org_id())
-        except LookupError:
-            return jsonify({"error": "Campaign not found"}), 404
-        return jsonify(stats)
-
-
-    @v2_bp.route("/campaigns/<int:campaign_id>", methods=["PATCH"])
-    @login_required
-    @roles_required("admin")
-    def update_campaign_route(campaign_id: int):
-        """Update mutable campaign fields."""
-        from ngo_homesuite.services.campaign_service import update_campaign
-        data = _json_or_400()
-        # Convert date strings if provided
-        for date_field in ("start_date", "end_date"):
-            if data.get(date_field):
-                try:
-                    data[date_field] = _parse_iso_date(data[date_field])
-                except ValueError:
-                    return jsonify({"error": f"Invalid {date_field} format, use YYYY-MM-DD"}), 400
-        try:
-            campaign = update_campaign(campaign_id, _org_id(), **data)
-        except LookupError:
-            return jsonify({"error": "Campaign not found"}), 404
-        except ValueError as exc:
-            return jsonify({"error": str(exc)}), 400
-        return jsonify({"id": campaign.id, "status": campaign.status})
-
-
-    @v2_bp.route("/campaigns/<int:campaign_id>/close", methods=["POST"])
-    @login_required
-    @roles_required("admin")
-    def close_campaign_route(campaign_id: int):
-        """Close a campaign."""
-        from ngo_homesuite.services.campaign_service import update_campaign
-        try:
-            campaign = update_campaign(campaign_id, _org_id(), status="closed")
-        except LookupError:
-            return jsonify({"error": "Campaign not found"}), 404
-        return jsonify({"id": campaign.id, "status": campaign.status})
-    
     return jsonify(result)
+
+
+# ---------------------------------------------------------------------------
+# Campaign routes
+# ---------------------------------------------------------------------------
+
+@v2_bp.route("/campaigns", methods=["GET"])
+@login_required
+@roles_required("admin", "staff")
+def list_campaigns_route():
+    """List campaigns for the current org."""
+    from ngo_homesuite.services.campaign_service import list_campaigns
+    status = request.args.get("status")
+    campaign_type = request.args.get("campaign_type")
+    campaigns = list_campaigns(_org_id(), status=status, campaign_type=campaign_type)
+    return jsonify([
+        {
+            "id": c.id,
+            "name": c.name,
+            "slug": c.slug,
+            "description": c.description,
+            "campaign_type": c.campaign_type,
+            "status": c.status,
+            "goal_amount": float(c.goal_amount),
+            "raised_amount": float(c.raised_amount),
+            "currency": c.currency,
+            "start_date": str(c.start_date) if c.start_date else None,
+            "end_date": str(c.end_date) if c.end_date else None,
+            "created_at": c.created_at.isoformat() if c.created_at else None,
+        }
+        for c in campaigns
+    ])
+
+
+@v2_bp.route("/campaigns", methods=["POST"])
+@login_required
+@roles_required("admin")
+def create_campaign_route():
+    """Create a new campaign."""
+    from ngo_homesuite.services.campaign_service import create_campaign
+    data = _json_or_400(["name"])
+    start_date = None
+    end_date = None
+    if data.get("start_date"):
+        try:
+            start_date = _parse_iso_date(data["start_date"])
+        except ValueError:
+            return jsonify({"error": "Invalid start_date format, use YYYY-MM-DD"}), 400
+    if data.get("end_date"):
+        try:
+            end_date = _parse_iso_date(data["end_date"])
+        except ValueError:
+            return jsonify({"error": "Invalid end_date format, use YYYY-MM-DD"}), 400
+    try:
+        campaign = create_campaign(
+            _org_id(),
+            name=data["name"],
+            campaign_type=data.get("campaign_type", "general"),
+            status=data.get("status", "draft"),
+            description=data.get("description"),
+            goal_amount=float(data.get("goal_amount", 0)),
+            currency=data.get("currency", "USD"),
+            start_date=start_date,
+            end_date=end_date,
+            fund_id=data.get("fund_id"),
+            notes=data.get("notes"),
+            slug=data.get("slug"),
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"id": campaign.id, "slug": campaign.slug}), 201
+
+
+@v2_bp.route("/campaigns/<int:campaign_id>", methods=["GET"])
+@login_required
+@roles_required("admin", "staff")
+def get_campaign_route(campaign_id: int):
+    """Get campaign detail + live stats."""
+    from ngo_homesuite.services.campaign_service import campaign_stats
+    try:
+        stats = campaign_stats(campaign_id, _org_id())
+    except LookupError:
+        return jsonify({"error": "Campaign not found"}), 404
+    return jsonify(stats)
+
+
+@v2_bp.route("/campaigns/<int:campaign_id>", methods=["PATCH"])
+@login_required
+@roles_required("admin")
+def update_campaign_route(campaign_id: int):
+    """Update mutable campaign fields."""
+    from ngo_homesuite.services.campaign_service import update_campaign
+    data = _json_or_400()
+    # Convert date strings if provided
+    for date_field in ("start_date", "end_date"):
+        if data.get(date_field):
+            try:
+                data[date_field] = _parse_iso_date(data[date_field])
+            except ValueError:
+                return jsonify({"error": f"Invalid {date_field} format, use YYYY-MM-DD"}), 400
+    try:
+        campaign = update_campaign(campaign_id, _org_id(), **data)
+    except LookupError:
+        return jsonify({"error": "Campaign not found"}), 404
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"id": campaign.id, "status": campaign.status})
+
+
+@v2_bp.route("/campaigns/<int:campaign_id>/close", methods=["POST"])
+@login_required
+@roles_required("admin")
+def close_campaign_route(campaign_id: int):
+    """Close a campaign."""
+    from ngo_homesuite.services.campaign_service import update_campaign
+    try:
+        campaign = update_campaign(campaign_id, _org_id(), status="closed")
+    except LookupError:
+        return jsonify({"error": "Campaign not found"}), 404
+    return jsonify({"id": campaign.id, "status": campaign.status})

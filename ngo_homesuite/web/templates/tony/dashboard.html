@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col-md-8">
+            <h1>📊 Interactive Dashboard</h1>
+            <p class="text-muted">Real-time grant portfolio visualization and risk analysis</p>
+        </div>
+        <div class="col-md-4">
+            <a href="{{ url_for('tony.tony_home') }}" class="btn btn-secondary">← Back to TONY</a>
+        </div>
+    </div>
+
+    {% if grant_count > 0 %}
+    <div class="row">
+        <div class="col-lg-3">
+            <div class="card border-0 shadow-sm text-center">
+                <div class="card-body">
+                    <h6 class="text-muted">Total Grants</h6>
+                    <h3>{{ grant_count }}</h3>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-3">
+            <div class="card border-0 shadow-sm text-center">
+                <div class="card-body">
+                    <h6 class="text-muted">Portfolio Value</h6>
+                    <h3 id="totalAmount">$0</h3>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-3">
+            <div class="card border-0 shadow-sm text-center">
+                <div class="card-body">
+                    <h6 class="text-muted">Active Grants</h6>
+                    <h3 id="activeCount">0</h3>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-3">
+            <div class="card border-0 shadow-sm text-center">
+                <div class="card-body">
+                    <h6 class="text-muted">Avg Risk Score</h6>
+                    <h3 id="avgRisk">--</h3>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mt-4">
+        <div class="col-lg-6">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-light border-0">
+                    <h6 class="mb-0">Grant Distribution by Funder</h6>
+                </div>
+                <div class="card-body">
+                    <div id="funderChart" style="height: 300px;"></div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-6">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-light border-0">
+                    <h6 class="mb-0">Status Overview</h6>
+                </div>
+                <div class="card-body">
+                    <div id="statusChart" style="height: 300px;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-light border-0">
+                    <h6 class="mb-0">Grant Portfolio</h6>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Grant Title</th>
+                                    <th>Funder</th>
+                                    <th>Amount</th>
+                                    <th>Status</th>
+                                    <th>Period</th>
+                                </tr>
+                            </thead>
+                            <tbody id="grantsTable">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <div class="alert alert-info">
+        <strong>No grants found.</strong> Please <a href="{{ url_for('tony.ingest_grants') }}">ingest grant data</a> to get started.
+    </div>
+    {% endif %}
+</div>
+
+<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+<script>
+const grants = {{ grants|tojson }};
+
+if (grants.length > 0) {
+    // Calculate totals
+    let totalAmount = 0;
+    let activeCount = 0;
+    let funderCounts = {};
+    let statusCounts = {};
+
+    grants.forEach(g => {
+        totalAmount += g.amount || 0;
+        if (g.status === 'active') activeCount++;
+        
+        funderCounts[g.funder] = (funderCounts[g.funder] || 0) + 1;
+        statusCounts[g.status] = (statusCounts[g.status] || 0) + 1;
+    });
+
+    document.getElementById('totalAmount').textContent = '$' + totalAmount.toLocaleString('en-US', {maximumFractionDigits: 0});
+    document.getElementById('activeCount').textContent = activeCount;
+
+    // Funder chart
+    const funderData = [{
+        labels: Object.keys(funderCounts),
+        values: Object.values(funderCounts),
+        type: 'pie'
+    }];
+    Plotly.newPlot('funderChart', funderData, {margin: {t: 0, r: 0, b: 0, l: 0}});
+
+    // Status chart
+    const statusData = [{
+        labels: Object.keys(statusCounts),
+        values: Object.values(statusCounts),
+        type: 'pie'
+    }];
+    Plotly.newPlot('statusChart', statusData, {margin: {t: 0, r: 0, b: 0, l: 0}});
+
+    // Populate table
+    const tbody = document.getElementById('grantsTable');
+    grants.forEach(g => {
+        const row = document.createElement('tr');
+        const startDate = g.start_date ? new Date(g.start_date).toLocaleDateString() : 'N/A';
+        const endDate = g.end_date ? new Date(g.end_date).toLocaleDateString() : 'N/A';
+        row.innerHTML = `
+            <td><strong>${g.title}</strong></td>
+            <td>${g.funder}</td>
+            <td>$${g.amount.toLocaleString('en-US', {maximumFractionDigits: 0})}</td>
+            <td><span class="badge bg-${g.status === 'active' ? 'success' : 'secondary'}">${g.status}</span></td>
+            <td><small>${startDate} - ${endDate}</small></td>
+        `;
+        tbody.appendChild(row);
+    });
+}
+</script>
+{% endblock %}

@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col-md-8">
+            <h1>✅ Compliance Checker</h1>
+            <p class="text-muted">Verify grants against TONY's control catalog and best practices</p>
+        </div>
+        <div class="col-md-4">
+            <a href="{{ url_for('tony.tony_home') }}" class="btn btn-secondary">← Back to TONY</a>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-lg-8">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body p-4">
+                    <h5 class="card-title mb-4">Run Compliance Assessment</h5>
+                    <form id="complianceForm">
+                        <button type="submit" class="btn btn-primary btn-lg">
+                            <span class="spinner-border spinner-border-sm me-2" id="spinner" style="display:none;"></span>
+                            Check All Grants
+                        </button>
+                    </form>
+                </div>
+            </div>
+            
+            <div id="results" class="card border-0 shadow-sm mt-4" style="display:none;">
+                <div class="card-header">
+                    <h5 class="mb-0">Compliance Results</h5>
+                </div>
+                <div class="card-body">
+                    <div id="resultsContent"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-4">
+            <div class="card border-0 shadow-sm bg-light">
+                <div class="card-body">
+                    <h6 class="card-title">Control Categories</h6>
+                    <ul class="small mb-0">
+                        <li>Grant Administration</li>
+                        <li>Financial Controls</li>
+                        <li>Reporting Requirements</li>
+                        <li>Risk Management</li>
+                        <li>Governance Standards</li>
+                        <li>Best Practices</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.getElementById('complianceForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const spinner = document.getElementById('spinner');
+    spinner.style.display = 'inline-block';
+
+    try {
+        const response = await fetch('{{ url_for("tony.check_compliance") }}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            let html = `
+                <div class="alert alert-info">
+                    <strong>Compliance Score:</strong> ${(data.compliance_score * 100).toFixed(1)}%
+                </div>
+            `;
+            
+            if (data.violations && data.violations.length > 0) {
+                html += `<div class="alert alert-warning">
+                    <h6>Issues Found:</h6>
+                    <ul class="mb-0">
+                        ${data.violations.map(v => `<li>${v}</li>`).join('')}
+                    </ul>
+                </div>`;
+            }
+            
+            if (data.recommendations && data.recommendations.length > 0) {
+                html += `<div class="alert alert-info">
+                    <h6>Recommendations:</h6>
+                    <ul class="mb-0">
+                        ${data.recommendations.map(r => `<li>${r}</li>`).join('')}
+                    </ul>
+                </div>`;
+            }
+            
+            document.getElementById('resultsContent').innerHTML = html;
+            document.getElementById('results').style.display = 'block';
+        } else {
+            alert('Error running compliance check. Please try again.');
+        }
+    } catch (error) {
+        alert('Error: ' + error.message);
+    } finally {
+        spinner.style.display = 'none';
+    }
+});
+</script>
+{% endblock %}

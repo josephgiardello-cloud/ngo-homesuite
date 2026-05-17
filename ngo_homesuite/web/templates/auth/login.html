@@ -3,48 +3,317 @@
 {% block title %}Sign In - NGO HomeSuite{% endblock %}
 
 {% block content %}
-<div style="max-width: 400px; margin: 3rem auto;">
-    <h2 class="text-center" style="margin-bottom: 2rem;">Sign In</h2>
-    
-    <form method="post" novalidate>
-        {{ form.hidden_tag() }}
-        
-        <div class="form-group {% if form.username.errors %}error{% endif %}">
-            {{ form.username.label }}
-            {{ form.username(class='form-control') }}
-            {% if form.username.errors %}
-                <div class="error-message">
-                    {% for error in form.username.errors %}
-                        <div>{{ error }}</div>
-                    {% endfor %}
+<style>
+    .login-shell {
+        min-height: calc(100vh - 11rem);
+        width: 100%;
+        display: block;
+        padding: 1.25rem 0.5rem 2rem;
+    }
+
+    .login-card {
+        width: min(100%, 820px);
+        margin: 0 auto;
+        border-radius: 28px;
+        border: 1px solid rgba(219, 227, 237, 0.95);
+        box-shadow: 0 20px 56px rgba(16, 36, 61, 0.12);
+        overflow: hidden;
+        background: linear-gradient(180deg, rgba(255,255,255,0.99), rgba(248,250,252,0.98));
+    }
+
+    .login-hero {
+        position: relative;
+        padding: 2rem 2rem 1.5rem;
+        color: #eff6ff;
+        background:
+            radial-gradient(circle at top right, rgba(255,255,255,0.18), transparent 28%),
+            radial-gradient(circle at bottom left, rgba(255,255,255,0.1), transparent 22%),
+            linear-gradient(145deg, #0c2440 0%, #134c82 52%, #176fc7 100%);
+    }
+
+    .login-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        padding: 0.4rem 0.75rem;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.12);
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        font-size: 0.78rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+    }
+
+    .login-hero h1 {
+        margin: 1rem 0 0.75rem;
+        color: inherit;
+        font-size: clamp(2rem, 4vw, 3rem);
+        line-height: 1.04;
+    }
+
+    .login-hero p {
+        margin: 0;
+        max-width: 40rem;
+        color: rgba(239, 246, 255, 0.9);
+        font-size: 0.98rem;
+    }
+
+    .login-aspects {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 0.85rem;
+        margin-top: 1.25rem;
+    }
+
+    .aspect-card {
+        min-height: 116px;
+        padding: 0.95rem;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.1);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        backdrop-filter: blur(10px);
+    }
+
+    .aspect-icon {
+        width: 2.15rem;
+        height: 2.15rem;
+        border-radius: 12px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(255, 255, 255, 0.18);
+        margin-bottom: 0.75rem;
+        font-size: 1rem;
+    }
+
+    .aspect-card strong {
+        display: block;
+        color: #ffffff;
+        font-size: 0.98rem;
+        margin-bottom: 0.35rem;
+    }
+
+    .aspect-card span {
+        display: block;
+        color: rgba(239, 246, 255, 0.83);
+        font-size: 0.9rem;
+        line-height: 1.45;
+    }
+
+    .login-form-wrap {
+        padding: 2rem;
+        background: var(--surface);
+    }
+
+    .login-card-header {
+        margin-bottom: 1.35rem;
+        text-align: center;
+    }
+
+    .login-card-header h2 {
+        margin-bottom: 0.35rem;
+        font-size: 1.7rem;
+    }
+
+    .login-card-header p {
+        margin: 0;
+        color: var(--muted);
+    }
+
+    .login-form {
+        display: grid;
+        gap: 1rem;
+    }
+
+    .login-form .form-group {
+        margin-bottom: 0;
+    }
+
+    .login-form label {
+        margin-bottom: 0.4rem;
+        font-size: 0.9rem;
+    }
+
+    .login-form input[type="text"],
+    .login-form input[type="password"] {
+        height: 50px;
+        border-radius: 14px;
+        background: var(--surface-soft);
+        border-color: rgba(219, 227, 237, 0.95);
+    }
+
+    .login-form input[type="text"]:focus,
+    .login-form input[type="password"]:focus {
+        background: var(--surface);
+    }
+
+    .login-meta {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.85rem;
+        flex-wrap: wrap;
+        padding-top: 0.2rem;
+    }
+
+    .remember-wrap {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.55rem;
+        color: var(--muted);
+        font-size: 0.94rem;
+    }
+
+    .remember-wrap input {
+        width: 1rem;
+        height: 1rem;
+        accent-color: var(--primary);
+    }
+
+    .secondary-link {
+        color: var(--primary);
+        text-decoration: none;
+        font-weight: 600;
+        font-size: 0.94rem;
+        white-space: nowrap;
+    }
+
+    .secondary-link:hover {
+        text-decoration: underline;
+        text-underline-offset: 2px;
+    }
+
+    .auth-submit {
+        width: 100%;
+        min-height: 52px;
+        border-radius: 14px;
+        background: linear-gradient(135deg, var(--primary) 0%, #0f5ea7 100%);
+        box-shadow: 0 14px 28px rgba(20, 118, 212, 0.2);
+    }
+
+    .auth-submit:hover {
+        background: linear-gradient(135deg, var(--primary-hover) 0%, #0c538f 100%);
+    }
+
+    .login-footer {
+        margin-top: 1.15rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--border);
+        text-align: center;
+        color: var(--muted);
+    }
+
+    .login-footer a {
+        color: var(--primary);
+        font-weight: 700;
+        text-decoration: none;
+    }
+
+    .login-footer a:hover {
+        text-decoration: underline;
+        text-underline-offset: 2px;
+    }
+
+    @media (max-width: 840px) {
+        .login-aspects { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 560px) {
+        .login-shell {
+            padding: 0.75rem 0.35rem 1.25rem;
+        }
+
+        .login-hero,
+        .login-form-wrap {
+            padding: 1.25rem;
+        }
+
+        .login-card-header {
+            text-align: left;
+        }
+    }
+</style>
+
+<div class="login-shell">
+    <div class="login-card">
+        <section class="login-hero">
+            <div class="login-badge">Secure access</div>
+            <h1>Welcome to NGO-OMG.</h1>
+            <p>
+                NGO-OMG brings donor management, funds, volunteers, and compliance together in one focused workspace built for real nonprofit operations.
+            </p>
+
+            <div class="login-aspects">
+                <div class="aspect-card">
+                    <div class="aspect-icon">1</div>
+                    <strong>All core work in one place</strong>
+                    <span>Manage donors, donations, funds, and reports from a single streamlined dashboard.</span>
                 </div>
-            {% endif %}
-        </div>
-        
-        <div class="form-group {% if form.password.errors %}error{% endif %}">
-            {{ form.password.label }}
-            {{ form.password(class='form-control') }}
-            {% if form.password.errors %}
-                <div class="error-message">
-                    {% for error in form.password.errors %}
-                        <div>{{ error }}</div>
-                    {% endfor %}
+                <div class="aspect-card">
+                    <div class="aspect-icon">2</div>
+                    <strong>Operations that stay organized</strong>
+                    <span>Track tasks, volunteers, and compliance without losing the thread across tools.</span>
                 </div>
-            {% endif %}
-        </div>
-        
-        <div class="form-group checkbox-group">
-            {{ form.remember_me() }}
-            {{ form.remember_me.label(class_='') }}
-        </div>
-        
-        <div class="form-group">
-            {{ form.submit(class='btn btn-primary', style='width: 100%;') }}
-        </div>
-    </form>
-    
-    <div class="text-center mt-3">
-        <p>Don't have an account? <a href="{{ url_for('auth.register') }}">Register here</a></p>
+                <div class="aspect-card">
+                    <div class="aspect-icon">3</div>
+                    <strong>Security and accountability</strong>
+                    <span>Session-based auth, secure cookies, and audit-friendly controls keep access disciplined.</span>
+                </div>
+            </div>
+        </section>
+
+        <section class="login-form-wrap">
+            <div class="login-card-header">
+                <h2>Welcome back</h2>
+                <p>Use your NGO HomeSuite account to continue.</p>
+            </div>
+
+            <form method="post" novalidate class="login-form">
+                {{ form.hidden_tag() }}
+
+                <div class="form-group {% if form.username.errors %}error{% endif %}">
+                    {{ form.username.label }}
+                    {{ form.username(class='form-control', autocomplete='username', placeholder='Your username') }}
+                    {% if form.username.errors %}
+                        <div class="error-message">
+                            {% for error in form.username.errors %}
+                                <div>{{ error }}</div>
+                            {% endfor %}
+                        </div>
+                    {% endif %}
+                </div>
+
+                <div class="form-group {% if form.password.errors %}error{% endif %}">
+                    {{ form.password.label }}
+                    {{ form.password(class='form-control', autocomplete='current-password', placeholder='Your password') }}
+                    {% if form.password.errors %}
+                        <div class="error-message">
+                            {% for error in form.password.errors %}
+                                <div>{{ error }}</div>
+                            {% endfor %}
+                        </div>
+                    {% endif %}
+                </div>
+
+                <div class="login-meta">
+                    <label class="remember-wrap">
+                        {{ form.remember_me() }}
+                        <span>{{ form.remember_me.label.text }}</span>
+                    </label>
+                    <a class="secondary-link" href="{{ url_for('auth.register') }}">Create an account</a>
+                </div>
+
+                <div class="form-group">
+                    {{ form.submit(class='btn auth-submit') }}
+                </div>
+            </form>
+
+            <div class="login-footer">
+                <span>Need access? </span><a href="{{ url_for('auth.register') }}">Register here</a>
+            </div>
+        </section>
     </div>
 </div>
 {% endblock %}

@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+
+{% block title %}Organization Setup - NGO HomeSuite{% endblock %}
+
+{% block content %}
+<div style="max-width:640px; margin:2rem auto;">
+    <div style="margin-bottom:1.5rem;">
+        <h1 style="margin-bottom:0.35rem;">Set up your organization</h1>
+        <p class="text-muted">You don't have an organization yet. Fill in the details below to get started.</p>
+    </div>
+
+    {% if error %}
+    <div class="flash flash-error" style="margin-bottom:1rem;">{{ error }}</div>
+    {% endif %}
+
+    <div class="card" style="padding:1.75rem;">
+        <form method="post" action="{{ url_for('main.org_setup') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+
+            <div class="form-group">
+                <label for="name">Organization name <span style="color:var(--danger)">*</span></label>
+                <input type="text" id="name" name="name" placeholder="e.g. Helping Hands NGO" required
+                       value="{{ request.form.get('name', '') }}" />
+            </div>
+
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem;">
+                <div class="form-group">
+                    <label for="email">Contact email</label>
+                    <input type="email" id="email" name="email" placeholder="info@yourorg.org"
+                           value="{{ request.form.get('email', '') }}" />
+                </div>
+                <div class="form-group">
+                    <label for="phone">Phone</label>
+                    <input type="text" id="phone" name="phone" placeholder="+1 555 000 0000"
+                           value="{{ request.form.get('phone', '') }}" />
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="website">Website</label>
+                <input type="url" id="website" name="website" placeholder="https://yourorg.org"
+                       value="{{ request.form.get('website', '') }}" />
+            </div>
+
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem;">
+                <div class="form-group">
+                    <label for="country">Country</label>
+                    <input type="text" id="country" name="country" placeholder="United States"
+                           value="{{ request.form.get('country', '') }}" />
+                </div>
+                <div class="form-group">
+                    <label for="city">City</label>
+                    <input type="text" id="city" name="city" placeholder="New York"
+                           value="{{ request.form.get('city', '') }}" />
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="mission">Mission statement <span class="text-muted" style="font-weight:400;">(optional)</span></label>
+                <textarea id="mission" name="mission" rows="3"
+                          placeholder="Briefly describe your organization's mission...">{{ request.form.get('mission', '') }}</textarea>
+            </div>
+
+            <div style="display:flex; gap:0.75rem; justify-content:flex-end; margin-top:1.5rem; padding-top:1rem; border-top:1px solid var(--border);">
+                <button type="submit" class="btn btn-primary">Create Organization</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

@@ -1027,6 +1027,87 @@ def public_give():
     return render_template('public_donation_form.html', form=form, active_page='give')
 
 
+@main_bp.route('/setup', methods=['GET', 'POST'])
+@login_required
+@roles_required('admin')
+def org_setup():
+    """First-time organization setup wizard."""
+    from ngo_homesuite.models.core import Organization, User, db
+    import re
+
+    org = _current_org()
+    if org:
+        flash('Organization already configured. Use Settings to make changes.', 'info')
+        return redirect(url_for('main.org_settings'))
+
+    error = None
+    if request.method == 'POST':
+        name = request.form.get('name', '').strip()
+        email = request.form.get('email', '').strip() or None
+        phone = request.form.get('phone', '').strip() or None
+        website = request.form.get('website', '').strip() or None
+        country = request.form.get('country', '').strip() or None
+        city = request.form.get('city', '').strip() or None
+        mission = request.form.get('mission', '').strip() or None
+
+        if not name:
+            error = 'Organization name is required.'
+        else:
+            slug = re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-') or 'org'
+            # ensure unique slug
+            existing = db.session.query(Organization).filter_by(slug=slug).first()
+            if existing:
+                slug = f"{slug}-{existing.id + 1}"
+
+            new_org = Organization(
+                name=name, slug=slug, email=email, phone=phone,
+                website=website, country=country, city=city,
+                mission=mission, is_active=True,
+            )
+            db.session.add(new_org)
+            db.session.flush()  # get new_org.id
+
+            # Assign org to current user
+            user = db.session.get(User, current_user.id)
+            user.organization_id = new_org.id
+            db.session.commit()
+            flash(f'Organization "{name}" created successfully.', 'success')
+            return redirect(url_for('main.dashboard'))
+
+    return render_template('setup.html', error=error, active_page=None)
+
+
+@main_bp.route('/settings', methods=['GET', 'POST'])
+@login_required
+@roles_required('admin')
+def org_settings():
+    """Organization settings page."""
+    from ngo_homesuite.models.core import Organization, db
+
+    org = _current_org()
+    error = None
+    success = False
+
+    if request.method == 'POST' and org:
+        import re
+        name = request.form.get('name', '').strip()
+        if not name:
+            error = 'Organization name is required.'
+        else:
+            org.name = name
+            org.email = request.form.get('email', '').strip() or None
+            org.phone = request.form.get('phone', '').strip() or None
+            org.website = request.form.get('website', '').strip() or None
+            org.country = request.form.get('country', '').strip() or None
+            org.city = request.form.get('city', '').strip() or None
+            org.mission = request.form.get('mission', '').strip() or None
+            db.session.commit()
+            flash('Settings saved.', 'success')
+            success = True
+
+    return render_template('settings.html', org=org, error=error, success=success, active_page='settings')
+
+
 @main_bp.route('/dashboard')
 @login_required
 def dashboard():
@@ -1048,6 +1129,7 @@ def dashboard():
             'total_donations': 0,
             'total_budget': 0,
             'total_expenses': 0,
+            'net_cashflow': 0,
             'total_funds': 0,
             'recent_donations': [],
         }
@@ -1076,6 +1158,23 @@ def activity_feed():
     return render_template(
         'activity_feed.html',
         active_page='activity',
+        organization_name=org.name,
+    )
+
+
+@main_bp.route('/tony-scoring')
+@login_required
+@roles_required('admin', 'staff')
+def tony_scoring():
+    """TONY advanced grant scoring dashboard."""
+    org = _current_org()
+    if not org:
+        flash('No organization found for your account.', 'error')
+        return redirect(url_for('main.dashboard'))
+
+    return render_template(
+        'tony_scoring.html',
+        active_page='tony_scoring',
         organization_name=org.name,
     )
 
@@ -1128,7 +1227,7 @@ def mobile_intake():
                     status=(request.form.get('status') or 'active').strip() or 'active',
                     notes=(request.form.get('notes') or '').strip() or None,
                 )
-                flash('Beneficiary intake captured.', 'success')
+                flash('Beneficiary quick intake captured.', 'success')
                 return redirect(url_for('main.mobile_intake'))
         elif action == 'volunteer':
             name = (request.form.get('volunteer_name') or '').strip()

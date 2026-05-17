@@ -1,0 +1,476 @@
+{% extends "base.html" %}
+
+{% block title %}TONY Grant Scoring - NGO HomeSuite{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+  <div class="row mb-4">
+    <div class="col">
+      <h1>TONY Grant Scoring</h1>
+      <p class="text-muted">Advanced 4-layer risk scoring for grant analysis and recommendations</p>
+    </div>
+  </div>
+
+  <!-- Scoring Tabs -->
+  <ul class="nav nav-tabs mb-4" role="tablist">
+    <li class="nav-item" role="presentation">
+      <button class="nav-link active" id="score-grant-tab" data-bs-toggle="tab" data-bs-target="#score-grant" type="button" role="tab">Score a Grant</button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="org-audit-tab" data-bs-toggle="tab" data-bs-target="#org-audit" type="button" role="tab">Organization Audit</button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="recommendations-tab" data-bs-toggle="tab" data-bs-target="#recommendations" type="button" role="tab">Risk Recommendations</button>
+    </li>
+  </ul>
+
+  <div class="tab-content">
+    <!-- Tab 1: Score Individual Grant -->
+    <div class="tab-pane fade show active" id="score-grant" role="tabpanel">
+      <div class="row">
+        <div class="col-lg-6">
+          <div class="card">
+            <div class="card-header bg-primary text-white">
+              <h5 class="mb-0">Score a Grant</h5>
+            </div>
+            <div class="card-body">
+              <form id="tony-score-form">
+                <div class="mb-3">
+                  <label for="grant-select" class="form-label">Select Grant</label>
+                  <select class="form-select" id="grant-select" required>
+                    <option value="">-- Choose a grant --</option>
+                  </select>
+                </div>
+
+                <div class="mb-3">
+                  <label for="preset-select" class="form-label">Scoring Preset</label>
+                  <select class="form-select" id="preset-select">
+                    <option value="balanced" selected>Balanced (Default)</option>
+                    <option value="conservative">Conservative (Stricter)</option>
+                    <option value="lenient">Lenient (More Permissive)</option>
+                  </select>
+                  <small class="form-text text-muted">
+                    Conservative: Higher penalties | Balanced: Moderate approach | Lenient: Lower penalties
+                  </small>
+                </div>
+
+                <button type="submit" class="btn btn-primary w-100">
+                  <i class="fas fa-calculator"></i> Score Grant
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-lg-6">
+          <div id="score-results" style="display: none;">
+            <div class="card border-primary">
+              <div class="card-header bg-light">
+                <h5 class="mb-0">Scoring Results</h5>
+              </div>
+              <div class="card-body">
+                <div class="row">
+                  <div class="col-md-6">
+                    <div class="mb-3">
+                      <label class="small text-muted">Risk Descriptor</label>
+                      <p class="h6" id="result-descriptor">--</p>
+                    </div>
+                    <div class="mb-3">
+                      <label class="small text-muted">Base Risk Probability</label>
+                      <div class="progress" style="height: 24px;">
+                        <div id="result-base-prob" class="progress-bar" style="width: 0%">
+                          <small id="result-base-prob-text">0%</small>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="col-md-6">
+                    <div class="mb-3">
+                      <label class="small text-muted">Recommendation</label>
+                      <p class="h6" id="result-recommendation">--</p>
+                    </div>
+                    <div class="mb-3">
+                      <label class="small text-muted">Final Risk Probability</label>
+                      <div class="progress" style="height: 24px;">
+                        <div id="result-final-prob" class="progress-bar bg-danger" style="width: 0%">
+                          <small id="result-final-prob-text">0%</small>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <hr>
+
+                <div class="row">
+                  <div class="col-md-6">
+                    <label class="small text-muted d-block mb-2">Altman Z-Score</label>
+                    <p class="mb-3">
+                      <strong id="result-altman-z">--</strong><br>
+                      <small id="result-altman-zone" class="text-muted">Zone: --</small>
+                    </p>
+                  </div>
+                  <div class="col-md-6">
+                    <label class="small text-muted d-block mb-2">Organizational Health</label>
+                    <div class="progress" style="height: 20px;">
+                      <div id="result-org-health" class="progress-bar bg-success" style="width: 0%">
+                        <small id="result-org-health-text">0%</small>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <hr>
+
+                <div class="mb-2">
+                  <label class="small text-muted d-block mb-2">Risk Factors Identified</label>
+                  <ul id="result-risk-factors" class="list-unstyled">
+                    <li><span class="badge bg-secondary">None</span></li>
+                  </ul>
+                </div>
+
+                <div class="mb-2">
+                  <label class="small text-muted d-block mb-2">Financial Snapshot</label>
+                  <table class="table table-sm table-bordered">
+                    <tbody>
+                      <tr>
+                        <td>Revenue</td>
+                        <td id="result-revenue">--</td>
+                      </tr>
+                      <tr>
+                        <td>Expenses</td>
+                        <td id="result-expenses">--</td>
+                      </tr>
+                      <tr>
+                        <td>Assets</td>
+                        <td id="result-assets">--</td>
+                      </tr>
+                      <tr>
+                        <td>Unrestricted Net</td>
+                        <td id="result-unrestricted">--</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <button type="button" class="btn btn-secondary w-100" id="reset-results">Clear Results</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab 2: Organization Audit -->
+    <div class="tab-pane fade" id="org-audit" role="tabpanel">
+      <div class="card">
+        <div class="card-header bg-info text-white">
+          <div class="row align-items-center">
+            <div class="col">
+              <h5 class="mb-0">Organization-Wide Scoring Audit</h5>
+              <small>Score all active grants to assess portfolio risk</small>
+            </div>
+            <div class="col-auto">
+              <button type="button" class="btn btn-light" id="run-audit-btn">
+                <i class="fas fa-play"></i> Run Audit
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="card-body">
+          <div id="audit-results" style="display: none;">
+            <div class="row mb-4">
+              <div class="col-md-3">
+                <div class="text-center">
+                  <h6 class="text-muted">Total Grants</h6>
+                  <h4 id="audit-total-grants">0</h4>
+                </div>
+              </div>
+              <div class="col-md-3">
+                <div class="text-center">
+                  <h6 class="text-muted">Average Risk</h6>
+                  <h4 id="audit-avg-risk">0%</h4>
+                </div>
+              </div>
+              <div class="col-md-3">
+                <div class="text-center">
+                  <h6 class="text-danger">High Risk</h6>
+                  <h4 id="audit-high-risk">0</h4>
+                </div>
+              </div>
+              <div class="col-md-3">
+                <div class="text-center">
+                  <h6 id="audit-status-label" class="text-muted">Status</h6>
+                  <h4 id="audit-status">--</h4>
+                </div>
+              </div>
+            </div>
+
+            <hr>
+
+            <h6 class="mb-3">Grant Scores by Risk Level</h6>
+            <div id="audit-scores-list" class="list-group">
+              <!-- Populated by JS -->
+            </div>
+          </div>
+          <div id="audit-loading" style="display: none;" class="text-center py-5">
+            <div class="spinner-border" role="status">
+              <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-3">Running audit...</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab 3: Risk Recommendations -->
+    <div class="tab-pane fade" id="recommendations" role="tabpanel">
+      <div class="card">
+        <div class="card-header bg-warning">
+          <div class="row align-items-center">
+            <div class="col">
+              <h5 class="mb-0">Grants Requiring Action</h5>
+              <small>Conditional or Elevated Risk level</small>
+            </div>
+            <div class="col-auto">
+              <button type="button" class="btn btn-light" id="refresh-recommendations-btn">
+                <i class="fas fa-sync"></i> Refresh
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="card-body">
+          <div id="recommendations-list" class="list-group">
+            <!-- Populated by JS -->
+          </div>
+          <div id="recommendations-empty" class="alert alert-success" style="display: none;">
+            <i class="fas fa-check-circle"></i> No high-risk grants. All grants at acceptable risk levels.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  .risk-badge-low {
+    background-color: #28a745;
+  }
+  .risk-badge-moderate {
+    background-color: #ffc107;
+    color: #000;
+  }
+  .risk-badge-high {
+    background-color: #dc3545;
+  }
+  .progress-bar {
+    transition: width 0.3s ease;
+  }
+</style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  // Load grants
+  loadGrants();
+  
+  // Event listeners
+  document.getElementById('tony-score-form').addEventListener('submit', scoreGrant);
+  document.getElementById('reset-results').addEventListener('click', resetResults);
+  document.getElementById('run-audit-btn').addEventListener('click', runAudit);
+  document.getElementById('refresh-recommendations-btn').addEventListener('click', loadRecommendations);
+  
+  // Auto-load recommendations on page load
+  loadRecommendations();
+});
+
+function loadGrants() {
+  const select = document.getElementById('grant-select');
+  fetch('/main/api/grants')
+    .then(r => r.json())
+    .then(grants => {
+      select.innerHTML = '<option value="">-- Choose a grant --</option>' +
+        grants.map(g => `<option value="${g.id}">${g.name} (${g.status})</option>`).join('');
+    })
+    .catch(err => console.error('Failed to load grants:', err));
+}
+
+function scoreGrant(e) {
+  e.preventDefault();
+  const grantId = document.getElementById('grant-select').value;
+  const preset = document.getElementById('preset-select').value;
+  
+  if (!grantId) {
+    alert('Please select a grant');
+    return;
+  }
+
+  fetch(`/admin/tony/score-grant/${grantId}?preset=${preset}`, { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) {
+        alert('Error: ' + data.error);
+        return;
+      }
+      displayResults(data);
+    })
+    .catch(err => {
+      alert('Scoring failed: ' + err);
+      console.error(err);
+    });
+}
+
+function displayResults(data) {
+  const results = document.getElementById('score-results');
+  results.style.display = 'block';
+  
+  // Update descriptor and recommendation
+  document.getElementById('result-descriptor').textContent = data.risk_descriptor;
+  document.getElementById('result-recommendation').textContent = data.grant_recommendation.label;
+  
+  // Update probabilities
+  const basePct = Math.round(data.base_risk_probability * 100);
+  const finalPct = Math.round(data.final_risk_probability * 100);
+  
+  document.getElementById('result-base-prob').style.width = basePct + '%';
+  document.getElementById('result-base-prob-text').textContent = basePct + '%';
+  
+  document.getElementById('result-final-prob').style.width = finalPct + '%';
+  document.getElementById('result-final-prob-text').textContent = finalPct + '%';
+  
+  // Update Altman Z
+  document.getElementById('result-altman-z').textContent = 
+    data.altman_zscore ? data.altman_zscore.toFixed(2) : 'N/A';
+  document.getElementById('result-altman-zone').textContent = 
+    'Zone: ' + (data.altman_zone || 'Unknown');
+  
+  // Update org health
+  const healthPct = Math.round(data.organizational_health * 100);
+  document.getElementById('result-org-health').style.width = healthPct + '%';
+  document.getElementById('result-org-health-text').textContent = healthPct + '%';
+  
+  // Update risk factors
+  const factors = data.grant_recommendation.risk_factors || [];
+  document.getElementById('result-risk-factors').innerHTML = factors.length
+    ? factors.map(f => `<li><span class="badge bg-warning text-dark">${f}</span></li>`).join('')
+    : '<li><span class="badge bg-success">None</span></li>';
+  
+  // Update financial snapshot
+  document.getElementById('result-revenue').textContent = 
+    '$' + (data.financial_snapshot.revenue || 0).toLocaleString('en-US', {maximumFractionDigits: 0});
+  document.getElementById('result-expenses').textContent = 
+    '$' + (data.financial_snapshot.expenses || 0).toLocaleString('en-US', {maximumFractionDigits: 0});
+  document.getElementById('result-assets').textContent = 
+    '$' + (data.financial_snapshot.assets || 0).toLocaleString('en-US', {maximumFractionDigits: 0});
+  document.getElementById('result-unrestricted').textContent = 
+    '$' + (data.financial_snapshot.unrestricted_net || 0).toLocaleString('en-US', {maximumFractionDigits: 0});
+}
+
+function resetResults() {
+  document.getElementById('score-results').style.display = 'none';
+  document.getElementById('grant-select').value = '';
+}
+
+function runAudit() {
+  const btn = document.getElementById('run-audit-btn');
+  const results = document.getElementById('audit-results');
+  const loading = document.getElementById('audit-loading');
+  
+  btn.disabled = true;
+  loading.style.display = 'block';
+  results.style.display = 'none';
+
+  fetch('/admin/tony/audit')
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) {
+        alert('Audit failed: ' + data.error);
+        return;
+      }
+      
+      document.getElementById('audit-total-grants').textContent = data.summary.total_grants_scored;
+      document.getElementById('audit-avg-risk').textContent = 
+        Math.round(data.summary.average_risk_probability * 100) + '%';
+      document.getElementById('audit-high-risk').textContent = data.summary.high_risk_count;
+      document.getElementById('audit-status').textContent = data.summary.status;
+      
+      const statusLabel = {
+        'Critical': 'text-danger',
+        'Moderate': 'text-warning',
+        'Healthy': 'text-success'
+      };
+      document.getElementById('audit-status-label').className = 
+        'text-muted ' + (statusLabel[data.summary.status] || '');
+      
+      // Display grant scores
+      const list = document.getElementById('audit-scores-list');
+      list.innerHTML = data.grant_scores.map(score => `
+        <div class="list-group-item">
+          <div class="row align-items-center">
+            <div class="col">
+              <h6 class="mb-1">${score.grant_name}</h6>
+              <small class="text-muted">${score.risk_descriptor}</small>
+            </div>
+            <div class="col-auto">
+              <span class="badge ${score.risk_descriptor.includes('High') ? 'bg-danger' : score.risk_descriptor.includes('Moderate') ? 'bg-warning text-dark' : 'bg-success'}">
+                ${score.grant_recommendation.label}
+              </span>
+            </div>
+            <div class="col-auto" style="min-width: 150px;">
+              <div class="progress" style="height: 20px;">
+                <div class="progress-bar bg-danger" style="width: ${Math.round(score.final_risk_probability * 100)}%">
+                  <small>${Math.round(score.final_risk_probability * 100)}%</small>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      `).join('');
+      
+      loading.style.display = 'none';
+      results.style.display = 'block';
+    })
+    .catch(err => {
+      alert('Audit failed: ' + err);
+      console.error(err);
+    })
+    .finally(() => {
+      btn.disabled = false;
+    });
+}
+
+function loadRecommendations() {
+  fetch('/admin/tony/recommendations')
+    .then(r => r.json())
+    .then(data => {
+      const list = document.getElementById('recommendations-list');
+      const empty = document.getElementById('recommendations-empty');
+      
+      if (data.length === 0) {
+        list.innerHTML = '';
+        empty.style.display = 'block';
+      } else {
+        empty.style.display = 'none';
+        list.innerHTML = data.map(rec => `
+          <div class="list-group-item">
+            <div class="row">
+              <div class="col-md-6">
+                <h6 class="mb-1">${rec.grant_name}</h6>
+                <small class="text-muted">${rec.recommendation}</small>
+              </div>
+              <div class="col-md-3">
+                <span class="badge ${rec.risk_level === 'Elevated Risk' ? 'bg-danger' : 'bg-warning text-dark'}">
+                  ${rec.risk_level}
+                </span>
+              </div>
+              <div class="col-md-3 text-end">
+                <small>${Math.round(rec.risk_probability * 100)}% Risk</small>
+              </div>
+            </div>
+          </div>
+        `).join('');
+      }
+    })
+    .catch(err => console.error('Failed to load recommendations:', err));
+}
+</script>
+{% endblock %}

@@ -431,6 +431,7 @@ from ngo_homesuite.grants.models import GrantOpportunity
 from ngo_homesuite.grants.models import GrantOutcomeRecord
 from ngo_homesuite.grants.models import GrantOutcomeTemplate
 from ngo_homesuite.grants.models import GrantProposal
+from ngo_homesuite.grants.models import GrantScore
 
 
 class MembershipTier(db.Model):

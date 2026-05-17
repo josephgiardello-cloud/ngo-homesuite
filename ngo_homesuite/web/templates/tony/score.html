@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col-md-8">
+            <h1>⚖️ Score Grants</h1>
+            <p class="text-muted">Analyze grant risk using TONY's advanced 4-layer scoring algorithm</p>
+        </div>
+        <div class="col-md-4">
+            <a href="{{ url_for('tony.tony_home') }}" class="btn btn-secondary">← Back to TONY</a>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-lg-8">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body p-4">
+                    <h5 class="card-title mb-4">Score Your Grants</h5>
+                    
+                    {% if grants %}
+                    <form id="scoreForm">
+                        <div class="mb-3">
+                            <label for="preset" class="form-label">Risk Assessment Preset</label>
+                            <select class="form-select" id="preset" name="preset" required>
+                                <option value="balanced" selected>Balanced (Recommended)</option>
+                                <option value="conservative">Conservative (Higher thresholds)</option>
+                                <option value="lenient">Lenient (More flexible)</option>
+                            </select>
+                            <small class="text-muted">Choose a preset that matches your risk tolerance</small>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Grants to Score</label>
+                            <div class="list-group" style="max-height: 300px; overflow-y: auto;">
+                                {% for grant in grants %}
+                                <label class="list-group-item">
+                                    <input class="form-check-input grant-checkbox" type="checkbox" value="{{ grant.id }}" name="grants" checked>
+                                    {{ grant.title }} <span class="badge bg-info ms-2">${{ "%.2f"|format(grant.amount_awarded or 0) }}</span>
+                                </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary btn-lg">
+                            <span class="spinner-border spinner-border-sm me-2" id="spinner" style="display:none;"></span>
+                            Score Selected Grants
+                        </button>
+                    </form>
+                    {% else %}
+                    <div class="alert alert-warning">
+                        No grants found. Please <a href="{{ url_for('tony.ingest_grants') }}">ingest grant data</a> first.
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-4">
+            <div class="card border-0 shadow-sm bg-light">
+                <div class="card-body">
+                    <h6 class="card-title">Scoring Methodology</h6>
+                    <p class="small mb-2"><strong>Layer 1:</strong> Financial Health - Assess reserves, margins, leverage</p>
+                    <p class="small mb-2"><strong>Layer 2:</strong> Continuity - Evaluate sustainability and operational runway</p>
+                    <p class="small mb-2"><strong>Layer 3:</strong> Organization Metrics - Analyze capacity and performance</p>
+                    <p class="small mb-2"><strong>Layer 4:</strong> Risk Adjustments - Apply contextual factors and presets</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="results" class="row mt-4" style="display:none;">
+        <div class="col-12">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-success text-white">
+                    ✓ Scoring Complete
+                </div>
+                <div class="card-body">
+                    <p id="resultText"></p>
+                    <a href="{{ url_for('tony.generate_report') }}" class="btn btn-outline-primary">Generate Report →</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.getElementById('scoreForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const spinner = document.getElementById('spinner');
+    spinner.style.display = 'inline-block';
+
+    const selectedGrants = Array.from(document.querySelectorAll('.grant-checkbox:checked')).map(el => el.value);
+    
+    try {
+        const response = await fetch('{{ url_for("tony.score_grants") }}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                grants: selectedGrants,
+                preset: document.getElementById('preset').value
+            })
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            document.getElementById('resultText').textContent = `Successfully scored ${data.scored_count} grants.`;
+            document.getElementById('results').style.display = 'block';
+        } else {
+            alert('Error during scoring. Please try again.');
+        }
+    } catch (error) {
+        alert('Error: ' + error.message);
+    } finally {
+        spinner.style.display = 'none';
+    }
+});
+</script>
+{% endblock %}

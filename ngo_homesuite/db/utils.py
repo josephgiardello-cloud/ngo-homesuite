@@ -54,7 +54,7 @@ def audit(
 
     try:
         run_db(op, write=True)
-    except sqlite3.Error:
+    except Exception:
         return
 
 

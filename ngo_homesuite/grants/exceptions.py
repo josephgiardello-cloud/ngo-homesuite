@@ -1,7 +1,7 @@
 """Grant-domain exception definitions."""
 
-from ngo_homesuite.grants.services import accounting_policy_impl
-from ngo_homesuite.grants.services import approval_impl
+from ngo_homesuite.grants.services.accounting_policy_impl import GrantAccountingPolicyError
+from ngo_homesuite.grants.services.approval_impl import GrantApprovalError
 
 
 class GrantNotFound(Exception):
@@ -19,9 +19,6 @@ class InvalidGrantTransition(ValueError):
 class GrantAllocationError(ValueError):
     """Raised when grant allocation violates budget or tenant constraints."""
 
-
-GrantApprovalError = approval_impl.GrantApprovalError
-GrantAccountingPolicyError = accounting_policy_impl.GrantAccountingPolicyError
 
 __all__ = [
     "GrantNotFound",

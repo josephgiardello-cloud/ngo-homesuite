@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col-md-8">
+            <h1>📈 Evaluate Results</h1>
+            <p class="text-muted">Measure TONY model accuracy using actual grant outcomes</p>
+        </div>
+        <div class="col-md-4">
+            <a href="{{ url_for('tony.tony_home') }}" class="btn btn-secondary">← Back to TONY</a>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-lg-8">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body p-4">
+                    <h5 class="card-title mb-4">Model Performance Evaluation</h5>
+                    
+                    <form id="evaluationForm">
+                        <div class="mb-3">
+                            <label for="predictionsFile" class="form-label">TONY Predictions File</label>
+                            <input type="file" class="form-control" id="predictionsFile" name="predictions" accept=".json,.csv" required>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="actualsFile" class="form-label">Actual Outcomes File</label>
+                            <input type="file" class="form-control" id="actualsFile" name="actuals" accept=".json,.csv" required>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary btn-lg">
+                            <span class="spinner-border spinner-border-sm me-2" id="spinner" style="display:none;"></span>
+                            Evaluate Performance
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <div id="results" class="card border-0 shadow-sm mt-4" style="display:none;">
+                <div class="card-header">
+                    <h5 class="mb-0">Performance Metrics</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <div class="bg-light p-3 rounded">
+                                <small class="text-muted">Accuracy</small>
+                                <h6 class="mb-0" id="accuracy">--</h6>
+                            </div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <div class="bg-light p-3 rounded">
+                                <small class="text-muted">Precision</small>
+                                <h6 class="mb-0" id="precision">--</h6>
+                            </div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <div class="bg-light p-3 rounded">
+                                <small class="text-muted">Recall</small>
+                                <h6 class="mb-0" id="recall">--</h6>
+                            </div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <div class="bg-light p-3 rounded">
+                                <small class="text-muted">F1 Score</small>
+                                <h6 class="mb-0" id="f1">--</h6>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-4">
+            <div class="card border-0 shadow-sm bg-light">
+                <div class="card-body">
+                    <h6 class="card-title">Evaluation Metrics</h6>
+                    <ul class="small mb-0">
+                        <li><strong>Accuracy:</strong> Proportion of correct predictions</li>
+                        <li><strong>Precision:</strong> Accuracy of positive predictions</li>
+                        <li><strong>Recall:</strong> Coverage of actual positives</li>
+                        <li><strong>F1 Score:</strong> Harmonic mean of precision/recall</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.getElementById('evaluationForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const spinner = document.getElementById('spinner');
+    spinner.style.display = 'inline-block';
+
+    const predFile = document.getElementById('predictionsFile').files[0];
+    const actFile = document.getElementById('actualsFile').files[0];
+
+    // Read files as JSON
+    Promise.all([
+        predFile.text(),
+        actFile.text()
+    ]).then(async ([predText, actText]) => {
+        try {
+            const predictions = JSON.parse(predText);
+            const actuals = JSON.parse(actText);
+
+            const response = await fetch('{{ url_for("tony.evaluate_results") }}', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ predictions, actuals })
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                document.getElementById('accuracy').textContent = (data.accuracy * 100).toFixed(1) + '%';
+                document.getElementById('precision').textContent = (data.precision * 100).toFixed(1) + '%';
+                document.getElementById('recall').textContent = (data.recall * 100).toFixed(1) + '%';
+                document.getElementById('f1').textContent = (data.metrics?.f1_score || 0).toFixed(3);
+                document.getElementById('results').style.display = 'block';
+            } else {
+                alert('Error evaluating model. Please check your data format.');
+            }
+        } catch (error) {
+            alert('Error: ' + error.message);
+        } finally {
+            spinner.style.display = 'none';
+        }
+    }).catch(error => {
+        alert('Error reading files: ' + error.message);
+        spinner.style.display = 'none';
+    });
+});
+</script>
+{% endblock %}

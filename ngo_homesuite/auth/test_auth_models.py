@@ -45,12 +45,14 @@ def test_enforce_password_policy_pwned(monkeypatch):
     password = "ThisIsAStrongPassword123!@#"
     # Patch _check_pwned to return True (pwned)
     monkeypatch.setattr(models, "_check_pwned", lambda *a, **kw: True)
+    monkeypatch.setattr(models, "audit", lambda *a, **kw: None)
     with pytest.raises(ValueError, match="appeared in a public breach"):
         models._enforce_password_policy(username, password, role="admin")
 
 def test_create_user_and_verify(monkeypatch):
     # Setup: create a temp sqlite DB and users table
     monkeypatch.setattr(models, "_check_pwned", lambda *a, **kw: False)
+    monkeypatch.setattr(models, "audit", lambda *a, **kw: None)
     monkeypatch.setattr(
         models,
         "ARGON2_PH",

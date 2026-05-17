@@ -10,7 +10,7 @@ from pathlib import Path
 import time
 import uuid
 
-from flask import Flask, g, request, session
+from flask import Flask, g, request, session, url_for
 from flask_login import LoginManager, current_user
 from flask_migrate import Migrate
 from flask_babel import Babel, lazy_gettext as _l
@@ -126,6 +126,11 @@ def create_app(config=None):
     from ngo_homesuite.web.volunteer_routes import volunteer_bp
     from ngo_homesuite.api.v1 import api_v1_bp
     from ngo_homesuite.web.v2_routes import v2_bp
+    tony_bp = None
+    try:
+        from ngo_homesuite.web.tony_routes import tony_bp
+    except ModuleNotFoundError as exc:
+        app.logger.warning('TONY routes disabled because an optional dependency is missing: %s', exc)
 
     with app.app_context():
         app.extensions['v2_container'] = AppContainer.build_default()
@@ -146,6 +151,8 @@ def create_app(config=None):
     app.register_blueprint(volunteer_bp)
     app.register_blueprint(api_v1_bp)
     app.register_blueprint(v2_bp)
+    if tony_bp is not None:
+        app.register_blueprint(tony_bp)
     
     # Setup logging
     setup_logging(app)
@@ -188,7 +195,7 @@ def create_app(config=None):
         response.headers.setdefault('Permissions-Policy', 'geolocation=(), microphone=(), camera=()')
         response.headers.setdefault(
             'Content-Security-Policy',
-            "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'",
+            "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com; img-src 'self' data:; font-src 'self' data:; connect-src 'self'",
         )
         if bool(app.config.get('SESSION_COOKIE_SECURE', False)):
             response.headers.setdefault('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
@@ -224,6 +231,15 @@ def create_app(config=None):
             },
         )
         return response
+
+    @app.context_processor
+    def inject_optional_nav_links():
+        tony_full_url = None
+        if 'tony.tony_home' in app.view_functions:
+            tony_full_url = url_for('tony.tony_home')
+        elif 'main.tony_scoring' in app.view_functions:
+            tony_full_url = url_for('main.tony_scoring')
+        return {'tony_full_url': tony_full_url}
     
     app.logger.info('NGO HomeSuite application initialized')
     
