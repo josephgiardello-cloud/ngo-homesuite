@@ -1,15 +1,13 @@
 """Admin routes for grant budget transaction management (B-2: Commitments & Reconciliation)."""
-from flask import Blueprint, request, jsonify, current_app
+from flask import Blueprint, request, jsonify
 from flask_login import login_required, current_user
 from ngo_homesuite.web.rbac import roles_required
-from ngo_homesuite.models.core import db
+from ngo_homesuite.models.core import db, _utcnow_naive
 from ngo_homesuite.grants.models import (
     Grant,
     GrantBudgetLine,
     GrantBudgetTransaction,
-    GrantExpenseAllocation,
 )
-from datetime import datetime
 
 budget_transactions_bp = Blueprint("budget_transactions", __name__, url_prefix="/admin/grants")
 
@@ -70,7 +68,7 @@ def commit_budget_line(grant_id, line_id):
 
     # Update line committed_amount
     line.committed_amount += commit_amount
-    line.updated_at = datetime.utcnow()
+    line.updated_at = _utcnow_naive()
     db.session.commit()
 
     remaining = line.allocated_amount - line.committed_amount - line.reconciled_amount
@@ -136,7 +134,7 @@ def reconcile_budget_line(grant_id, line_id):
 
     # Update line reconciled_amount
     line.reconciled_amount += reconcile_amount
-    line.updated_at = datetime.utcnow()
+    line.updated_at = _utcnow_naive()
     db.session.commit()
 
     remaining = line.allocated_amount - line.committed_amount - line.reconciled_amount

@@ -1,11 +1,14 @@
 """Tests for B-2: Budget Transactions & Commitment Tracking."""
 import pytest
 import uuid
-from datetime import datetime
 from ngo_homesuite.models.core import db, User, Organization
 from ngo_homesuite.grants.models import Grant, GrantBudgetLine, GrantBudgetTransaction
 from ngo_homesuite.flask_config import TestingConfig
 from ngo_homesuite.app_factory import create_app
+
+
+def _unique_token() -> str:
+    return uuid.uuid4().hex[:8]
 
 
 @pytest.fixture(scope="module")
@@ -25,7 +28,13 @@ def client(app):
 def org(app):
     """Create test organization."""
     with app.app_context():
-        o = Organization(name="Test Org", email_domain="test.org", country="US")
+        token = _unique_token()
+        o = Organization(
+            name=f"Test Org {token}",
+            slug=f"test-org-{token}",
+            email=f"org-{token}@test.org",
+            country="US",
+        )
         db.session.add(o)
         db.session.commit()
         org_id = o.id
@@ -41,9 +50,10 @@ def org(app):
 def admin_user(app, org):
     """Create admin user."""
     with app.app_context():
+        token = _unique_token()
         u = User(
-            username="testadmin",
-            email="admin@test.org",
+            username=f"testadmin_{token}",
+            email=f"admin_{token}@test.org",
             organization_id=org.id,
             role="admin",
             is_active=True,
@@ -64,10 +74,11 @@ def admin_user(app, org):
 def grant(app, org):
     """Create test grant."""
     with app.app_context():
+        token = _unique_token()
         g = Grant(
             organization_id=org.id,
             funder_name="Test Foundation",
-            title="Test Grant",
+            title=f"Test Grant {token}",
             amount_awarded=100000.0,
             status="active",
         )
@@ -86,11 +97,12 @@ def grant(app, org):
 def budget_line(app, grant, org):
     """Create test budget line."""
     with app.app_context():
+        token = _unique_token()
         line = GrantBudgetLine(
             grant_id=grant.id,
             organization_id=org.id,
-            category="Personnel",
-            line_name="Staff Salaries",
+            category=f"Personnel-{token}",
+            line_name=f"Staff Salaries {token}",
             allocated_amount=50000.0,
             status="pending",
         )
@@ -148,8 +160,8 @@ class TestGrantBudgetTransactionModel:
                 db.session.add(txn)
             
             db.session.commit()
-            txns = db.session.query(GrantBudgetTransaction).all()
-            assert len([t for t in txns if t.transaction_type in types]) == 4
+            txns = db.session.query(GrantBudgetTransaction).filter_by(budget_line_id=budget_line.id).all()
+            assert {txn.transaction_type for txn in txns} == set(types)
 
     def test_budget_line_has_committed_and_reconciled_amounts(self, app, budget_line):
         """Test that budget line tracks committed and reconciled amounts."""
