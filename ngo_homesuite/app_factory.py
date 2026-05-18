@@ -143,6 +143,36 @@ def create_app(config=None):
                 if column_name not in existing_columns:
                     conn.execute(sa_text(statement))
                     app.logger.info('Added donor compatibility column: %s', column_name)
+
+    def _ensure_donation_columns() -> None:
+        """Backfill donation columns for existing SQLite DBs missing newer schema fields."""
+        engine = db.engine
+        if engine.dialect.name != 'sqlite':
+            return
+
+        inspector = sa_inspect(engine)
+        if 'donations' not in inspector.get_table_names():
+            return
+
+        existing_columns = {col['name'] for col in inspector.get_columns('donations')}
+        statements = [
+            ('campaign_id', "ALTER TABLE donations ADD COLUMN campaign_id INTEGER"),
+            ('version_id', "ALTER TABLE donations ADD COLUMN version_id INTEGER NOT NULL DEFAULT 0"),
+            ('created_at', "ALTER TABLE donations ADD COLUMN created_at DATETIME"),
+            ('updated_at', "ALTER TABLE donations ADD COLUMN updated_at DATETIME"),
+        ]
+
+        with engine.begin() as conn:
+            for column_name, statement in statements:
+                if column_name not in existing_columns:
+                    conn.execute(sa_text(statement))
+                    app.logger.info('Added donation compatibility column: %s', column_name)
+
+            # Backfill timestamp defaults where compatibility columns were newly introduced.
+            if 'created_at' not in existing_columns:
+                conn.execute(sa_text("UPDATE donations SET created_at = COALESCE(created_at, donation_date)"))
+            if 'updated_at' not in existing_columns:
+                conn.execute(sa_text("UPDATE donations SET updated_at = COALESCE(updated_at, donation_date, created_at)"))
     
     # Create app context and tables
     with app.app_context():
@@ -150,6 +180,7 @@ def create_app(config=None):
         if db_uri.startswith('sqlite:///') and ':memory:' not in db_uri:
             auto_migrate(db_uri.replace('sqlite:///', '', 1))
             _ensure_donor_crm_columns()
+            _ensure_donation_columns()
         db.create_all()
         if bool(app.config.get('ENABLE_DEMO_SEED', False)):
             seed_demo_data(app)

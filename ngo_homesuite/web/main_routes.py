@@ -666,7 +666,10 @@ def _build_iif_bytes(trns_type: str, rows):
         trns_sign = -1.0
 
     for txn_id, date_iso, name, amount, memo in rows:
-        amount_val = float(amount or 0)
+        try:
+            amount_val = float(amount or 0)
+        except (TypeError, ValueError):
+            amount_val = 0.0
         trns_amt = trns_sign * amount_val
         spl_amt = -trns_amt
         date_value = (date_iso or '').strip() or datetime.now(timezone.utc).strftime('%Y-%m-%d')
