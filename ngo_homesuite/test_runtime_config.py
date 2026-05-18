@@ -143,6 +143,7 @@ def test_load_runtime_settings_production_allows_sqlite_only_with_explicit_overr
     monkeypatch.setenv("SECRET_KEY", "prod-secret")
     monkeypatch.setenv("DATABASE_URL", "sqlite:///prod.db")
     monkeypatch.setenv("NGO_HOMESUITE_ALLOW_SQLITE_IN_PRODUCTION", "1")
+    monkeypatch.setenv("SESSION_COOKIE_SECURE", "1")
     monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
 
     settings = config.load_runtime_settings()
@@ -231,6 +232,19 @@ def test_load_runtime_settings_accepts_redis_session_backend(monkeypatch: pytest
     assert settings.redis_key_prefix == "ngohs:test:"
 
 
+def test_load_runtime_settings_rejects_redis_session_backend_without_redis_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+
+    monkeypatch.setenv("SECRET_KEY", "redis-session-secret")
+    monkeypatch.setenv("SESSION_STORE_BACKEND", "redis")
+    monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
+
+    with pytest.raises(RuntimeError, match="requires REDIS_URL"):
+        config.load_runtime_settings()
+
+
 def test_load_runtime_settings_rejects_invalid_session_store_backend(monkeypatch: pytest.MonkeyPatch) -> None:
     _clear_runtime_env(monkeypatch)
 
@@ -299,9 +313,57 @@ def test_load_runtime_settings_production_allows_file_based_secrets(
     monkeypatch.setenv("FLASK_ENV", "production")
     monkeypatch.setenv("SECRET_KEY_FILE", str(secret_file))
     monkeypatch.setenv("DATABASE_URL_FILE", str(db_url_file))
+    monkeypatch.setenv("SESSION_COOKIE_SECURE", "1")
     monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
 
     settings = config.load_runtime_settings()
     assert settings.flask_env == "production"
     assert settings.secret_key == "prod-file-secret"
     assert settings.database_url == "postgresql://user:pass@localhost:5432/prod"
+
+
+def test_load_runtime_settings_production_requires_session_cookie_secure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+
+    monkeypatch.setenv("FLASK_ENV", "production")
+    monkeypatch.setenv("SECRET_KEY", "prod-secret")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/ngo")
+    monkeypatch.setenv("SESSION_COOKIE_SECURE", "0")
+    monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
+
+    with pytest.raises(RuntimeError, match="SESSION_COOKIE_SECURE"):
+        config.load_runtime_settings()
+
+
+def test_load_runtime_settings_production_rejects_show_dev_login_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+
+    monkeypatch.setenv("FLASK_ENV", "production")
+    monkeypatch.setenv("SECRET_KEY", "prod-secret")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/ngo")
+    monkeypatch.setenv("SESSION_COOKIE_SECURE", "1")
+    monkeypatch.setenv("SHOW_DEV_LOGIN_CREDENTIALS", "1")
+    monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
+
+    with pytest.raises(RuntimeError, match="SHOW_DEV_LOGIN_CREDENTIALS"):
+        config.load_runtime_settings()
+
+
+def test_load_runtime_settings_production_rejects_insecure_oauth_redirect_base(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+
+    monkeypatch.setenv("FLASK_ENV", "production")
+    monkeypatch.setenv("SECRET_KEY", "prod-secret")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/ngo")
+    monkeypatch.setenv("SESSION_COOKIE_SECURE", "1")
+    monkeypatch.setenv("OAUTH_REDIRECT_BASE", "http://localhost:5000")
+    monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
+
+    with pytest.raises(RuntimeError, match="OAUTH_REDIRECT_BASE"):
+        config.load_runtime_settings()

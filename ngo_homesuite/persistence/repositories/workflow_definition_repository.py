@@ -6,15 +6,18 @@ import json
 from ngo_homesuite.models.core import db
 from ngo_homesuite.persistence.interfaces import UnitOfWorkPort
 from ngo_homesuite.persistence.models.workflow_tables import WorkflowDefinitionRecord
+from ngo_homesuite.persistence.base_repository import BaseRepository
 from ngo_homesuite.workflow_engine import StepNode, TransitionRule, WorkflowDefinition
 
 
-class WorkflowDefinitionRepository:
+class WorkflowDefinitionRepository(BaseRepository):
     """DB-backed workflow definition repository with monotonic versioning.
 
     Workflow definitions are intentionally global-scope metadata. Callers must explicitly
     acknowledge this by passing allow_global_scope=True.
     """
+
+    _write_methods = BaseRepository._write_methods | {"ensure_definition"}
 
     @staticmethod
     def _serialize(definition: WorkflowDefinition) -> tuple[str, str]:
