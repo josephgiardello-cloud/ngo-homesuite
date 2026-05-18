@@ -518,9 +518,27 @@ def test_oauth_callback_failed_token_exchange_redirects_to_login(oauth_client, o
     assert '/auth/login' in (rv.headers.get('Location') or '')
 
 
-def test_login_template_contains_oauth_buttons(oauth_client, oauth_app):
-    """Login page HTML should include Google and GitHub SSO link targets."""
+def test_login_template_hides_oauth_buttons_by_default(oauth_client, oauth_app):
+    """Login page should hide SSO link targets when hide toggle is enabled."""
     rv = oauth_client.get('/auth/login')
+    assert rv.status_code == 200
+    body = rv.data
+    assert b'/auth/oauth/google' not in body
+    assert b'/auth/oauth/github' not in body
+
+
+def test_login_template_can_show_oauth_buttons_when_enabled():
+    """SSO link targets should render when hide toggle is explicitly disabled."""
+    class _VisibleOAuthConfig(TestingConfig):
+        GOOGLE_CLIENT_ID = 'fake-google-id'
+        GOOGLE_CLIENT_SECRET = 'fake-google-secret'
+        GITHUB_CLIENT_ID = 'fake-github-id'
+        GITHUB_CLIENT_SECRET = 'fake-github-secret'
+        HIDE_SSO_OPTIONS = False
+
+    app = create_app(_VisibleOAuthConfig)
+    client = app.test_client()
+    rv = client.get('/auth/login')
     assert rv.status_code == 200
     body = rv.data
     assert b'/auth/oauth/google' in body

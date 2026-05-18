@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict
 
-from flask import Blueprint, Response, current_app, jsonify, request, stream_with_context
+from flask import Blueprint, Response, current_app, jsonify, request, session, stream_with_context
 from flask_login import current_user, login_required
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import delete, select
@@ -26,6 +26,7 @@ ai_bp = Blueprint("ai", __name__, url_prefix="/ai")
 _USED_APPROVAL_TOKENS: dict[str, float] = {}
 _APPROVAL_TOKEN_TTL_SEC = 300
 _COPILOT_RATE_BUCKETS: dict[str, list[float]] = {}
+_SESSION_KEY = "ngo_ai_session_id"
 
 
 def _parse_tool_list(raw: Any) -> list[str]:
@@ -188,7 +189,20 @@ def _audit_db_path() -> str:
 
 def _resolve_session_id() -> str:
     user_part = str(getattr(current_user, "id", "anon"))
-    return f"web-{user_part}-{uuid.uuid4().hex[:8]}"
+    expected_prefix = f"web-{user_part}-"
+    existing = str(session.get(_SESSION_KEY, "")).strip()
+    if existing.startswith(expected_prefix):
+        return existing
+
+    generated = f"web-{user_part}-{uuid.uuid4().hex[:8]}"
+    session[_SESSION_KEY] = generated
+    session.modified = True
+    return generated
+
+
+def _reset_session_id() -> None:
+    session.pop(_SESSION_KEY, None)
+    session.modified = True
 
 
 def _resolve_tenant_id(payload: dict[str, Any]) -> str:
@@ -228,6 +242,19 @@ def _get_or_create_conversation(session_id: str, model: str, tenant_id: str) -> 
         )
         db.session.add(conv)
         db.session.flush()  # get conv.id without committing
+    return conv
+
+
+def _get_existing_conversation(session_id: str) -> AIConversation | None:
+    user_id = getattr(current_user, "id", None)
+    organization_id = getattr(current_user, "organization_id", None)
+    conv = db.session.scalars(
+        select(AIConversation).where(AIConversation.session_id == session_id).limit(1)
+    ).first()
+    if conv is None:
+        return None
+    if conv.organization_id != organization_id or conv.user_id != user_id:
+        raise PermissionError("Conversation does not belong to the authenticated user context")
     return conv
 
 
@@ -367,9 +394,43 @@ def conversation_history() -> Response:
             "model": c.model,
             "created_at": c.created_at.isoformat(),
             "message_count": len(c.messages),
+            "preview": next((m.content[:160] for m in c.messages if m.role == "user"), ""),
         }
         for c in convs
     ])
+
+
+@ai_bp.route("/conversation/current", methods=["GET"])
+@login_required
+@roles_required("admin", "staff", "viewer")
+def current_conversation() -> Response:
+    session_id = _resolve_session_id()
+    conv = _get_existing_conversation(session_id)
+    if conv is None:
+        return jsonify({"session_id": session_id, "messages": [], "model": None})
+
+    return jsonify(
+        {
+            "session_id": session_id,
+            "model": conv.model,
+            "messages": [
+                {
+                    "role": msg.role,
+                    "content": msg.content,
+                    "created_at": msg.created_at.isoformat(),
+                }
+                for msg in conv.messages
+            ],
+        }
+    )
+
+
+@ai_bp.route("/conversation/reset", methods=["POST"])
+@login_required
+@roles_required("admin", "staff", "viewer")
+def reset_conversation() -> Response:
+    _reset_session_id()
+    return jsonify({"ok": True, "session_id": _resolve_session_id()})
 
 
 @ai_bp.route("/health", methods=["GET"])

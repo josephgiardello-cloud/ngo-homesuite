@@ -6,7 +6,7 @@ import pytest
 
 from ngo_homesuite.app_factory import create_app
 from ngo_homesuite.flask_config import TestingConfig
-from ngo_homesuite.models.core import Organization, User, db
+from ngo_homesuite.models.core import AIConversation, AIMessage, Organization, User, db
 
 
 @dataclass
@@ -329,3 +329,65 @@ def test_copilot_chat_rate_limited(client, app, monkeypatch):
     finally:
         app.config["COPILOT_RATE_LIMIT_PER_MIN"] = old_rate
         app.config["RATELIMIT_ENABLED"] = old_enabled
+
+
+def test_copilot_chat_reuses_session_conversation(client, app, monkeypatch):
+    _ensure_user(app, "copilot_session_user", "copilot_session_user@test.local", "staff", "session_user_pass_123")
+    _login(client, "copilot_session_user", "session_user_pass_123")
+
+    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteCopilot.from_app", lambda: _FakeCopilot())
+
+    rv1 = client.post("/ai/copilot/chat", json={"prompt": "First helper question"})
+    rv2 = client.post("/ai/copilot/chat", json={"prompt": "Second helper question"})
+
+    assert rv1.status_code == 200
+    assert rv2.status_code == 200
+
+    with app.app_context():
+        user = User.query.filter_by(username="copilot_session_user").first()
+        assert user is not None
+        conversations = AIConversation.query.filter_by(user_id=user.id).all()
+        assert len(conversations) == 1
+        messages = AIMessage.query.filter_by(conversation_id=conversations[0].id).all()
+        assert len(messages) == 4
+
+
+def test_copilot_conversation_reset_rotates_session(client, app, monkeypatch):
+    _ensure_user(app, "copilot_reset_user", "copilot_reset_user@test.local", "staff", "reset_user_pass_123")
+    _login(client, "copilot_reset_user", "reset_user_pass_123")
+
+    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteCopilot.from_app", lambda: _FakeCopilot())
+
+    first_rv = client.post("/ai/copilot/chat", json={"prompt": "Start a conversation"})
+    assert first_rv.status_code == 200
+
+    with client.session_transaction() as sess:
+        first_session_id = sess.get("ngo_ai_session_id")
+
+    reset_rv = client.post("/ai/conversation/reset")
+    assert reset_rv.status_code == 200
+    reset_data = reset_rv.get_json()
+    assert reset_data["ok"] is True
+    assert reset_data["session_id"] != first_session_id
+
+    with client.session_transaction() as sess:
+        assert sess.get("ngo_ai_session_id") == reset_data["session_id"]
+
+
+def test_current_conversation_endpoint_returns_session_messages(client, app, monkeypatch):
+    _ensure_user(app, "copilot_current_user", "copilot_current_user@test.local", "viewer", "current_user_pass_123")
+    _login(client, "copilot_current_user", "current_user_pass_123")
+
+    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteCopilot.from_app", lambda: _FakeCopilot())
+
+    chat_rv = client.post("/ai/copilot/chat", json={"prompt": "Show my current AI thread"})
+    assert chat_rv.status_code == 200
+
+    current_rv = client.get("/ai/conversation/current")
+    assert current_rv.status_code == 200
+    data = current_rv.get_json()
+    assert isinstance(data.get("session_id"), str)
+    assert isinstance(data.get("messages"), list)
+    assert len(data["messages"]) == 2
+    assert data["messages"][0]["role"] == "user"
+    assert data["messages"][1]["role"] == "assistant"

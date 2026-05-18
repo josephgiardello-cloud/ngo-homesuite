@@ -350,6 +350,9 @@ def auto_migrate(db_path: str | None = None) -> None:
                     27: {"events"},
                     28: {"campaign_email_deliveries"},
                     29: {"users"},
+                    31: {"users"},
+                    32: {"users"},
+                    33: {"users"},
                 }
                 required_tables = precondition_tables.get(version)
                 if required_tables is not None:

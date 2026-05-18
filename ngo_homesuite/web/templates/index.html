@@ -1,67 +1,964 @@
 {% extends "base.html" %}
 
-{% block title %}Home - NGO HomeSuite{% endblock %}
+{% block title %}Home - NGO OMG{% endblock %}
 
 {% block content %}
-<div class="py-5 text-center">
-    <h1>Welcome to NGO HomeSuite</h1>
-    <p style="font-size: 1.25rem; color: #666; margin: 1rem 0;">
-        A comprehensive nonprofit management system for donors, donations, funds, and compliance tracking.
-    </p>
-    
-    <div style="margin: 2rem 0;">
-        <a href="{{ url_for('main.public_give') }}" class="btn btn-secondary" style="margin: 0 0.5rem;">Donate Now</a>
-        <a href="{{ url_for('auth.login') }}" class="btn btn-primary" style="margin: 0 0.5rem;">Sign In</a>
-        <a href="{{ url_for('auth.register') }}" class="btn btn-success" style="margin: 0 0.5rem;">Create Account</a>
-    </div>
-</div>
+<style>
+    :root {
+        --welcome-ink: #0f1d2f;
+        --welcome-ink-soft: #4d667f;
+        --welcome-accent: #163f6b;
+        --welcome-accent-soft: #dce8f5;
+        --welcome-mist: #f6f9fd;
+        --welcome-glass: rgba(255, 255, 255, 0.12);
+        --welcome-gold: #f2c14e;
+        --welcome-coral: #b11f3f;
+        --welcome-rose: #d7e3f1;
+        --welcome-harbor: #2d7ea0;
+        --welcome-sand: #f2ece0;
+        --welcome-graphite: #273443;
+    }
 
-<div style="max-width: 800px; margin: 3rem auto;">
-    <h2 style="text-align: center;">Key Features</h2>
-    
-    <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); margin-top: 2rem;">
-        <div class="card">
-            <div class="card-title">💰 Financial Management</div>
-            <p class="card-text">Track donations, manage funds, and reconcile bank accounts with ease.</p>
-        </div>
-        
-        <div class="card">
-            <div class="card-title">👥 Relationship Management</div>
-            <p class="card-text">Maintain comprehensive donor profiles and track interactions.</p>
-        </div>
-        
-        <div class="card">
-            <div class="card-title">📊 Reporting & Analytics</div>
-            <p class="card-text">Generate powerful reports and gain insights into your organization's impact.</p>
-        </div>
-        
-        <div class="card">
-            <div class="card-title">🔒 Security & Compliance</div>
-            <p class="card-text">Built with security first - encryption, audit logs, and compliance tools.</p>
-        </div>
-        
-        <div class="card">
-            <div class="card-title">👔 Staff & Volunteers</div>
-            <p class="card-text">Manage payroll, volunteer hours, and access control.</p>
-        </div>
-        
-        <div class="card">
-            <div class="card-title">🌍 Internationalization</div>
-            <p class="card-text">Support for multiple languages to reach global audiences.</p>
-        </div>
-    </div>
-</div>
+    .welcome-shell {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.8rem;
+        width: min(1540px, calc(100vw - 2rem));
+        margin: 0 0 1.4rem;
+        position: relative;
+        left: 50%;
+        transform: translateX(-50%);
+        font-family: "Aptos", "Candara", "Segoe UI", sans-serif;
+        color: var(--welcome-ink);
+        isolation: isolate;
+        padding-top: 0.25rem;
+    }
 
-<div style="background-color: #f8f9fa; padding: 3rem 2rem; margin-top: 3rem; border-radius: 4px;">
-    <h2 style="text-align: center;">Get Started</h2>
-    <div style="max-width: 600px; margin: 2rem auto; line-height: 1.8;">
-        <ol style="padding-left: 1.5rem;">
-            <li><strong>Create an account</strong> - Sign up to get started</li>
-            <li><strong>Set up your organization</strong> - Configure your NGO details</li>
-            <li><strong>Add beneficiaries</strong> - Start tracking impact</li>
-            <li><strong>Record donations</strong> - Monitor financial health</li>
-            <li><strong>Generate reports</strong> - Gain actionable insights</li>
-        </ol>
-    </div>
-</div>
+    .welcome-shell::before {
+        content: "";
+        position: absolute;
+        inset: -2rem -2rem auto;
+        height: 32rem;
+        background:
+            radial-gradient(circle at 14% 20%, rgba(22, 63, 107, 0.18) 0%, rgba(22, 63, 107, 0) 36%),
+            radial-gradient(circle at 84% 12%, rgba(177, 31, 63, 0.15) 0%, rgba(177, 31, 63, 0) 28%),
+            radial-gradient(circle at 50% 60%, rgba(45, 126, 160, 0.12) 0%, rgba(45, 126, 160, 0) 44%);
+        filter: blur(18px);
+        z-index: -1;
+    }
+
+    .welcome-shell::after {
+        content: "";
+        position: absolute;
+        inset: 1.8rem 10% auto;
+        height: 22rem;
+        background:
+            radial-gradient(circle at 18% 22%, rgba(242, 193, 78, 0.22) 0%, rgba(242, 193, 78, 0) 22%),
+            radial-gradient(circle at 78% 18%, rgba(177, 31, 63, 0.2) 0%, rgba(177, 31, 63, 0) 18%),
+            radial-gradient(circle at 50% 72%, rgba(45, 126, 160, 0.18) 0%, rgba(45, 126, 160, 0) 26%);
+        filter: blur(22px);
+        z-index: -1;
+        pointer-events: none;
+    }
+
+    .welcome-shell::after {
+        background-image:
+            linear-gradient(rgba(17, 29, 47, 0.04) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(17, 29, 47, 0.04) 1px, transparent 1px),
+            radial-gradient(circle at 18% 22%, rgba(242, 193, 78, 0.22) 0%, rgba(242, 193, 78, 0) 22%),
+            radial-gradient(circle at 78% 18%, rgba(177, 31, 63, 0.2) 0%, rgba(177, 31, 63, 0) 18%),
+            radial-gradient(circle at 50% 72%, rgba(45, 126, 160, 0.18) 0%, rgba(45, 126, 160, 0) 26%);
+        background-size: 44px 44px, 44px 44px, auto, auto, auto;
+        background-position: 0 0, 0 0, center, center, center;
+        opacity: 0.34;
+    }
+
+    .welcome-hero {
+        grid-column: 1 / -1;
+        position: relative;
+        overflow: hidden;
+        border-radius: 36px;
+        padding: clamp(1.3rem, 2.5vw, 2rem);
+        background:
+            radial-gradient(circle at 16% 18%, rgba(242, 193, 78, 0.24) 0%, rgba(242, 193, 78, 0) 25%),
+            radial-gradient(circle at 86% 16%, rgba(177, 31, 63, 0.22) 0%, rgba(177, 31, 63, 0) 26%),
+            radial-gradient(circle at 48% 84%, rgba(45, 126, 160, 0.22) 0%, rgba(45, 126, 160, 0) 24%),
+            linear-gradient(145deg, #06111d 0%, #0d2137 24%, #133155 48%, #1d5a88 74%, #3d9dbe 100%);
+        color: #f8fbff;
+        box-shadow: 0 38px 78px rgba(8, 25, 41, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        backdrop-filter: blur(18px);
+    }
+
+    .welcome-hero::before,
+    .welcome-hero::after {
+        content: "";
+        position: absolute;
+        width: 20rem;
+        height: 20rem;
+        border-radius: 999px;
+        filter: blur(2px);
+    }
+
+    .welcome-hero::before {
+        top: -11rem;
+        right: -3rem;
+        background: radial-gradient(circle, rgba(255, 244, 209, 0.3) 0%, rgba(255, 244, 209, 0) 72%);
+    }
+
+    .welcome-hero::after {
+        bottom: -12rem;
+        left: -7rem;
+        background: radial-gradient(circle, rgba(177, 31, 63, 0.24) 0%, rgba(177, 31, 63, 0) 72%);
+    }
+
+    .welcome-hero > .welcome-hero-grid::before {
+        content: "";
+        position: absolute;
+        inset: auto 5% -2.5rem auto;
+        width: 16rem;
+        height: 16rem;
+        border-radius: 999px;
+        background: radial-gradient(circle, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0) 70%);
+        pointer-events: none;
+    }
+
+    .welcome-kicker {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        padding: 0.38rem 0.8rem;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.12);
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        color: #f4f8ff;
+        font-size: 0.76rem;
+        font-weight: 600;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+        font-family: "Segoe UI", sans-serif;
+        backdrop-filter: blur(10px);
+    }
+
+    .welcome-hero-grid {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        grid-template-columns: minmax(0, 1.2fr) minmax(420px, 1fr);
+        gap: 0.8rem;
+        align-items: stretch;
+        margin-top: 0.75rem;
+    }
+
+    .welcome-hero-signals {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0.42rem;
+        margin-top: 0.8rem;
+    }
+
+    .welcome-hero-signal {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.4rem;
+        min-height: 2.35rem;
+        padding: 0.45rem 0.65rem;
+        border-radius: 14px;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.07) 100%);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        color: #f4f8ff;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        backdrop-filter: blur(10px);
+        text-align: center;
+    }
+
+    .welcome-hero-signal::before {
+        content: "";
+        width: 0.5rem;
+        height: 0.5rem;
+        border-radius: 999px;
+        background: linear-gradient(135deg, #ffe44a 0%, #b11f3f 100%);
+        box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.12);
+    }
+
+    .welcome-copy {
+        max-width: 48rem;
+        padding-right: clamp(0rem, 1vw, 1rem);
+        display: grid;
+        align-content: start;
+        gap: 0.1rem;
+    }
+
+    .welcome-copy h1 {
+        margin: 0;
+        font-family: "Segoe UI Variable Display", "Bahnschrift", "Trebuchet MS", sans-serif;
+        font-size: clamp(2.55rem, 5.6vw, 4.8rem);
+        line-height: 0.8;
+        letter-spacing: -0.05em;
+        text-wrap: balance;
+        max-width: 16ch;
+        color: #fffdfb;
+        text-shadow: 0 4px 14px rgba(9, 25, 42, 0.28);
+    }
+
+    .welcome-lead {
+        display: inline-block;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        color: rgba(242, 248, 255, 0.92);
+        opacity: 0.95;
+        margin-right: 0.18em;
+    }
+
+    .welcome-brand {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 0;
+        letter-spacing: -0.05em;
+        font-family: "Segoe UI Variable Display", "Palatino Linotype", "Book Antiqua", serif;
+        font-style: italic;
+        transform: perspective(520px) rotateX(16deg) skewX(-6deg) translateY(0.01em);
+        transform-origin: left center;
+    }
+
+    .welcome-brand-text {
+        display: inline-block;
+        margin-left: 0.02em;
+        font-weight: 900;
+        letter-spacing: -0.045em;
+        color: #fff6d6;
+        text-shadow: 0 4px 14px rgba(9, 25, 42, 0.28);
+    }
+
+    .welcome-brand-gap {
+        display: inline-block;
+        width: 0.24em;
+    }
+
+    .welcome-brand-letter {
+        --gold-top: #fffef8;
+        --gold-mid: #ffdd43;
+        --gold-low: #a94f00;
+        --gold-deep: #5e3300;
+        display: inline-block;
+        font-weight: 1000;
+        line-height: 0.9;
+        background: linear-gradient(165deg, var(--gold-top) 0%, var(--gold-mid) 46%, var(--gold-low) 100%);
+        background-size: 220% 220%;
+        background-position: 0% 45%;
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+        -webkit-text-fill-color: transparent;
+        -webkit-text-stroke: 2.2px rgba(39, 19, 0, 0.98);
+        text-shadow:
+            0 1px 0 rgba(255, 252, 236, 0.98),
+            0 2px 0 rgba(252, 192, 45, 0.96),
+            0 4px 0 rgba(214, 128, 0, 0.95),
+            0 6px 0 rgba(159, 84, 0, 0.88),
+            0 8px 0 rgba(109, 57, 0, 0.84),
+            0 10px 0 rgba(73, 37, 0, 0.78),
+            0 12px 0 rgba(49, 25, 0, 0.7),
+            0 16px 28px rgba(8, 22, 40, 0.54);
+        filter:
+            drop-shadow(0 5px 4px rgba(255, 236, 173, 0.3))
+            drop-shadow(0 12px 0 rgba(146, 85, 0, 0.28))
+            drop-shadow(0 20px 32px rgba(10, 21, 34, 0.34));
+        animation: welcome-brand-shine 3.4s ease-in-out infinite;
+    }
+
+    /* Color break supports reading as NG + OMG */
+    .welcome-brand-letter.ng {
+        --gold-top: #fffefb;
+        --gold-mid: #ffe44a;
+        --gold-low: #bc6b00;
+    }
+
+    .welcome-brand-letter.omg {
+        --gold-top: #fff6d6;
+        --gold-mid: #ffb93e;
+        --gold-low: #a54400;
+    }
+
+    /* Weight and spacing still support reading as NGO + MG */
+    .welcome-brand-letter.ngo-core {
+        text-decoration: none;
+    }
+
+    .welcome-brand-letter.mg-start {
+        margin-left: 0.08em;
+    }
+
+    @keyframes welcome-brand-shine {
+        0% {
+            background-position: 6% 42%;
+        }
+        50% {
+            background-position: 94% 62%;
+        }
+        100% {
+            background-position: 6% 42%;
+        }
+    }
+
+    .welcome-copy p {
+        max-width: 39rem;
+        margin: 0.7rem 0 0;
+        font-size: 1.04rem;
+        line-height: 1.74;
+        color: rgba(238, 245, 255, 0.96);
+    }
+
+    .welcome-highlight-line {
+        margin-top: 0.8rem;
+        color: #eef6ff;
+        font-weight: 650;
+        letter-spacing: 0.02em;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.55rem;
+        max-width: 34rem;
+        line-height: 1.45;
+    }
+
+    .welcome-highlight-line::before {
+        content: "";
+        width: 2.4rem;
+        height: 2px;
+        background: linear-gradient(90deg, rgba(255, 230, 153, 0.96) 0%, rgba(177, 31, 63, 0.26) 100%);
+    }
+
+    .welcome-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        margin-top: 0.95rem;
+    }
+
+    .welcome-impact-strip {
+        margin-top: 0.95rem;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.55rem;
+    }
+
+    .welcome-impact-item {
+        display: grid;
+        align-content: start;
+        gap: 0.4rem;
+        padding: 0.82rem 0.9rem;
+        border-radius: 16px;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.08) 100%);
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        backdrop-filter: blur(12px);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+    }
+
+    .welcome-impact-item strong {
+        display: block;
+        margin-bottom: 0;
+        color: #ffe28b;
+        font-size: 0.9rem;
+        font-weight: 800;
+        letter-spacing: -0.01em;
+        text-transform: none;
+        line-height: 1.1;
+    }
+
+    .welcome-impact-item span {
+        display: block;
+        color: rgba(247, 251, 255, 0.84);
+        font-size: 0.82rem;
+        line-height: 1.48;
+        max-width: 24ch;
+    }
+
+    .welcome-action-primary,
+    .welcome-action-secondary,
+    .welcome-action-ghost {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 10.4rem;
+        padding: 0.82rem 1.15rem;
+        border-radius: 999px;
+        font-weight: 700;
+        text-decoration: none;
+        transition: transform 0.24s ease, box-shadow 0.24s ease, background 0.24s ease;
+    }
+
+    .welcome-action-primary {
+        background: linear-gradient(135deg, #ffe06c 0%, #e3a42f 34%, #a94d06 100%);
+        color: #0f1d2f;
+        box-shadow: 0 20px 34px rgba(10, 25, 41, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.34);
+    }
+
+    .welcome-action-secondary {
+        background: rgba(255, 255, 255, 0.9);
+        color: #153553;
+        border: 1px solid rgba(255, 255, 255, 0.4);
+        backdrop-filter: blur(10px);
+    }
+
+    .welcome-action-ghost {
+        background: rgba(255, 255, 255, 0.08);
+        color: #f4f9ff;
+        border: 1px solid rgba(255, 255, 255, 0.38);
+        backdrop-filter: blur(10px);
+    }
+
+    .welcome-action-primary:hover,
+    .welcome-action-secondary:hover,
+    .welcome-action-ghost:hover {
+        transform: translateY(-2px);
+        color: inherit;
+    }
+
+    .welcome-proof {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.42rem;
+        padding: 0.55rem;
+        grid-auto-rows: 1fr;
+        align-content: start;
+        border-radius: 22px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.05) 100%);
+        backdrop-filter: blur(16px);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 12px 24px rgba(11, 28, 44, 0.12);
+    }
+
+    .welcome-proof-card {
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-start;
+        gap: 0.34rem;
+        padding: 0.62rem 0.64rem 0.62rem 0.86rem;
+        border-left: 3px solid rgba(242, 193, 78, 0.95);
+        border-radius: 12px;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.09) 0%, rgba(255, 255, 255, 0.04) 100%);
+        position: relative;
+    }
+
+    .welcome-proof-card::before {
+        content: "";
+        position: absolute;
+        left: -0.36rem;
+        top: 0.72rem;
+        width: 0.45rem;
+        height: 0.45rem;
+        border-radius: 999px;
+        background: rgba(244, 231, 184, 0.98);
+    }
+
+    .welcome-proof-card strong {
+        display: block;
+        font-size: 0.84rem;
+        line-height: 1.2;
+        margin-bottom: 0;
+        color: #ffe28b;
+        letter-spacing: -0.01em;
+        text-transform: none;
+    }
+
+    .welcome-proof-card span {
+        color: rgba(241, 247, 255, 0.82);
+        font-size: 0.74rem;
+        line-height: 1.42;
+    }
+
+    .welcome-wave {
+        position: relative;
+        overflow: hidden;
+        border-radius: 30px;
+        padding: 1.15rem;
+        background: linear-gradient(180deg, rgba(247, 250, 254, 0.97) 0%, rgba(232, 239, 247, 0.96) 100%);
+        border: 1px solid rgba(183, 198, 214, 0.78);
+        box-shadow: 0 20px 38px rgba(12, 31, 52, 0.07), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    }
+
+    .welcome-wave-tight {
+        padding-top: 0.9rem;
+        padding-bottom: 0.9rem;
+    }
+
+    .welcome-wave-warm-start {
+        background: linear-gradient(180deg, rgba(246, 250, 255, 0.97) 0%, rgba(228, 238, 247, 0.97) 100%);
+    }
+
+    .welcome-wave::after {
+        content: "";
+        position: absolute;
+        right: -3.4rem;
+        top: -3.4rem;
+        width: 12rem;
+        height: 12rem;
+        border-radius: 999px;
+        background: radial-gradient(circle, rgba(22, 63, 107, 0.16) 0%, rgba(22, 63, 107, 0) 72%);
+    }
+
+    .welcome-section-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: start;
+        gap: 1rem;
+        margin: 0;
+    }
+
+    .welcome-section-head h2 {
+        margin: 0;
+        color: var(--welcome-ink);
+        font-size: clamp(1.45rem, 2.6vw, 2.15rem);
+        line-height: 0.98;
+        letter-spacing: -0.02em;
+        max-width: 15ch;
+    }
+
+    .welcome-section-head p {
+        margin: 0;
+        max-width: 38rem;
+        color: var(--welcome-ink-soft);
+        line-height: 1.72;
+        font-size: 0.98rem;
+    }
+
+    .welcome-story-grid {
+        grid-template-columns: 1fr;
+        gap: 0.65rem;
+        align-items: start;
+    }
+
+    .welcome-story-grid {
+        display: grid;
+        margin-top: 0.6rem;
+    }
+
+    .welcome-story-copy p {
+        margin: 0;
+        color: var(--welcome-ink-soft);
+        line-height: 1.72;
+        font-size: 0.98rem;
+    }
+
+    .welcome-story-copy p + p {
+        margin-top: 0.82rem;
+    }
+
+    .welcome-story-copy p:first-child {
+        font-size: 1.04rem;
+        color: #19324d;
+    }
+
+    .welcome-coverage-map {
+        margin-top: 0.2rem;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0.38rem;
+    }
+
+    .welcome-coverage-item {
+        padding: 0.52rem 0.56rem;
+        border-radius: 14px;
+        border: 1px solid rgba(170, 188, 208, 0.82);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(239, 245, 251, 0.98) 100%);
+        display: grid;
+        align-content: start;
+        gap: 0.24rem;
+        box-shadow: 0 12px 20px rgba(12, 31, 52, 0.045);
+    }
+
+    .welcome-coverage-item strong {
+        font-size: 0.76rem;
+        color: #0f3558;
+        font-family: "Segoe UI Variable Display", "Bahnschrift", sans-serif;
+        text-transform: none;
+        letter-spacing: -0.01em;
+        line-height: 1.15;
+    }
+
+    .welcome-coverage-item span {
+        font-size: 0.68rem;
+        color: #4f6782;
+        line-height: 1.34;
+    }
+
+    .welcome-ai-inline {
+        margin-top: 0.7rem;
+        padding-top: 0.6rem;
+        border-top: 1px solid rgba(183, 198, 214, 0.92);
+        position: relative;
+    }
+
+    .welcome-ai-inline h3 {
+        margin: 0 0 0.5rem;
+        color: #12375a;
+        font-size: 0.98rem;
+        letter-spacing: -0.01em;
+    }
+
+    .welcome-ai-inline p {
+        margin: 0;
+        color: #567189;
+        line-height: 1.55;
+        font-size: 0.84rem;
+    }
+
+    .welcome-flow-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.48rem;
+        margin-top: 0.65rem;
+        position: relative;
+        padding-left: 0;
+    }
+
+    .welcome-flow-grid::before {
+        content: none;
+    }
+
+    .welcome-flow-step {
+        display: grid;
+        gap: 0.42rem;
+        padding: 0.62rem 0.7rem;
+        position: relative;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(242, 247, 252, 0.98) 100%);
+        border-radius: 14px;
+        border: 1px solid rgba(183, 198, 214, 0.72);
+        box-shadow: 0 12px 18px rgba(12, 31, 52, 0.045);
+    }
+
+    .welcome-flow-step::before {
+        content: attr(data-step);
+        position: absolute;
+        top: 0.68rem;
+        right: 0.72rem;
+        min-width: 1.7rem;
+        padding: 0.18rem 0.38rem;
+        border-radius: 999px;
+        background: linear-gradient(135deg, #163f6b 0%, #2d7ea0 100%);
+        color: #f7fbff;
+        font-size: 0.7rem;
+        font-weight: 800;
+        letter-spacing: 0.06em;
+        text-align: center;
+    }
+
+    .welcome-flow-step strong {
+        color: #12375a;
+        font-size: 0.82rem;
+        text-transform: none;
+        letter-spacing: -0.01em;
+        padding-right: 2rem;
+        line-height: 1.18;
+    }
+
+    .welcome-flow-step span {
+        margin: 0;
+        color: #4b6784;
+        line-height: 1.34;
+        font-size: 0.72rem;
+    }
+
+    .welcome-flow-step:nth-child(odd) strong {
+        color: #b11f3f;
+    }
+
+    .welcome-bottom-cta {
+        margin-top: 0.65rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
+    .welcome-shell section {
+        animation: welcomeFadeIn 0.7s ease both;
+    }
+
+    @keyframes welcomeFadeIn {
+        from {
+            opacity: 0;
+            transform: translateY(8px);
+        }
+
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    @media (max-width: 1280px) {
+        .welcome-shell {
+            grid-template-columns: 1fr;
+        }
+
+        .welcome-hero {
+            grid-column: auto;
+        }
+
+        .welcome-proof {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .welcome-coverage-map {
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+
+        .welcome-flow-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .welcome-story-grid {
+            grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+        }
+    }
+
+    @media (max-width: 1024px) {
+        .welcome-hero-grid,
+        .welcome-story-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .welcome-hero-signals {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .welcome-coverage-map {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .welcome-section-head {
+            flex-direction: column;
+        }
+
+        .welcome-copy {
+            max-width: none;
+            padding-right: 0;
+        }
+
+        .welcome-proof {
+            grid-template-columns: 1fr;
+        }
+
+        .welcome-flow-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    @media (max-width: 720px) {
+
+        .welcome-impact-strip {
+            margin-top: 1.1rem;
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.7rem;
+        }
+
+        .welcome-impact-item {
+            padding: 0.84rem 0.9rem;
+            border-radius: 16px;
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.08) 100%);
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            backdrop-filter: blur(12px);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15);
+        }
+
+        .welcome-impact-item strong {
+            display: block;
+            color: #fffdfb;
+            font-size: 0.96rem;
+            line-height: 1.05;
+            margin-bottom: 0.25rem;
+        }
+
+        .welcome-impact-item span {
+            display: block;
+            color: rgba(242, 248, 255, 0.84);
+            font-size: 0.8rem;
+            line-height: 1.42;
+        }
+        .welcome-hero {
+            padding: 1.5rem 1rem;
+            border-radius: 24px;
+        }
+
+        .welcome-wave {
+            padding: 1rem;
+            border-radius: 22px;
+        }
+
+        .welcome-copy h1 {
+            max-width: 100%;
+        }
+
+        .welcome-section-head h2 {
+            max-width: 100%;
+        }
+
+        .welcome-actions {
+            flex-direction: column;
+        }
+
+        .welcome-brand {
+            transform: perspective(520px) rotateX(14deg) skewX(-5deg) translateY(0.01em);
+        }
+
+        .welcome-impact-strip {
+            grid-template-columns: 1fr;
+        }
+
+        .welcome-hero-signals {
+            grid-template-columns: 1fr;
+        }
+
+        .welcome-coverage-map {
+            grid-template-columns: 1fr;
+        }
+
+        .welcome-action-primary,
+        .welcome-action-secondary,
+        .welcome-action-ghost {
+            width: 100%;
+        }
+    }
+</style>
+
+<section class="welcome-shell">
+    <section class="welcome-hero">
+        <span class="welcome-kicker">AI-assisted complete NGO management</span>
+        <div class="welcome-hero-grid">
+            <div class="welcome-copy">
+                <h1>
+                    <span class="welcome-lead">Welcome to</span>
+                    <span class="welcome-brand" aria-label="NGO OMG">
+                        <span class="welcome-brand-text">NGO OMG</span>
+                    </span>
+                </h1>
+                <p>
+                    NGO OMG brings fundraising, grants, programs, volunteers, and reporting into one AI-assisted command center so
+                    your team can manage the full NGO lifecycle from first contact to final report.
+                </p>
+                <div class="welcome-highlight-line">Designed for modern nonprofit operations, faster decisions, and a more capable team.</div>
+                <div class="welcome-actions">
+                    <a href="{{ url_for('auth.register') }}" class="welcome-action-primary">Create Account</a>
+                    <a href="{{ url_for('auth.login') }}" class="welcome-action-secondary">Sign In</a>
+                </div>
+                <div class="welcome-hero-signals" aria-label="Platform signals">
+                    <span class="welcome-hero-signal">AI workflows</span>
+                    <span class="welcome-hero-signal">Grant ops</span>
+                    <span class="welcome-hero-signal">Program outcomes</span>
+                    <span class="welcome-hero-signal">Executive reporting</span>
+                </div>
+                <div class="welcome-impact-strip" aria-label="Key platform benefits">
+                    <div class="welcome-impact-item">
+                        <strong>Mission control</strong>
+                        <span>One connected place for operations, reporting, and oversight.</span>
+                    </div>
+                    <div class="welcome-impact-item">
+                        <strong>Built-in guidance</strong>
+                        <span>Draft, review, and surface what matters without adding noise.</span>
+                    </div>
+                    <div class="welcome-impact-item">
+                        <strong>Shared accountability</strong>
+                        <span>Shared history and role-aware flows reduce friction across the team.</span>
+                    </div>
+                </div>
+            </div>
+            <div class="welcome-proof">
+                <div class="welcome-proof-card">
+                    <strong>Operational copilots</strong>
+                    <span>Use the built-in assistant layer to move from question to action more quickly.</span>
+                </div>
+                <div class="welcome-proof-card">
+                    <strong>Donor and campaign CRM</strong>
+                    <span>Track donors, campaigns, recurring giving, and peer-to-peer activity in one place.</span>
+                </div>
+                <div class="welcome-proof-card">
+                    <strong>Grant lifecycle management</strong>
+                    <span>Follow applications, budgets, compliance checkpoints, and reporting milestones end to end.</span>
+                </div>
+                <div class="welcome-proof-card">
+                    <strong>Finance and fund controls</strong>
+                    <span>Manage funds, expenses, and operational controls with cleaner visibility across teams.</span>
+                </div>
+                <div class="welcome-proof-card">
+                    <strong>Programs and beneficiaries</strong>
+                    <span>Connect program delivery, beneficiary records, and outcome tracking without fragmented tools.</span>
+                </div>
+                <div class="welcome-proof-card">
+                    <strong>Execution and accountability</strong>
+                    <span>Coordinate tasks, approvals, audit history, and team visibility without extra admin drag.</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="welcome-wave welcome-wave-tight">
+        <div class="welcome-section-head">
+            <h2>Built for complete NGO management</h2>
+            <p>
+                Explore the core areas that help the platform work as a full nonprofit management system, not just a dashboard.
+            </p>
+        </div>
+        <div class="welcome-story-grid">
+            <div class="welcome-story-copy">
+                <p>
+                    NGO OMG combines donor management, fundraising, grants, finance tracking, program records, volunteer
+                    coordination, and reporting in one connected workflow, with AI support to reduce busywork and surface
+                    what needs attention.
+                </p>
+                <div class="welcome-ai-inline">
+                    <h3>AI features available now</h3>
+                    <p>
+                        The app includes Copilot support for beneficiary insights and campaign drafting, with role
+                        checks, rate limits, audit logging, and PII redaction built in.
+                    </p>
+                </div>
+            </div>
+            <div class="welcome-coverage-map" aria-label="Platform coverage map">
+                <div class="welcome-coverage-item"><strong>Donor CRM</strong><span>Profiles and history</span></div>
+                <div class="welcome-coverage-item"><strong>Campaigns</strong><span>Fundraising and P2P</span></div>
+                <div class="welcome-coverage-item"><strong>Grants</strong><span>Applications and budgets</span></div>
+                <div class="welcome-coverage-item"><strong>Finance</strong><span>Funds and expenses</span></div>
+                <div class="welcome-coverage-item"><strong>Programs</strong><span>Beneficiaries and outcomes</span></div>
+                <div class="welcome-coverage-item"><strong>Volunteers</strong><span>Scheduling and activity</span></div>
+                <div class="welcome-coverage-item"><strong>Tasks</strong><span>Operational execution</span></div>
+                <div class="welcome-coverage-item"><strong>Reporting</strong><span>Performance and oversight</span></div>
+                <div class="welcome-coverage-item"><strong>Compliance</strong><span>Audit-ready controls</span></div>
+            </div>
+        </div>
+    </section>
+
+    <section class="welcome-wave welcome-wave-tight welcome-wave-warm-start">
+        <div class="welcome-section-head">
+            <h2>A practical start for growing teams</h2>
+            <p>Use this quick setup path to get organized fast, then scale into a more complete operating rhythm.</p>
+        </div>
+        <div class="welcome-flow-grid">
+            <article class="welcome-flow-step" data-step="01">
+                <strong>1. Create your account</strong>
+                <span>Start with the lead account that shapes the first workspace setup.</span>
+            </article>
+            <article class="welcome-flow-step" data-step="02">
+                <strong>2. Set up your organization</strong>
+                <span>Add the basics once, then let the system carry the structure for you.</span>
+            </article>
+            <article class="welcome-flow-step" data-step="03">
+                <strong>3. Add programs and supporters</strong>
+                <span>Enter beneficiaries, donors, and projects so your mission appears in one place.</span>
+            </article>
+            <article class="welcome-flow-step" data-step="04">
+                <strong>4. Record operational activity</strong>
+                <span>Log activity as it happens so reporting stays useful and current.</span>
+            </article>
+        </div>
+        <div class="welcome-bottom-cta">
+            <a href="{{ url_for('auth.register') }}" class="welcome-action-primary">Start Setup</a>
+            <a href="{{ url_for('auth.login') }}" class="welcome-action-secondary">Open Existing Account</a>
+        </div>
+    </section>
+</section>
 {% endblock %}

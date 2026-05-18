@@ -18,6 +18,7 @@ from flask_babel import Babel, lazy_gettext as _l
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_ckeditor import CKEditor
+from sqlalchemy import inspect as sa_inspect
 
 from ngo_homesuite.flask_config import get_config
 from ngo_homesuite.config import get_runtime_settings
@@ -127,7 +128,7 @@ def create_app(config=None):
     # Register blueprints
     from ngo_homesuite.web.main_routes import main_bp
     from ngo_homesuite.web.auth_routes import auth_bp
-    from ngo_homesuite.web.auth_routes import _init_oauth
+    from ngo_homesuite.web.auth_routes import _init_oauth, _oauth_provider_diagnostics
     from ngo_homesuite.web.ai_routes import ai_bp
     from ngo_homesuite.web.grants_routes import grants_bp
     from ngo_homesuite.web.membership_routes import membership_bp
@@ -156,6 +157,14 @@ def create_app(config=None):
     app.register_blueprint(main_bp)
     app.register_blueprint(auth_bp)
     _init_oauth(app)
+    oauth_diags = _oauth_provider_diagnostics(app)
+    ready = sorted(name for name, data in oauth_diags.items() if bool(data.get('registered')))
+    blocked = sorted(name for name, data in oauth_diags.items() if not bool(data.get('registered')))
+    app.logger.info(
+        "OAuth readiness summary: ready=%s blocked=%s",
+        ",".join(ready) if ready else "none",
+        ",".join(blocked) if blocked else "none",
+    )
     app.register_blueprint(ai_bp)
     app.register_blueprint(grants_bp)
     app.register_blueprint(membership_bp)
@@ -296,131 +305,171 @@ def create_app(config=None):
 def seed_demo_data(app):
     """Seed minimal dummy data so first-run dashboard is immediately usable."""
 
-    if User.query.count() > 0:
-        return
-
-    org = Organization(
-        name='Community Hope Initiative',
-        slug='community-hope-initiative',
-        description='Demo organization for NGO HomeSuite.',
-        mission='Serve families through transparent community programs.',
-        country='US',
-        city='Austin',
-        is_active=True,
-    )
-    db.session.add(org)
-    db.session.flush()
-
-    admin_user = User(
-        username='admin',
-        email='admin@ngohomesuite.local',
-        first_name='System',
-        last_name='Admin',
-        role='admin',
-        organization_id=org.id,
-    )
-    admin_user.set_password(get_runtime_settings().demo_admin_password)
-
-    staff_user = User(
-        username='staff',
-        email='staff@ngohomesuite.local',
-        first_name='Program',
-        last_name='Staff',
-        role='staff',
-        organization_id=org.id,
-    )
-    staff_user.set_password('staff123!')
-
-    volunteer_user = User(
-        username='volunteer',
-        email='volunteer@ngohomesuite.local',
-        first_name='Community',
-        last_name='Volunteer',
-        role='volunteer',
-        organization_id=org.id,
-    )
-    volunteer_user.set_password('volunteer123!')
-
-    viewer_user = User(
-        username='viewer',
-        email='viewer@ngohomesuite.local',
-        first_name='ReadOnly',
-        last_name='Viewer',
-        role='viewer',
-        organization_id=org.id,
-    )
-    viewer_user.set_password('viewer123!')
-
-    db.session.add_all([admin_user, staff_user, volunteer_user, viewer_user])
-
-    donors = [
-        Donor(organization_id=org.id, name='Ana Martins', email='ana@example.org', phone='+1-555-0101', donor_type='individual'),
-        Donor(organization_id=org.id, name='Bright Future Foundation', email='contact@brightfuture.org', donor_type='foundation'),
-    ]
-    db.session.add_all(donors)
-    db.session.flush()
-
-    fund = Fund(
-        organization_id=org.id,
-        name='General Fund',
-        description='General operating fund for mission-critical activities.',
-        is_active=True,
-    )
-    db.session.add(fund)
-    db.session.flush()
-
-    project = Project(
-        organization_id=org.id,
-        name='Youth Learning Program',
-        description='After-school tutoring and mentoring for youth.',
-        program='Education',
-        budget=25000,
-        spent=5400,
-        status='active',
-    )
-    db.session.add(project)
-    db.session.flush()
-
-    db.session.add(
-        Donation(
-            organization_id=org.id,
-            donor_id=donors[0].id,
-            donor_name=donors[0].name,
-            donor_email=donors[0].email,
-            donor_phone=donors[0].phone,
-            amount=1200,
-            currency='USD',
-            payment_method='bank_transfer',
-            status='received',
-            purpose='Education materials',
-            reference_number='DEMO-001',
-            project_id=project.id,
-            fund_id=fund.id,
+    org = Organization.query.filter_by(slug='community-hope-initiative').first()
+    if org is None:
+        org = Organization(
+            name='Community Hope Initiative',
+            slug='community-hope-initiative',
+            description='Demo organization for NGO HomeSuite.',
+            mission='Serve families through transparent community programs.',
+            country='US',
+            city='Austin',
+            is_active=True,
         )
-    )
+        db.session.add(org)
+        db.session.flush()
 
-    db.session.add(
-        Volunteer(
+    demo_users = [
+        {
+            'username': 'admin',
+            'email': 'admin@ngohomesuite.local',
+            'first_name': 'System',
+            'last_name': 'Admin',
+            'role': 'admin',
+            'password': get_runtime_settings().demo_admin_password,
+        },
+        {
+            'username': 'staff',
+            'email': 'staff@ngohomesuite.local',
+            'first_name': 'Program',
+            'last_name': 'Staff',
+            'role': 'staff',
+            'password': 'staff123!',
+        },
+        {
+            'username': 'volunteer',
+            'email': 'volunteer@ngohomesuite.local',
+            'first_name': 'Community',
+            'last_name': 'Volunteer',
+            'role': 'volunteer',
+            'password': 'volunteer123!',
+        },
+        {
+            'username': 'viewer',
+            'email': 'viewer@ngohomesuite.local',
+            'first_name': 'ReadOnly',
+            'last_name': 'Viewer',
+            'role': 'viewer',
+            'password': 'viewer123!',
+        },
+    ]
+
+    for definition in demo_users:
+        user = User.query.filter_by(username=definition['username']).first()
+        if user is None:
+            user = User(username=definition['username'])
+            db.session.add(user)
+        user.email = definition['email']
+        user.first_name = definition['first_name']
+        user.last_name = definition['last_name']
+        user.role = definition['role']
+        user.organization_id = org.id
+        user.is_active = True
+        user.set_password(definition['password'])
+
+    # Commit auth users first so local admin/dev login works even if ancillary demo
+    # tables are on an older schema.
+    db.session.commit()
+
+    if Donor.query.filter_by(organization_id=org.id).count() == 0:
+        donors = [
+            Donor(organization_id=org.id, name='Ana Martins', email='ana@example.org', phone='+1-555-0101', donor_type='individual'),
+            Donor(organization_id=org.id, name='Bright Future Foundation', email='contact@brightfuture.org', donor_type='foundation'),
+        ]
+        db.session.add_all(donors)
+        db.session.flush()
+
+    donors = Donor.query.filter_by(organization_id=org.id).order_by(Donor.id).all()
+
+    fund = Fund.query.filter_by(organization_id=org.id, name='General Fund').first()
+    if fund is None:
+        fund = Fund(
             organization_id=org.id,
-            name='Luis Parker',
-            email='luis.volunteer@example.org',
-            phone='+1-555-0109',
-            hours_logged=14.5,
+            name='General Fund',
+            description='General operating fund for mission-critical activities.',
+            is_active=True,
+        )
+        db.session.add(fund)
+        db.session.flush()
+
+    project = Project.query.filter_by(organization_id=org.id, name='Youth Learning Program').first()
+    if project is None:
+        project = Project(
+            organization_id=org.id,
+            name='Youth Learning Program',
+            description='After-school tutoring and mentoring for youth.',
+            program='Education',
+            budget=25000,
+            spent=5400,
             status='active',
         )
-    )
+        db.session.add(project)
+    db.session.flush()
 
-    db.session.add(
-        Expense(
-            organization_id=org.id,
-            project_id=project.id,
-            fund_id=fund.id,
-            amount=780,
-            currency='USD',
-            payee='Learning Supplies Co',
-            description='Starter packs for 30 students',
+    # Commit before using sa_inspect(engine) to avoid StaticPool connection reuse
+    # rolling back pending session changes (donors/fund/project flushed above).
+    db.session.commit()
+
+    donation_columns = {
+        column['name']
+        for column in sa_inspect(db.engine).get_columns('donations')
+    }
+    if 'campaign_id' in donation_columns:
+        existing_donation = Donation.query.filter_by(reference_number='DEMO-001').first()
+        if existing_donation is None and donors:
+            db.session.add(
+                Donation(
+                    organization_id=org.id,
+                    donor_id=donors[0].id,
+                    donor_name=donors[0].name,
+                    donor_email=donors[0].email,
+                    donor_phone=donors[0].phone,
+                    amount=1200,
+                    currency='USD',
+                    payment_method='bank_transfer',
+                    status='received',
+                    purpose='Education materials',
+                    reference_number='DEMO-001',
+                    project_id=project.id,
+                    fund_id=fund.id,
+                )
+            )
+    else:
+        app.logger.warning('Skipping demo donation seed because donations.campaign_id is missing from the local database schema')
+
+    volunteer = Volunteer.query.filter_by(
+        organization_id=org.id,
+        email='luis.volunteer@example.org',
+    ).first()
+    if volunteer is None:
+        db.session.add(
+            Volunteer(
+                organization_id=org.id,
+                name='Luis Parker',
+                email='luis.volunteer@example.org',
+                phone='+1-555-0109',
+                hours_logged=14.5,
+                status='active',
+            )
         )
-    )
+
+    expense = Expense.query.filter_by(
+        organization_id=org.id,
+        payee='Learning Supplies Co',
+        amount=780,
+    ).first()
+    if expense is None:
+        db.session.add(
+            Expense(
+                organization_id=org.id,
+                project_id=project.id,
+                fund_id=fund.id,
+                amount=780,
+                currency='USD',
+                payee='Learning Supplies Co',
+                description='Starter packs for 30 students',
+            )
+        )
 
     db.session.commit()
     app.logger.info('Demo seed data created: users, donors, donations, projects, funds, volunteers, expenses')

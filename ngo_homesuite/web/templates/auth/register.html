@@ -1,17 +1,210 @@
 {% extends "base.html" %}
+{% set hide_public_donate = true %}
 
 {% block title %}Create Account - NGO HomeSuite{% endblock %}
 
 {% block content %}
-<div style="max-width: 500px; margin: 3rem auto;">
-    <h2 class="text-center" style="margin-bottom: 2rem;">Create Your Account</h2>
-    
-    <form method="post" novalidate>
+<style>
+    .register-shell {
+        min-height: calc(100vh - 11rem);
+        padding: 1.25rem 0.5rem 2rem;
+    }
+
+    .register-card {
+        width: min(100%, 980px);
+        margin: 0 auto;
+        border-radius: 28px;
+        overflow: hidden;
+        border: 1px solid rgba(219, 227, 237, 0.95);
+        background: linear-gradient(180deg, rgba(255,255,255,0.99), rgba(248,250,252,0.98));
+        box-shadow: 0 22px 56px rgba(16, 36, 61, 0.12);
+        display: grid;
+        grid-template-columns: 0.95fr 1.05fr;
+    }
+
+    .register-hero {
+        padding: 2rem;
+        color: #eff6ff;
+        background:
+            radial-gradient(circle at top right, rgba(255,255,255,0.16), transparent 28%),
+            radial-gradient(circle at bottom left, rgba(255,255,255,0.08), transparent 24%),
+            linear-gradient(155deg, #0d223c 0%, #14538e 56%, #1e7ee3 100%);
+    }
+
+    .register-hero h2 {
+        margin: 0.9rem 0 0.7rem;
+        color: inherit;
+        font-size: clamp(2rem, 4vw, 2.7rem);
+        line-height: 1.05;
+    }
+
+    .register-hero p {
+        margin: 0;
+        color: rgba(239,246,255,0.9);
+    }
+
+    .register-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.4rem 0.72rem;
+        border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.16);
+        background: rgba(255,255,255,0.12);
+        font-size: 0.78rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+    }
+
+    .register-points {
+        margin-top: 1.25rem;
+        display: grid;
+        gap: 0.75rem;
+    }
+
+    .register-point {
+        padding: 0.9rem 1rem;
+        border-radius: 16px;
+        background: rgba(255,255,255,0.1);
+        border: 1px solid rgba(255,255,255,0.12);
+    }
+
+    .register-point strong {
+        display: block;
+        color: #fff;
+        margin-bottom: 0.28rem;
+    }
+
+    .register-point span {
+        color: rgba(239,246,255,0.88);
+    }
+
+    .register-form-wrap {
+        padding: 2rem;
+        background: linear-gradient(180deg, rgba(255,255,255,1), rgba(246,249,252,0.98));
+    }
+
+    .register-form-wrap p {
+        color: #526479;
+        margin: 0.25rem 0 1.25rem;
+    }
+
+    .register-form {
+        display: grid;
+        gap: 0.95rem;
+    }
+
+    .register-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.95rem;
+    }
+
+    .register-form .form-group {
+        margin-bottom: 0;
+    }
+
+    .register-form input[type="text"],
+    .register-form input[type="email"],
+    .register-form input[type="password"] {
+        height: 50px;
+        border-radius: 14px;
+        background: var(--surface-soft);
+        border-color: rgba(219, 227, 237, 0.95);
+    }
+
+    .register-submit {
+        width: 100%;
+        min-height: 52px;
+        border-radius: 14px;
+        background: linear-gradient(135deg, var(--primary) 0%, #0f5ea7 100%);
+        box-shadow: 0 14px 28px rgba(20, 118, 212, 0.2);
+    }
+
+    .register-login-link {
+        margin-top: 1rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--border);
+        text-align: center;
+        color: #405064;
+    }
+
+    .register-login-link a {
+        color: var(--primary);
+        font-weight: 700;
+        text-decoration: none;
+    }
+
+    [data-theme="dark"] .register-card {
+        border-color: rgba(63, 88, 126, 0.75);
+        background: linear-gradient(180deg, rgba(19,33,59,0.98), rgba(14,26,47,0.98));
+        box-shadow: 0 24px 56px rgba(0, 0, 0, 0.34);
+    }
+
+    [data-theme="dark"] .register-form-wrap {
+        background: linear-gradient(180deg, rgba(19,33,59,0.96), rgba(16,29,52,0.98));
+    }
+
+    [data-theme="dark"] .register-form-wrap p,
+    [data-theme="dark"] .register-login-link {
+        color: #b5c8e8;
+    }
+
+    @media (max-width: 920px) {
+        .register-card {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    @media (max-width: 620px) {
+        .register-shell {
+            padding: 0.75rem 0.35rem 1.25rem;
+        }
+
+        .register-hero,
+        .register-form-wrap {
+            padding: 1.25rem;
+        }
+
+        .register-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+
+<div class="register-shell">
+    <div class="register-card">
+        <section class="register-hero">
+            <div class="register-badge">Guided onboarding</div>
+            <h2>Create your NGO HomeSuite account</h2>
+            <p>Set up your workspace with a cleaner sign-up flow, stronger readability, and direct access to the core nonprofit operations surface.</p>
+
+            <div class="register-points">
+                <div class="register-point">
+                    <strong>Bring your team in fast</strong>
+                    <span>Create an account and get into donor, volunteer, and compliance workflows without bouncing across tools.</span>
+                </div>
+                <div class="register-point">
+                    <strong>Security built in</strong>
+                    <span>Use the same account flow that supports MFA enrollment, recovery codes, and stronger session controls.</span>
+                </div>
+                <div class="register-point">
+                    <strong>Clear next steps</strong>
+                    <span>Finish registration, sign in, and move straight into the operating dashboard.</span>
+                </div>
+            </div>
+        </section>
+
+        <section class="register-form-wrap">
+            <h2>Create your account</h2>
+            <p>Use a work email and a strong password to set up local access.</p>
+
+            <form method="post" novalidate class="register-form">
         {{ form.hidden_tag() }}
-        
+
         <div class="form-group {% if form.username.errors %}error{% endif %}">
             {{ form.username.label }}
-            {{ form.username(class='form-control') }}
+            {{ form.username(class='form-control', placeholder='Choose a username') }}
             {% if form.username.errors %}
                 <div class="error-message">
                     {% for error in form.username.errors %}
@@ -21,45 +214,49 @@
             {% endif %}
         </div>
         
-        <div class="form-group {% if form.email.errors %}error{% endif %}">
-            {{ form.email.label }}
-            {{ form.email(class='form-control') }}
-            {% if form.email.errors %}
-                <div class="error-message">
-                    {% for error in form.email.errors %}
-                        <div>{{ error }}</div>
-                    {% endfor %}
-                </div>
-            {% endif %}
+
+        <div class="register-grid">
+            <div class="form-group {% if form.email.errors %}error{% endif %}">
+                {{ form.email.label }}
+                {{ form.email(class='form-control', placeholder='you@organization.org') }}
+                {% if form.email.errors %}
+                    <div class="error-message">
+                        {% for error in form.email.errors %}
+                            <div>{{ error }}</div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            </div>
+
+            <div class="form-group {% if form.first_name.errors %}error{% endif %}">
+                {{ form.first_name.label }}
+                {{ form.first_name(class='form-control', placeholder='First name') }}
+                {% if form.first_name.errors %}
+                    <div class="error-message">
+                        {% for error in form.first_name.errors %}
+                            <div>{{ error }}</div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            </div>
         </div>
-        
-        <div class="form-group {% if form.first_name.errors %}error{% endif %}">
-            {{ form.first_name.label }}
-            {{ form.first_name(class='form-control') }}
-            {% if form.first_name.errors %}
-                <div class="error-message">
-                    {% for error in form.first_name.errors %}
-                        <div>{{ error }}</div>
-                    {% endfor %}
-                </div>
-            {% endif %}
-        </div>
-        
-        <div class="form-group {% if form.last_name.errors %}error{% endif %}">
-            {{ form.last_name.label }}
-            {{ form.last_name(class='form-control') }}
-            {% if form.last_name.errors %}
-                <div class="error-message">
-                    {% for error in form.last_name.errors %}
-                        <div>{{ error }}</div>
-                    {% endfor %}
-                </div>
-            {% endif %}
-        </div>
-        
-        <div class="form-group {% if form.password.errors %}error{% endif %}">
+
+        <div class="register-grid">
+            <div class="form-group {% if form.last_name.errors %}error{% endif %}">
+                {{ form.last_name.label }}
+                {{ form.last_name(class='form-control', placeholder='Last name') }}
+                {% if form.last_name.errors %}
+                    <div class="error-message">
+                        {% for error in form.last_name.errors %}
+                            <div>{{ error }}</div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            </div>
+
+            <div class="form-group {% if form.password.errors %}error{% endif %}">
             {{ form.password.label }}
-            {{ form.password(class='form-control') }}
+            {{ form.password(class='form-control', placeholder='Create a strong password') }}
             {% if form.password.errors %}
                 <div class="error-message">
                     {% for error in form.password.errors %}
@@ -67,11 +264,12 @@
                     {% endfor %}
                 </div>
             {% endif %}
+            </div>
         </div>
-        
+
         <div class="form-group {% if form.password_confirm.errors %}error{% endif %}">
             {{ form.password_confirm.label }}
-            {{ form.password_confirm(class='form-control') }}
+            {{ form.password_confirm(class='form-control', placeholder='Confirm your password') }}
             {% if form.password_confirm.errors %}
                 <div class="error-message">
                     {% for error in form.password_confirm.errors %}
@@ -82,12 +280,14 @@
         </div>
         
         <div class="form-group">
-            {{ form.submit(class='btn btn-success', style='width: 100%;') }}
+            {{ form.submit(class='btn register-submit') }}
         </div>
     </form>
-    
-    <div class="text-center mt-3">
+
+    <div class="register-login-link">
         <p>Already have an account? <a href="{{ url_for('auth.login') }}">Sign in here</a></p>
     </div>
+</section>
+</div>
 </div>
 {% endblock %}

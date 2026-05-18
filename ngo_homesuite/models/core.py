@@ -88,6 +88,9 @@ class User(UserMixin, db.Model):
     # WebAuthn / passkeys (multiple credentials per account)
     webauthn_credentials_json = db.Column(JSON, nullable=True)
 
+    # Per-user UI personalization (sidebar collapse, favorites, recents)
+    ui_profile_json = db.Column(JSON, nullable=True)
+
     __table_args__ = (
         db.UniqueConstraint('oauth_provider', 'oauth_provider_id', name='uq_user_oauth_provider'),
     )

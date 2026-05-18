@@ -65,13 +65,12 @@ def test_account_locks_after_max_failed_attempts(client, app):
     # Exhaust the allowed attempts (5 failures)
     for _ in range(5):
         rv = _attempt_login(client, "lock_test_user1", "WrongPassword!")
-        assert rv.status_code == 302
+        assert rv.status_code == 200
 
     # Now the account should be locked; even correct password fails
     rv = _attempt_login(client, "lock_test_user1", "CorrectPass123!")
-    assert rv.status_code == 302
-    location = rv.headers.get("Location", "")
-    assert "/auth/login" in location
+    assert rv.status_code == 200
+    assert b"locked" in rv.data.lower() or b"minute" in rv.data.lower()
 
     # Verify locked_until is set in DB
     with app.app_context():
@@ -142,8 +141,7 @@ def test_expired_lockout_allows_login(client, app):
 def test_failed_login_for_nonexistent_user_does_not_crash(client, app):
     """Login with unknown username should fail gracefully (no 500)."""
     rv = _attempt_login(client, "completely_unknown_xyz987", "AnyPassword!")
-    assert rv.status_code == 302
-    assert "/auth/login" in rv.headers.get("Location", "")
+    assert rv.status_code == 200
 
 
 def test_inactive_user_cannot_login(client, app):
@@ -154,5 +152,4 @@ def test_inactive_user_cannot_login(client, app):
         db.session.commit()
 
     rv = _attempt_login(client, "lock_test_inactive_user", "CorrectPass123!")
-    assert rv.status_code == 302
-    assert "/auth/login" in rv.headers.get("Location", "")
+    assert rv.status_code == 200

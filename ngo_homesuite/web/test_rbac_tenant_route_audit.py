@@ -12,6 +12,7 @@ MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 PUBLIC_MUTATING_ROUTES = {
     "/auth/login",
     "/auth/register",
+    "/auth/password/forgot",
     "/give",
     "/integrations/stripe/webhook",
 }

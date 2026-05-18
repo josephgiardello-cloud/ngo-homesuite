@@ -1,0 +1,23 @@
+﻿import re
+import requests
+
+base = 'http://127.0.0.1:5000'
+s = requests.Session()
+login = s.get(base + '/auth/login', timeout=10)
+csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', login.text).group(1)
+s.post(base + '/auth/login', data={'username':'admin','password':'admin123!','csrf_token':csrf}, timeout=10)
+r = s.get(base + '/dashboard?period=30d', timeout=10)
+text = r.text
+checks = {
+    'Donor Cohort Trend': 'Donor Cohort Trend' in text,
+    'Donor Lifecycle': 'Donor Lifecycle' in text,
+    'Campaign Attribution': 'Campaign Attribution' in text,
+    'Budget Variance': 'Budget Variance' in text,
+    'Month-End Forecast': 'Month-End Forecast' in text,
+    'Fundraising and Donors': 'Fundraising and Donors' in text,
+    'Program Delivery': 'Program Delivery' in text,
+    'Operations and Finance': 'Operations and Finance' in text,
+}
+print('/dashboard?period=30d STATUS=' + str(r.status_code))
+for k,v in checks.items():
+    print(k + '=' + str(v))
