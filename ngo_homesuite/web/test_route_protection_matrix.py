@@ -48,6 +48,7 @@ ROUTE_POLICY_MANIFEST: dict[str, RoutePolicy] = {
     "/api/v2/campaigns": RoutePolicy(access="authenticated"),
     "/api/v2/campaigns/email/click": RoutePolicy(access="tokenized_public"),
     "/api/v2/campaigns/email/open-pixel": RoutePolicy(access="public"),
+    "/api/v2/campaigns/email/unsubscribe": RoutePolicy(access="tokenized_public"),
     "/api/v2/tasks/my": RoutePolicy(access="authenticated"),
         "/api/v2/tasks/reminders": RoutePolicy(access="authenticated"),
     "/api/v2/tasks/board": RoutePolicy(access="authenticated"),

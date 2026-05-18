@@ -286,13 +286,19 @@ def create_app(config=None):
             return {"error": "Prometheus client unavailable"}, 503
         return app.response_class(payload, mimetype='text/plain; version=0.0.4; charset=utf-8')
 
-    scheduler_enabled = str(
+    event_scheduler_enabled = str(
         app.config.get(
             'EVENT_REMINDER_SCHEDULER_ENABLED',
             os.getenv('EVENT_REMINDER_SCHEDULER_ENABLED', 'false'),
         )
     ).strip().lower() in {'1', 'true', 'yes', 'on'}
-    if scheduler_enabled and not bool(app.config.get('TESTING', False)):
+    campaign_email_scheduler_enabled = str(
+        app.config.get(
+            'CAMPAIGN_EMAIL_SCHEDULER_ENABLED',
+            os.getenv('CAMPAIGN_EMAIL_SCHEDULER_ENABLED', 'false'),
+        )
+    ).strip().lower() in {'1', 'true', 'yes', 'on'}
+    if (event_scheduler_enabled or campaign_email_scheduler_enabled) and not bool(app.config.get('TESTING', False)):
         try:
             from ngo_homesuite.events.scheduler import start_event_reminder_scheduler
 

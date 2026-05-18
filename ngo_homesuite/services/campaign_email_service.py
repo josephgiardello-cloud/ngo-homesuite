@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 from collections import defaultdict, deque
 from datetime import datetime, timezone
 import json
@@ -23,12 +24,16 @@ from ngo_homesuite.models.core import (
     Campaign,
     CampaignEmailBatch,
     CampaignEmailDelivery,
+    CampaignEmailOptOut,
     Donation,
     Donor,
     ExternalCommunicationAuthorization,
     db,
 )
 from ngo_homesuite.utils.email import send_email
+
+
+logger = logging.getLogger(__name__)
 
 
 def _utcnow() -> datetime:
@@ -95,6 +100,35 @@ def _tracking_signature(
     return digest
 
 
+def _unsub_signature(*, email: str, donor_id: int, campaign_id: int, issued_at: int) -> str:
+    payload = "|".join(["unsub", str(email).lower(), str(int(donor_id)), str(int(campaign_id)), str(int(issued_at))])
+    return hmac.new(_tracking_secret(), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def verify_unsub_signature(
+    *,
+    email: str,
+    donor_id: int,
+    campaign_id: int,
+    issued_at: int,
+    signature: str,
+    max_age_seconds: int = 2592000,
+) -> bool:
+    """Verify an unsubscribe link signature (default 30-day TTL)."""
+    now_ts = int(time.time())
+    if issued_at <= 0 or issued_at > now_ts:
+        return False
+    if now_ts - int(issued_at) > int(max(1, max_age_seconds)):
+        return False
+    expected = _unsub_signature(
+        email=email,
+        donor_id=donor_id,
+        campaign_id=campaign_id,
+        issued_at=issued_at,
+    )
+    return hmac.compare_digest(str(signature or ""), expected)
+
+
 def verify_tracking_signature(
     *,
     kind: str,
@@ -122,7 +156,14 @@ def verify_tracking_signature(
     return hmac.compare_digest(str(signature or ""), expected)
 
 
-def _with_tracking_links(body: str, *, campaign_id: int, donor_id: int, delivery_id: int) -> str:
+def _with_tracking_links(
+    body: str,
+    *,
+    campaign_id: int,
+    donor_id: int,
+    delivery_id: int,
+    recipient_email: str = "",
+) -> str:
     base = _tracking_base_url()
 
     def _replace_href(match: re.Match[str]) -> str:
@@ -145,20 +186,49 @@ def _with_tracking_links(body: str, *, campaign_id: int, donor_id: int, delivery
         return f"href={quote}{tracked}{quote}"
 
     tracked_body = re.sub(r"href=(['\"])([^'\"]+)\1", _replace_href, body or "")
-    issued_at = int(time.time())
-    signature = _tracking_signature(
+
+    # Open-tracking pixel
+    open_ts = int(time.time())
+    open_sig = _tracking_signature(
         kind="open",
         campaign_id=int(campaign_id),
         donor_id=int(donor_id),
         delivery_id=int(delivery_id),
-        issued_at=issued_at,
+        issued_at=open_ts,
     )
     pixel_url = (
         f"{base}/api/v2/campaigns/email/open-pixel?campaign_id={int(campaign_id)}"
         f"&donor_id={int(donor_id)}&delivery_id={int(delivery_id)}"
-        f"&ts={issued_at}&sig={signature}"
+        f"&ts={open_ts}&sig={open_sig}"
     )
-    return f"{tracked_body}\n\nOpen tracking: {pixel_url}"
+    pixel_html = f'<img src="{pixel_url}" width="1" height="1" alt="" style="display:none;"/>'
+
+    # CAN-SPAM / unsubscribe footer
+    footer = ""
+    if recipient_email:
+        unsub_ts = int(time.time())
+        unsub_sig = _unsub_signature(
+            email=str(recipient_email).lower(),
+            donor_id=int(donor_id),
+            campaign_id=int(campaign_id),
+            issued_at=unsub_ts,
+        )
+        unsub_url = (
+            f"{base}/api/v2/campaigns/email/unsubscribe"
+            f"?email={quote_plus(str(recipient_email).lower())}"
+            f"&donor_id={int(donor_id)}&campaign_id={int(campaign_id)}"
+            f"&ts={unsub_ts}&sig={unsub_sig}"
+        )
+        footer = (
+            "\n\n<div style=\"margin-top:2em;padding-top:1em;border-top:1px solid #e0e0e0;"
+            "font-size:12px;color:#999;text-align:center;font-family:Arial,sans-serif;\">"
+            "<p style=\"margin:0 0 4px;\">You are receiving this email as a valued supporter.</p>"
+            f"<p style=\"margin:0;\"><a href=\"{unsub_url}\" "
+            "style=\"color:#999;text-decoration:underline;\">Unsubscribe</a> "
+            "from campaign emails.</p></div>"
+        )
+
+    return f"{tracked_body}\n\n{pixel_html}{footer}"
 
 
 def _email_rate_cap_settings() -> tuple[int, int, float]:
@@ -336,6 +406,27 @@ def _resolve_recipients(
         email_key = str(donor.email or "").strip().lower()
         if email_key and email_key not in deduped:
             deduped[email_key] = donor
+
+    # Exclude globally opted-out / unsubscribed email addresses
+    try:
+        opted_out = set(
+            str(row).strip().lower()
+            for (row,) in db.session.execute(
+                select(CampaignEmailOptOut.email).where(
+                    CampaignEmailOptOut.organization_id == int(organization_id)
+                )
+            ).all()
+            if row
+        )
+        if opted_out:
+            deduped = {k: v for k, v in deduped.items() if k not in opted_out}
+    except Exception as exc:
+        logger.warning(
+            "Unable to apply campaign email opt-out suppression for organization_id=%s: %s",
+            int(organization_id),
+            exc,
+        )
+
     return list(deduped.values())
 
 
@@ -462,6 +553,7 @@ def send_campaign_bulk_email(
     audience: dict[str, Any] | None = None,
     human_authorization: dict[str, Any] | None = None,
     dry_run: bool = False,
+    scheduled_at: datetime | None = None,
 ) -> dict[str, Any]:
     subject_value = str(subject or "").strip()
     body_value = str(body or "").strip()
@@ -517,6 +609,8 @@ def send_campaign_bulk_email(
     db.session.add(authorization_audit)
     db.session.flush()
 
+    now_dt = _utcnow()
+    is_scheduled = bool(scheduled_at and isinstance(scheduled_at, datetime) and scheduled_at > now_dt)
     batch = CampaignEmailBatch(
         organization_id=int(organization_id),
         campaign_id=int(campaign.id),
@@ -524,14 +618,28 @@ def send_campaign_bulk_email(
         subject=subject_value,
         body=body_value,
         audience_json=audience or {},
-        status="queued",
+        status="scheduled" if is_scheduled else "queued",
         total_recipients=len(recipients),
         sent_count=0,
         failed_count=0,
+        scheduled_at=scheduled_at if is_scheduled else None,
     )
     db.session.add(batch)
     db.session.flush()
     authorization_audit.batch_id = int(batch.id)
+
+    if is_scheduled:
+        db.session.commit()
+        return {
+            "dry_run": False,
+            "scheduled": True,
+            "batch_id": int(batch.id),
+            "authorization_audit_id": int(authorization_audit.id),
+            "campaign_id": int(campaign.id),
+            "status": "scheduled",
+            "scheduled_at": scheduled_at.isoformat() if scheduled_at else None,
+            "total_recipients": int(batch.total_recipients),
+        }
 
     sent = 0
     failed = 0
@@ -574,6 +682,7 @@ def send_campaign_bulk_email(
                     campaign_id=int(campaign.id),
                     donor_id=int(donor.id),
                     delivery_id=int(delivery.id),
+                    recipient_email=recipient_email,
                 )
                 ok = bool(
                     send_email(
@@ -620,6 +729,154 @@ def send_campaign_bulk_email(
         "total_recipients": int(batch.total_recipients),
         "sent": int(batch.sent_count),
         "failed": int(batch.failed_count),
+    }
+
+
+@enforce_error_contract
+def process_scheduled_campaign_email_batches(*, limit: int = 100, now: datetime | None = None) -> dict[str, Any]:
+    """Process due campaign email batches created with scheduled_at in the future."""
+    now_dt = now if isinstance(now, datetime) else _utcnow()
+    batch_limit = max(1, min(int(limit), 500))
+
+    due_batches = list(
+        db.session.scalars(
+            select(CampaignEmailBatch).where(
+                CampaignEmailBatch.status == "scheduled",
+                CampaignEmailBatch.scheduled_at.is_not(None),
+                CampaignEmailBatch.scheduled_at <= now_dt,
+            ).order_by(
+                CampaignEmailBatch.scheduled_at.asc(),
+                CampaignEmailBatch.id.asc(),
+            ).limit(batch_limit)
+        )
+    )
+
+    processed = 0
+    sent_batches = 0
+    failed_batches = 0
+    total_sent = 0
+    total_failed = 0
+
+    for batch in due_batches:
+        processed += 1
+        try:
+            campaign = db.session.get(Campaign, int(batch.campaign_id))
+            if campaign is None or int(campaign.organization_id) != int(batch.organization_id):
+                batch.status = "failed"
+                batch.sent_count = 0
+                batch.failed_count = int(batch.total_recipients or 0)
+                batch.sent_at = _utcnow()
+                db.session.commit()
+                failed_batches += 1
+                total_failed += int(batch.failed_count)
+                continue
+
+            recipients = _resolve_recipients(int(batch.organization_id), int(batch.campaign_id), batch.audience_json or {})
+            sent = 0
+            failed = 0
+            max_per_window, max_per_domain_per_window, window_seconds = _email_rate_cap_settings()
+            sent_at_times: deque[float] = deque()
+            sent_at_times_by_domain: dict[str, deque[float]] = defaultdict(deque)
+
+            for donor in recipients:
+                recipient_email = str(donor.email or "").strip()
+                within_cap = _enforce_send_rate_caps(
+                    recipient_email=recipient_email,
+                    sent_at_times=sent_at_times,
+                    sent_at_times_by_domain=sent_at_times_by_domain,
+                    max_per_window=max_per_window,
+                    max_per_domain_per_window=max_per_domain_per_window,
+                    window_seconds=window_seconds,
+                )
+                with db.session.begin_nested():
+                    delivery = CampaignEmailDelivery(
+                        batch_id=int(batch.id),
+                        organization_id=int(batch.organization_id),
+                        campaign_id=int(batch.campaign_id),
+                        donor_id=int(donor.id),
+                        recipient_email=recipient_email,
+                        delivery_status="pending",
+                    )
+                    db.session.add(delivery)
+                    db.session.flush()
+
+                    if not within_cap:
+                        failed += 1
+                        delivery.delivery_status = "failed"
+                        delivery.error_message = "rate_limited"
+                        delivery.sent_at = None
+                        continue
+
+                    try:
+                        rendered = _render_body(str(batch.body), donor=donor, campaign=campaign)
+                        rendered = _with_tracking_links(
+                            rendered,
+                            campaign_id=int(campaign.id),
+                            donor_id=int(donor.id),
+                            delivery_id=int(delivery.id),
+                            recipient_email=recipient_email,
+                        )
+                        ok = bool(
+                            send_email(
+                                to=recipient_email,
+                                subject=str(batch.subject),
+                                context={"text": rendered},
+                            )
+                        )
+                    except Exception as exc:
+                        ok = False
+                        delivery.error_message = f"delivery_exception:{exc.__class__.__name__}"
+
+                    if ok:
+                        sent += 1
+                        delivery.delivery_status = "sent"
+                        delivery.error_message = None
+                        delivery.sent_at = _utcnow()
+                    else:
+                        failed += 1
+                        delivery.delivery_status = "failed"
+                        if not delivery.error_message:
+                            delivery.error_message = "delivery failed"
+                        delivery.sent_at = None
+
+            batch.sent_count = int(sent)
+            batch.failed_count = int(failed)
+            batch.sent_at = _utcnow()
+            if sent == 0 and failed > 0:
+                batch.status = "failed"
+            elif sent > 0 and failed > 0:
+                batch.status = "partial_failed"
+            else:
+                batch.status = "sent"
+
+            db.session.commit()
+
+            if batch.status == "failed":
+                failed_batches += 1
+            else:
+                sent_batches += 1
+            total_sent += int(batch.sent_count)
+            total_failed += int(batch.failed_count)
+        except Exception:
+            db.session.rollback()
+            failed_batches += 1
+            logger.exception("Scheduled campaign email batch processing failed for batch_id=%s", int(batch.id))
+
+            failed_batch = db.session.get(CampaignEmailBatch, int(batch.id))
+            if failed_batch is not None:
+                failed_batch.status = "failed"
+                failed_batch.sent_count = 0
+                failed_batch.failed_count = int(failed_batch.total_recipients or 0)
+                failed_batch.sent_at = _utcnow()
+                db.session.commit()
+                total_failed += int(failed_batch.failed_count)
+
+    return {
+        "processed_batches": int(processed),
+        "sent_batches": int(sent_batches),
+        "failed_batches": int(failed_batches),
+        "emails_sent": int(total_sent),
+        "emails_failed": int(total_failed),
     }
 
 
@@ -675,6 +932,7 @@ def campaign_email_analytics(organization_id: int, campaign_id: int) -> dict[str
                 "failed_count": int(b.failed_count),
                 "created_at": b.created_at.isoformat() if b.created_at else None,
                 "sent_at": b.sent_at.isoformat() if b.sent_at else None,
+                "scheduled_at": b.scheduled_at.isoformat() if b.scheduled_at else None,
             }
             for b in recent_batches
         ],

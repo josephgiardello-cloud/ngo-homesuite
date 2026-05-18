@@ -77,6 +77,9 @@ def test_start_event_reminder_scheduler_registers_jobs(monkeypatch):
         def start(self):
             self.started = True
 
+        def get_jobs(self):
+            return list(self.jobs)
+
         def shutdown(self, wait=False):
             self.started = False
 
@@ -102,5 +105,57 @@ def test_start_event_reminder_scheduler_registers_jobs(monkeypatch):
         assert len(scheduler_module._scheduler.jobs) == 2
         job_ids = {job["id"] for job in scheduler_module._scheduler.jobs}
         assert job_ids == {"event-reminders-24h", "event-reminders-1h"}
+    finally:
+        scheduler_module.stop_event_reminder_scheduler()
+
+
+def test_start_event_reminder_scheduler_registers_campaign_email_job(monkeypatch):
+    scheduler_module._scheduler = None
+
+    class _FakeScheduler:
+        def __init__(self, timezone):
+            self.timezone = timezone
+            self.jobs = []
+            self.started = False
+
+        def add_job(self, func, trigger, minutes, kwargs, id, replace_existing):
+            self.jobs.append({"func": func, "trigger": trigger, "minutes": minutes, "kwargs": kwargs, "id": id, "replace_existing": replace_existing})
+
+        def start(self):
+            self.started = True
+
+        def get_jobs(self):
+            return list(self.jobs)
+
+        def shutdown(self, wait=False):
+            self.started = False
+
+    monkeypatch.setattr(scheduler_module, "BackgroundScheduler", _FakeScheduler)
+
+    class _App:
+        config = {
+            "EVENT_REMINDER_SCHEDULER_ENABLED": False,
+            "CAMPAIGN_EMAIL_SCHEDULER_ENABLED": True,
+            "CAMPAIGN_EMAIL_SCHEDULER_INTERVAL_MINUTES": 7,
+        }
+
+        class _Ctx:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        def app_context(self):
+            return self._Ctx()
+
+    app = _App()
+    scheduler_module.start_event_reminder_scheduler(app)
+    try:
+        assert scheduler_module._scheduler is not None
+        assert len(scheduler_module._scheduler.jobs) == 1
+        job = scheduler_module._scheduler.jobs[0]
+        assert job["id"] == "campaign-email-scheduled-dispatch"
+        assert int(job["minutes"]) == 7
     finally:
         scheduler_module.stop_event_reminder_scheduler()

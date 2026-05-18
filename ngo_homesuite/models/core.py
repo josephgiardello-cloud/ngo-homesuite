@@ -1146,6 +1146,7 @@ class CampaignEmailBatch(db.Model):
     failed_count = db.Column(db.Integer, nullable=False, default=0)
     created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
     sent_at = db.Column(db.DateTime, nullable=True)
+    scheduled_at = db.Column(db.DateTime, nullable=True)
 
     campaign = db.relationship('Campaign', backref='email_batches')
     created_by = db.relationship('User', backref='campaign_email_batches')
@@ -1185,6 +1186,25 @@ class CampaignEmailDelivery(db.Model):
 
     def __repr__(self):
         return f'<CampaignEmailDelivery batch={self.batch_id} {self.delivery_status}>'
+
+
+class CampaignEmailOptOut(db.Model):
+    """Donor email opt-out (unsubscribe) record for campaign emails."""
+
+    __tablename__ = 'campaign_email_opt_outs'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    donor_id = db.Column(db.Integer, db.ForeignKey('donors.id'), nullable=True, index=True)
+    email = db.Column(db.String(255), nullable=False, index=True)
+    token = db.Column(db.String(64), nullable=False, unique=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaigns.id'), nullable=True, index=True)
+    unsubscribed_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+
+    donor = db.relationship('Donor', backref='email_opt_outs')
+
+    def __repr__(self):
+        return f'<CampaignEmailOptOut email={self.email}>'
 
 
 class EventDiscountCode(db.Model):
