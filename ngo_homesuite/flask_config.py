@@ -132,6 +132,12 @@ class Config:
     WEBAUTHN_RP_NAME = os.environ.get('WEBAUTHN_RP_NAME', 'NGO HomeSuite')
     WEBAUTHN_ORIGIN = os.environ.get('WEBAUTHN_ORIGIN', '')
 
+    # 2FA enforcement policy
+    # Roles in this list are required to enroll in TOTP before accessing the app.
+    ROLES_REQUIRING_2FA: list[str] = ['admin']
+    # Step-up auth session window in seconds (15 minutes).
+    STEP_UP_AUTH_TTL_SECONDS: int = 900
+
 
 class DevelopmentConfig(Config):
     """Development configuration."""

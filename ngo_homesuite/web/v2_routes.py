@@ -1416,3 +1416,35 @@ def campaign_email_unsubscribe():
         "<p>You will no longer receive campaign emails from this organization.</p>"
         "</body></html>"
     ), 200
+
+
+# ---------------------------------------------------------------------------
+# Campaign Projection (E-1)
+# ---------------------------------------------------------------------------
+
+
+@v2_bp.get("/campaigns/<int:campaign_id>/projection")
+@login_required
+@roles_required('admin', 'staff')
+def campaign_projection(campaign_id: int):
+    """Return a fundraising trajectory projection for a campaign."""
+    from ngo_homesuite.services.campaign_projection_service import (
+        project_campaign,
+        project_with_conversion_boost,
+    )
+
+    org_id = _org_id()
+    boost_raw = request.args.get('boost_pct')
+
+    try:
+        if boost_raw is not None:
+            boost = float(boost_raw)
+            if boost <= -100.0:
+                return jsonify({'error': 'boost_pct must be greater than -100'}), 400
+            result = project_with_conversion_boost(campaign_id, org_id, boost)
+        else:
+            result = project_campaign(campaign_id, org_id)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 404
+
+    return jsonify(result), 200

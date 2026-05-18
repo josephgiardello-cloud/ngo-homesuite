@@ -1185,3 +1185,159 @@ def oauth_callback(provider: str):
     if _is_safe_next_path(next_page):
         return redirect(next_page)
     return redirect(url_for('main.dashboard'))
+
+
+# ---------------------------------------------------------------------------
+# 2FA Enforcement Policy (A-2)
+# ---------------------------------------------------------------------------
+
+_EXEMPT_2FA_ENDPOINTS: set[str] = {
+    'auth.login',
+    'auth.logout',
+    'auth.password_forgot',
+    'auth.password_reset',
+    'auth.register',
+    'auth.mfa_setup_page',
+    'auth.mfa_enroll',
+    'auth.mfa_confirm',
+    'auth.mfa_disable',
+    'auth.mfa_rotate_backup_codes',
+    'auth.two_factor_setup',
+    'auth.two_factor_verify',
+    'auth.two_factor_backup_codes',
+    'auth.two_factor_login',
+    'auth.step_up_otp',
+    'static',
+}
+
+
+def _role_requires_2fa(role: str) -> bool:
+    """Return True if the given role must enroll in TOTP before accessing the app."""
+    roles: list[str] = list(current_app.config.get('ROLES_REQUIRING_2FA') or ['admin'])
+    return str(role or '').strip().lower() in {r.strip().lower() for r in roles}
+
+
+def _2fa_enforcement_check() -> None:
+    """Before-request hook: redirect to MFA setup if role requires 2FA and user has not enrolled.
+
+    Only applies to authenticated users whose role is in ROLES_REQUIRING_2FA.
+    MFA and auth endpoints are exempted to avoid redirect loops.
+    """
+    if not current_user.is_authenticated:
+        return
+    endpoint = request.endpoint or ''
+    if endpoint in _EXEMPT_2FA_ENDPOINTS or endpoint.startswith('auth.') or endpoint.startswith('static'):
+        return
+    role = str(getattr(current_user, 'role', '') or '').strip().lower()
+    if _role_requires_2fa(role) and not bool(getattr(current_user, 'mfa_enabled', False)):
+        from ngo_homesuite.audit.security_events import SecurityAuditService, SecurityEventType
+        SecurityAuditService.log_event(
+            event_type=SecurityEventType.PERMISSION_DENIED,
+            action='POLICY_2FA_ENFORCEMENT_TRIGGERED',
+            result='redirect_to_mfa_setup',
+            payload={'role': role, 'endpoint': endpoint, 'user_id': int(current_user.id)},
+        )
+        flash('Your role requires Two-Factor Authentication. Please enroll to continue.', 'warning')
+        return redirect(url_for('auth.mfa_setup_page'))
+
+
+auth_bp.before_request(_2fa_enforcement_check)
+
+# ---------------------------------------------------------------------------
+# A-3: Step-up authentication
+# ---------------------------------------------------------------------------
+
+_STEP_UP_SESSION_KEY = '_step_up_verified_at'
+
+
+def is_step_up_verified() -> bool:
+    """Return True if the current session has a valid step-up auth token."""
+    verified_at = session.get(_STEP_UP_SESSION_KEY)
+    if not verified_at:
+        return False
+    ttl = int(current_app.config.get('STEP_UP_AUTH_TTL_SECONDS', 900))
+    age = (datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(str(verified_at))).total_seconds()
+    return age < ttl
+
+
+def require_step_up_auth(fn):
+    """Decorator: require a recently-verified step-up OTP before executing the view.
+
+    Usage::
+
+        @admin_bp.post('/users/<int:user_id>/delete')
+        @login_required
+        @roles_required('admin')
+        @require_step_up_auth
+        def delete_user(user_id):
+            ...
+
+    Returns 403 JSON with ``step_up_required: true`` when the step-up token is
+    absent or expired.  The client should redirect the user to ``POST /auth/step-up-otp``
+    and then retry the original request.
+    """
+    from functools import wraps
+    from flask import jsonify
+
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        if not is_step_up_verified():
+            from ngo_homesuite.audit.security_events import SecurityAuditService, SecurityEventType
+            SecurityAuditService.log_event(
+                event_type=SecurityEventType.PERMISSION_DENIED,
+                action='SENSITIVE_ACTION_ATTEMPTED',
+                result='step_up_required',
+                payload={
+                    'endpoint': request.endpoint,
+                    'user_id': int(getattr(current_user, 'id', 0)),
+                },
+            )
+            return jsonify({'error': 'Step-up authentication required', 'step_up_required': True}), 403
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+
+@auth_bp.post('/step-up-otp')
+@login_required
+def step_up_otp():
+    """Verify a TOTP/backup code and grant a short-lived step-up session token.
+
+    Request body (JSON or form): ``{"code": "<6-digit TOTP or backup code>"}``
+
+    Emits audit events:
+    - STEP_UP_OTP_VERIFIED on success
+    - STEP_UP_OTP_FAILED on invalid code
+    """
+    from ngo_homesuite.audit.security_events import SecurityAuditService, SecurityEventType
+
+    if not bool(current_user.mfa_enabled):
+        return {'error': 'MFA is not enabled for this account'}, 400
+
+    data = _request_data()
+    code = str(data.get('code') or '').strip()
+    if not code:
+        return {'error': 'code is required'}, 400
+
+    if not current_user.verify_mfa_code(code):
+        db.session.commit()
+        SecurityAuditService.log_event(
+            event_type=SecurityEventType.LOGIN_FAILURE,
+            action='STEP_UP_OTP_FAILED',
+            result='invalid_code',
+            payload={'user_id': int(current_user.id)},
+        )
+        return {'error': 'invalid code'}, 400
+
+    # Record step-up verification timestamp in session.
+    session[_STEP_UP_SESSION_KEY] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    db.session.commit()
+
+    SecurityAuditService.log_event(
+        event_type=SecurityEventType.LOGIN_SUCCESS,
+        action='STEP_UP_OTP_VERIFIED',
+        result='success',
+        payload={'user_id': int(current_user.id)},
+    )
+    ttl = int(current_app.config.get('STEP_UP_AUTH_TTL_SECONDS', 900))
+    return {'status': 'verified', 'expires_in_seconds': ttl}, 200
