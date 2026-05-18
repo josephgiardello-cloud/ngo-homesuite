@@ -14,9 +14,9 @@ This matrix validates which features are already present, partially present, or 
 | Dashboard charts | Exists | `ngo_homesuite/web/main_routes.py`, `ngo_homesuite/web/templates/reports.html` | Report charts are present via Chart.js (plus TONY dashboard charts). |
 | Duplicate detection | Partial | `ngo_homesuite/services/donor_service.py`, `ngo_homesuite/compliance/p2p_fraud_detector.py` | Donor merge and duplicate donation detection exist, but no universal dedupe pipeline/workbench. |
 | Volunteer shift scheduling | Exists | `ngo_homesuite/services/volunteer_service.py`, `ngo_homesuite/web/volunteer_routes.py` | Shift CRUD + completion flows are implemented. |
-| 2FA | Missing | `ngo_homesuite/web/auth_routes.py` | No OTP/TOTP enrollment/challenge pipeline in auth routes. |
-| WebAuthn/passkeys | Missing | `ngo_homesuite/web/auth_routes.py` | No WebAuthn credential registration/challenge verification paths. |
-| OAuth login (user auth) | Missing | `ngo_homesuite/web/auth_routes.py` | OAuth exists for accounting integrations only, not end-user sign-in. |
+| 2FA | Exists | `ngo_homesuite/models/core.py`, `ngo_homesuite/web/auth_routes.py` | TOTP enrollment/confirm/login paths, backup-code rotation/consumption, role-based enrollment policy, and step-up OTP are implemented. |
+| WebAuthn/passkeys | Exists | `ngo_homesuite/web/auth_routes.py` | Passkey registration and authentication begin/complete flows are implemented. |
+| OAuth login (user auth) | Exists | `ngo_homesuite/web/auth_routes.py` | OAuth provider status, authorize redirects, callbacks, identity normalization, account linking, and auto-provisioning are implemented for end-user sign-in. |
 | CardDAV/CalDAV sync | Missing | `ngo_homesuite/web/integrations_routes.py` | Calendar sync endpoint exists, but not CardDAV/CalDAV protocol support. |
 | Contact status workflows | Partial | `ngo_homesuite/models/core.py`, `ngo_homesuite/services/engagement_scoring_service.py` | Segments/scores exist, but no explicit contact lifecycle workflow engine with transitions and SLA policies. |
 | Newsletter subscription management | Partial | `ngo_homesuite/utils/mailchimp_service.py` | External unsubscribe helper exists; no first-class internal subscription center/preferences model. |
@@ -24,11 +24,10 @@ This matrix validates which features are already present, partially present, or 
 | Custom fields | Partial | `ngo_homesuite/models/core.py` | Metadata JSON support exists, but no typed custom-field schema/admin UI/validation layer. |
 
 ## Delivery Order (Recommended)
-1. Auth hardening parity: 2FA, OAuth login, WebAuthn/passkeys.
-2. Engagement parity: newsletter subscriptions, contact status workflows, campaign sending.
-3. Data quality + UX parity: duplicate workbench, custom fields, photo uploads.
-4. Protocol integrations: CardDAV/CalDAV sync.
-5. PM polish: project management milestones/boards if still needed after above.
+1. Engagement parity: newsletter subscriptions, contact status workflows, campaign sending.
+2. Data quality + UX parity: duplicate workbench, custom fields, photo uploads.
+3. Protocol integrations: CardDAV/CalDAV sync.
+4. PM polish: project management milestones/boards if still needed after above.
 
 ## Definition of Done (applies to each feature)
 - Domain model + migrations

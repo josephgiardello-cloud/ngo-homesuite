@@ -30,6 +30,7 @@ from ngo_homesuite.models.core import (
 def app():
     class _Cfg(TestingConfig):
         SECRET_KEY = "test-campaign"
+        ROLES_REQUIRING_2FA = []
 
     return create_app(_Cfg)
 
@@ -455,6 +456,60 @@ def test_campaign_email_analytics_reports_sent_and_failed(client, app):
     assert payload.get("total_failed", 0) >= 1
 
 
+def test_campaign_email_analytics_includes_suppression_and_opt_out_metrics(client, app):
+    from ngo_homesuite.services.campaign_email_service import _unsub_signature
+
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "Campaign Analytics Suppression"})
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+    org_id = _admin_org_id(app)
+
+    with app.app_context():
+        donor = Donor(
+            organization_id=org_id,
+            name="Suppression Metrics Donor",
+            email="suppression-metrics@example.org",
+            donor_type="individual",
+        )
+        db.session.add(donor)
+        db.session.commit()
+        donor_id = int(donor.id)
+
+    webhook_rv = client.post(
+        "/integrations/email/webhooks/suppression",
+        json={"email": "provider-suppressed@example.org", "reason": "complaint"},
+    )
+    assert webhook_rv.status_code == 200
+
+    ts = int(time.time())
+    unsub_email = "suppression-metrics@example.org"
+    with app.app_context():
+        sig = _unsub_signature(email=unsub_email, donor_id=donor_id, campaign_id=campaign_id, issued_at=ts)
+
+    unsub_rv = client.get(
+        "/api/v2/campaigns/email/unsubscribe",
+        query_string={
+            "email": unsub_email,
+            "donor_id": donor_id,
+            "campaign_id": campaign_id,
+            "ts": ts,
+            "sig": sig,
+        },
+    )
+    assert unsub_rv.status_code == 200
+
+    analytics_rv = client.get(f"/api/v2/campaigns/{campaign_id}/emails/analytics")
+    assert analytics_rv.status_code == 200
+    payload = analytics_rv.get_json() or {}
+
+    assert int(payload.get("opt_out_count") or 0) >= 1
+    assert int(payload.get("campaign_opt_out_count") or 0) >= 1
+    assert int(payload.get("suppression_count") or 0) >= 1
+    breakdown = payload.get("suppression_reason_breakdown") or {}
+    assert int(breakdown.get("complaint") or 0) >= 1
+
+
 def test_viewer_cannot_send_campaign_email(client):
     _login_viewer(client)
     rv = client.post(
@@ -655,6 +710,247 @@ def test_campaign_send_email_respects_min_total_and_top_n_filters(client, app):
     payload = rv.get_json() or {}
     assert payload.get("total_recipients") == 1
     assert send_mock.call_count == 1
+
+
+def test_campaign_send_email_accepts_smart_group_audience(client, app):
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "Smart Group Audience Campaign"})
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+    org_id = _admin_org_id(app)
+
+    with app.app_context():
+        d1 = Donor(organization_id=org_id, name="Segment High", email="segment-high@example.org", donor_type="individual")
+        d2 = Donor(organization_id=org_id, name="Segment Low", email="segment-low@example.org", donor_type="individual")
+        db.session.add_all([d1, d2])
+        db.session.flush()
+
+        db.session.add_all(
+            [
+                Donation(
+                    organization_id=org_id,
+                    campaign_id=campaign_id,
+                    donor_id=d1.id,
+                    donor_name=d1.name,
+                    donor_email=d1.email,
+                    amount=500.0,
+                    currency="USD",
+                    status="received",
+                ),
+                Donation(
+                    organization_id=org_id,
+                    campaign_id=campaign_id,
+                    donor_id=d2.id,
+                    donor_name=d2.name,
+                    donor_email=d2.email,
+                    amount=25.0,
+                    currency="USD",
+                    status="received",
+                ),
+            ]
+        )
+        db.session.commit()
+
+    sg_rv = client.post(
+        "/api/v2/smart-groups",
+        json={
+            "name": f"High Value Segment {campaign_id}",
+            "rules": [{"field": "total_giving", "op": "gte", "value": 300}],
+            "description": "High-value donors for campaign send",
+        },
+    )
+    assert sg_rv.status_code == 201
+    smart_group_id = int((sg_rv.get_json() or {}).get("id"))
+
+    with mock.patch("ngo_homesuite.services.campaign_email_service.send_email", return_value=True) as send_mock:
+        send_rv = client.post(
+            f"/api/v2/campaigns/{campaign_id}/emails/send",
+            json={
+                "subject": "Segmented outreach",
+                "body": "Hello {name}, this was sent to a saved segment for {campaign_name}.",
+                "audience": {"smart_group_id": smart_group_id},
+                "compliance": _human_authorization_payload(),
+            },
+        )
+
+    assert send_rv.status_code == 200
+    payload = send_rv.get_json() or {}
+    assert int(payload.get("total_recipients") or 0) >= 1
+    sent_emails = [str(call.kwargs.get("to") or "").strip().lower() for call in send_mock.call_args_list]
+    assert "segment-high@example.org" in sent_emails
+    assert "segment-low@example.org" not in sent_emails
+
+
+def test_campaign_send_email_rejects_invalid_smart_group_audience(client):
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "Invalid Segment Campaign"})
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+
+    rv = client.post(
+        f"/api/v2/campaigns/{campaign_id}/emails/send",
+        json={
+            "subject": "Bad segment",
+            "body": "Hello {name}.",
+            "audience": {"smart_group_id": 999999},
+            "compliance": _human_authorization_payload(),
+        },
+    )
+    assert rv.status_code == 400
+    payload = rv.get_json() or {}
+    assert "smart_group_id" in str(payload.get("error") or "")
+
+
+def test_campaign_email_segments_list_endpoint_returns_saved_groups(client):
+    _login_admin(client)
+    sg_rv = client.post(
+        "/api/v2/smart-groups",
+        json={
+            "name": f"Email Segment List {int(time.time())}",
+            "rules": [{"field": "gift_count", "op": "gte", "value": 1}],
+            "description": "Segment list endpoint coverage",
+        },
+    )
+    assert sg_rv.status_code == 201
+    segment_id = int((sg_rv.get_json() or {}).get("id"))
+
+    list_rv = client.get("/api/v2/campaigns/email/segments")
+    assert list_rv.status_code == 200
+    payload = list_rv.get_json() or []
+    assert isinstance(payload, list)
+    ids = {int(item.get("id")) for item in payload if str(item.get("id") or "").strip().isdigit()}
+    assert segment_id in ids
+
+
+def test_campaign_email_segment_preview_endpoint_returns_members(client, app):
+    _login_admin(client)
+    org_id = _admin_org_id(app)
+
+    with app.app_context():
+        donor = Donor(
+            organization_id=org_id,
+            name="Segment Preview Donor",
+            email="segment-preview@example.org",
+            donor_type="individual",
+        )
+        db.session.add(donor)
+        db.session.flush()
+        db.session.add(
+            Donation(
+                organization_id=org_id,
+                donor_id=donor.id,
+                donor_name=donor.name,
+                donor_email=donor.email,
+                amount=100.0,
+                currency="USD",
+                status="received",
+            )
+        )
+        db.session.commit()
+
+    sg_rv = client.post(
+        "/api/v2/smart-groups",
+        json={
+            "name": f"Email Segment Preview {int(time.time())}",
+            "rules": [{"field": "gift_count", "op": "gte", "value": 1}],
+            "description": "Segment preview endpoint coverage",
+        },
+    )
+    assert sg_rv.status_code == 201
+    segment_id = int((sg_rv.get_json() or {}).get("id"))
+
+    preview_rv = client.get(f"/api/v2/campaigns/email/segments/{segment_id}/preview", query_string={"limit": 5})
+    assert preview_rv.status_code == 200
+    payload = preview_rv.get_json() or {}
+    assert int(payload.get("segment_id") or 0) == segment_id
+    assert int(payload.get("count") or 0) >= 1
+    members = payload.get("members") or []
+    assert isinstance(members, list)
+
+
+def test_campaign_email_segment_quick_create_endpoint_returns_preview(client, app):
+    _login_admin(client)
+    org_id = _admin_org_id(app)
+
+    with app.app_context():
+        donor = Donor(
+            organization_id=org_id,
+            name="Quick Segment Donor",
+            email="quick-segment@example.org",
+            donor_type="individual",
+        )
+        db.session.add(donor)
+        db.session.flush()
+        db.session.add(
+            Donation(
+                organization_id=org_id,
+                donor_id=donor.id,
+                donor_name=donor.name,
+                donor_email=donor.email,
+                amount=250.0,
+                currency="USD",
+                status="received",
+            )
+        )
+        db.session.commit()
+
+    rv = client.post(
+        "/api/v2/campaigns/email/segments",
+        json={
+            "name": f"Quick Segment {int(time.time())}",
+            "description": "Created from campaign composer flow",
+            "rules": [{"field": "gift_count", "op": "gte", "value": 1}],
+            "include_preview": True,
+            "preview_limit": 10,
+        },
+    )
+    assert rv.status_code == 201
+    payload = rv.get_json() or {}
+    assert int(payload.get("id") or 0) > 0
+    assert int(payload.get("count") or 0) >= 1
+    members = payload.get("members") or []
+    assert isinstance(members, list)
+
+
+def test_campaign_email_segment_quick_create_rejects_invalid_preview_limit(client):
+    _login_admin(client)
+    rv = client.post(
+        "/api/v2/campaigns/email/segments",
+        json={
+            "name": "Invalid preview limit segment",
+            "rules": [{"field": "gift_count", "op": "gte", "value": 1}],
+            "include_preview": True,
+            "preview_limit": "abc",
+        },
+    )
+    assert rv.status_code == 400
+    payload = rv.get_json() or {}
+    assert "preview_limit" in str(payload.get("error") or "")
+
+
+def test_campaign_email_segment_quick_create_rejects_duplicate_name(client):
+    _login_admin(client)
+    segment_name = f"Duplicate Segment Name {int(time.time())}"
+
+    first_rv = client.post(
+        "/api/v2/campaigns/email/segments",
+        json={
+            "name": segment_name,
+            "rules": [{"field": "gift_count", "op": "gte", "value": 1}],
+        },
+    )
+    assert first_rv.status_code == 201
+
+    second_rv = client.post(
+        "/api/v2/campaigns/email/segments",
+        json={
+            "name": segment_name,
+            "rules": [{"field": "gift_count", "op": "gte", "value": 1}],
+        },
+    )
+    assert second_rv.status_code == 409
+    payload = second_rv.get_json() or {}
+    assert "already exists" in str(payload.get("error") or "")
 
 
 def test_campaign_send_email_ai_assisted_requires_human_in_loop_confirmation(client):
@@ -862,6 +1158,47 @@ def test_campaign_unsubscribe_creates_opt_out_and_suppresses_future_send(client,
     assert send_rv.status_code == 200
     send_payload = send_rv.get_json() or {}
     assert int(send_payload.get("total_recipients") or 0) == 0
+    assert send_mock.call_count == 0
+
+
+def test_campaign_send_skips_addresses_marked_by_suppression_webhook(client, app):
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "Webhook Suppression Campaign"})
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+    org_id = _admin_org_id(app)
+
+    with app.app_context():
+        donor = Donor(
+            organization_id=org_id,
+            name="Suppressed Donor",
+            email="suppressed-campaign@example.org",
+            donor_type="individual",
+        )
+        db.session.add(donor)
+        db.session.commit()
+        donor_id = int(donor.id)
+
+    suppress_rv = client.post(
+        "/integrations/email/webhooks/suppression",
+        json={"email": "suppressed-campaign@example.org", "reason": "complaint"},
+    )
+    assert suppress_rv.status_code == 200
+
+    with mock.patch("ngo_homesuite.services.campaign_email_service.send_email", return_value=True) as send_mock:
+        send_rv = client.post(
+            f"/api/v2/campaigns/{campaign_id}/emails/send",
+            json={
+                "subject": "Suppression verification",
+                "body": "Hello {name}, this should never send because of provider suppression.",
+                "audience": {"donor_ids": [donor_id]},
+                "compliance": _human_authorization_payload(),
+            },
+        )
+
+    assert send_rv.status_code == 200
+    payload = send_rv.get_json() or {}
+    assert int(payload.get("total_recipients") or 0) == 0
     assert send_mock.call_count == 0
 
 

@@ -55,6 +55,7 @@ RBAC_AUDIT_MATRIX: list[RouteAuditRule] = [
     RouteAuditRule("/donations", "GET", {"admin", "staff", "viewer"}, True, False, False),
     RouteAuditRule("/campaigns", "GET", {"admin", "staff", "viewer"}, True, False, False),
     RouteAuditRule("/grants", "GET", {"admin", "staff", "viewer"}, True, False, False),
+    RouteAuditRule("/grants/workbench", "GET", {"admin", "staff", "viewer"}, True, False, False),
     RouteAuditRule("/tasks", "GET", {"admin", "staff", "viewer"}, True, False, False),
     RouteAuditRule("/programs/cases", "GET", {"admin", "staff", "viewer"}, True, False, False),
     RouteAuditRule("/workflows", "GET", {"admin", "staff", "viewer"}, True, False, False),
@@ -111,6 +112,15 @@ RBAC_AUDIT_MATRIX: list[RouteAuditRule] = [
     RouteAuditRule("/api/v2/grants", "GET", {"admin", "staff", "viewer"}, True, False, False),
     RouteAuditRule("/api/v2/grants", "POST", {"admin", "staff"}, True, True, True),
     RouteAuditRule("/api/v2/grants/<id>/approve", "POST", {"admin", "staff"}, True, True, True),
+    RouteAuditRule("/api/v2/grants/external/grants-gov/search", "GET", {"admin", "staff", "viewer"}, True, False, False),
+    RouteAuditRule("/api/v2/grants/opportunities/<id>/ai-context", "GET", {"admin", "staff", "viewer"}, True, False, True),
+    RouteAuditRule("/api/v2/grants/opportunities/<id>/guidelines/ingest", "POST", {"admin", "staff", "viewer"}, True, True, True),
+    RouteAuditRule("/api/v2/grants/opportunities/<id>/draft-assist", "POST", {"admin", "staff", "viewer"}, True, True, True),
+    RouteAuditRule("/api/v2/grants/opportunities/<id>/draft-assist/save", "POST", {"admin", "staff", "viewer"}, True, True, True),
+    RouteAuditRule("/api/v2/grants/search-alerts", "GET", {"admin", "staff", "viewer"}, True, False, False),
+    RouteAuditRule("/api/v2/grants/search-profiles", "GET", {"admin", "staff", "viewer"}, True, False, False),
+    RouteAuditRule("/api/v2/grants/search-profiles", "POST", {"admin", "staff"}, True, True, True),
+    RouteAuditRule("/api/v2/grants/search-profiles/<id>/run", "POST", {"admin", "staff"}, True, True, True),
     RouteAuditRule("/api/v2/reports", "GET", {"admin", "staff", "viewer"}, True, False, False),
     RouteAuditRule("/api/v2/reports", "POST", {"admin", "staff"}, True, True, True),
 
@@ -131,6 +141,7 @@ def app_fixture():
     from ngo_homesuite.flask_config import TestingConfig
 
     app = create_app(TestingConfig)
+    app.config["ROLES_REQUIRING_2FA"] = []
     return app
 
 

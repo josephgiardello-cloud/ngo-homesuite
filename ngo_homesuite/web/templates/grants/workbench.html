@@ -1,0 +1,466 @@
+{% extends 'base.html' %}
+{% block title %}Grant Intelligence Workbench{% endblock %}
+{% block content %}
+<style>
+  .wb-header { margin-bottom: 1.1rem; }
+  .wb-step-label {
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    background: var(--info-bg, #e8f4fd); color: var(--info-text, #0a6da8);
+    border-radius: 999px; padding: 0.15rem 0.65rem;
+    font-size: 0.75rem; font-weight: 700; letter-spacing: 0.05em;
+    margin-bottom: 0.55rem;
+  }
+  .wb-card {
+    padding: 1rem; border: 1px solid var(--border); border-radius: 16px;
+    background: var(--surface); box-shadow: var(--shadow, 0 1px 4px rgba(0,0,0,.07));
+  }
+  .wb-card h2 { margin-top: 0; font-size: 1.02rem; margin-bottom: 0.7rem; }
+  .help-tip {
+    display: inline-block; width: 16px; height: 16px; border-radius: 50%;
+    background: var(--border); color: var(--muted); font-size: 0.72rem;
+    font-weight: 800; text-align: center; line-height: 16px; cursor: help;
+    vertical-align: middle; margin-left: 0.3rem;
+  }
+  .result-card {
+    padding: 0.75rem 0.9rem; border: 1px solid var(--border); border-radius: 12px;
+    cursor: pointer; background: var(--surface-soft, #f8f9fa); transition: background 0.15s;
+  }
+  .result-card:hover, .result-card:focus { background: var(--info-bg, #e8f4fd); outline: none; }
+  .result-card.selected { background: var(--info-bg, #e8f4fd); border-color: var(--primary, #0d6efd); }
+  .result-card p { margin: 0; }
+  .score-chip {
+    display: inline-flex; align-items: center; gap: 0.3rem;
+    font-size: 0.78rem; font-weight: 700; background: var(--surface);
+    border: 1px solid var(--border); border-radius: 999px; padding: 0.1rem 0.5rem;
+  }
+  .score-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--primary, #0d6efd); }
+  .panel-output {
+    background: var(--surface-soft, #f8f9fa); border: 1px solid var(--border);
+    border-radius: 12px; padding: 0.85rem; min-height: 80px;
+    font-size: 0.88rem; color: var(--text); white-space: pre-wrap; word-break: break-word;
+  }
+  .panel-output.empty { color: var(--muted); font-style: italic; }
+  .compliance-item {
+    padding: 0.55rem 0.75rem; border-radius: 10px; margin-bottom: 0.5rem;
+    border-left: 3px solid var(--border);
+  }
+  .compliance-item.pass { border-color: #198754; background: #d1e7dd; }
+  .compliance-item.warn { border-color: #e8a317; background: #fff3cd; }
+  .compliance-item.fail { border-color: #dc3545; background: #f8d7da; }
+  .draft-rendered { font-size: 0.9rem; line-height: 1.65; white-space: normal; }
+  .alert-strip { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
+  .alert-pill {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    padding: 0.3rem 0.7rem; border-radius: 999px; font-size: 0.8rem;
+    background: #fff3cd; color: #856404; border: 1px solid #fce08a;
+    cursor: pointer; text-decoration: none;
+  }
+  .alert-pill:hover { background: #fce08a; color: #533f03; }
+  .ai-badge { font-size: 0.78rem; color: var(--primary, #0d6efd); font-weight: 600; }
+  #searchMeta { font-size: 0.82rem; color: var(--muted); margin-top: 0.5rem; }
+  .wb-spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--primary, #0d6efd); border-radius: 50%; animation: wb-spin 0.7s linear infinite; vertical-align: middle; margin-right: 0.3rem; }
+  @keyframes wb-spin { to { transform: rotate(360deg); } }
+</style>
+
+<section class="wb-header">
+  <p style="margin:0; text-transform:uppercase; letter-spacing:0.08em; font-size:0.78rem; color:var(--muted); font-weight:700;">Grant Intelligence</p>
+  <h1 style="margin:0.2rem 0 0.25rem;">Grant Intelligence Workbench</h1>
+  <p style="margin:0 0 0.4rem; max-width: 72ch; color:var(--muted);">Find, analyse, and draft grants without leaving this page. Each step builds on the last — search, select, analyse compliance, then generate a mapped draft with AI support.</p>
+  <a href="/grants/alerts" style="font-size:0.88rem;">View full alert inbox ↗</a>
+</section>
+
+<section style="display:grid; grid-template-columns: minmax(280px, 1fr) minmax(320px, 1.15fr); gap:1rem; align-items:start;">
+  <!-- Left column -->
+  <div style="display:grid; gap:1rem;">
+
+    <!-- Step 1: Search -->
+    <section class="wb-card">
+      <span class="wb-step-label">Step 1</span>
+      <h2>Find Opportunities <span class="help-tip" title="Search your local database of synced grants or live-search Grants.gov. Selecting a result loads it into the analysis steps.">?</span></h2>
+      <div style="display:grid; gap:0.6rem;">
+        <input id="searchKeywords" class="form-control" placeholder="Keywords, cause area, geography" />
+        <input id="searchProfile" class="form-control" placeholder="Applicant profile or mission fit (used for AI scoring)" />
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.6rem;">
+          <input id="searchAmount" class="form-control" type="number" step="0.01" placeholder="Requested amount ($)" />
+          <input id="searchStatuses" class="form-control" placeholder="Statuses filter" value="identified,qualified,in_progress,submitted" />
+        </div>
+        <input id="searchProfileName" class="form-control" placeholder="Save as alert profile name (optional)" />
+        <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+          <button id="searchBtn" class="btn btn-primary btn-sm" type="button">Search Local</button>
+          <button id="searchExternalBtn" class="btn btn-outline-primary btn-sm" type="button">Search Grants.gov</button>
+          <button id="saveProfileBtn" class="btn btn-outline-secondary btn-sm" type="button" title="Save as an active saved search — alerts refresh automatically every hour">Save Alert Profile</button>
+          <span id="searchSpinner" style="display:none;"><span class="wb-spinner"></span></span>
+        </div>
+        <p id="searchMeta">Enter keywords and click Search.</p>
+      </div>
+      <div id="searchResults" style="display:grid; gap:0.5rem; margin-top:0.8rem;"></div>
+    </section>
+
+    <!-- Step 2: Ingest guidelines -->
+    <section class="wb-card">
+      <span class="wb-step-label">Step 2</span>
+      <h2>Ingest Guidelines <span class="help-tip" title="Paste or upload the full RFP / guidelines text. The AI extracts eligibility requirements, evaluation criteria, and reporting requirements.">?</span></h2>
+      <div style="display:grid; gap:0.6rem;">
+        <input id="selectedOpportunityId" class="form-control" type="number" min="1" placeholder="Opportunity ID (auto-filled when you select a result above)" readonly style="background:var(--surface-soft, #f8f9fa); cursor:default;" />
+        <textarea id="guidelineText" class="form-control" rows="4" placeholder="Paste full guideline / RFP text here&hellip;"></textarea>
+        <input id="guidelineFile" class="form-control" type="file" accept=".txt,.md,.html,.htm,.pdf" />
+        <label style="display:flex; align-items:center; gap:0.5rem; font-size:0.9rem; color:var(--muted);">
+          <input id="mergeIntoNotes" type="checkbox" checked />
+          Merge extracted requirements into the opportunity record
+        </label>
+        <button id="ingestBtn" class="btn btn-outline-primary btn-sm" type="button">Ingest &amp; Extract</button>
+      </div>
+      <div id="guidelineOutput" class="panel-output empty" style="margin-top:0.75rem;">No guideline analysis yet &mdash; paste guidelines and click Ingest.</div>
+    </section>
+
+    <!-- Active alerts strip -->
+    <section class="wb-card">
+      <h2 style="margin-bottom:0.5rem;">&#x1F514; Recent Alerts
+        <a href="/grants/alerts" style="font-size:0.8rem; font-weight:400; margin-left:0.75rem;">View all &#x2197;</a>
+      </h2>
+      <p style="font-size:0.84rem; color:var(--muted); margin:0 0 0.5rem;">New opportunities matched by your saved search profiles.</p>
+      <div id="alertStrip" class="alert-strip"><span style="color:var(--muted); font-size:0.84rem;">Loading&hellip;</span></div>
+    </section>
+  </div>
+
+  <!-- Right column -->
+  <div style="display:grid; gap:1rem;">
+
+    <!-- Step 3: Compliance & Drafting -->
+    <section class="wb-card">
+      <span class="wb-step-label">Step 3</span>
+      <h2>AI Compliance &amp; Drafting <span class="help-tip" title="Provide your organisation context and any existing draft. The AI checks eligibility gaps first, then generates a mapped proposal draft aligned to the grant requirements.">?</span></h2>
+      <div style="display:grid; gap:0.6rem;">
+        <textarea id="organizationSummary" class="form-control" rows="2" placeholder="Brief organisation description (mission, size, track record)"></textarea>
+        <textarea id="programSummary" class="form-control" rows="2" placeholder="Program or project summary you&rsquo;re applying for"></textarea>
+        <textarea id="existingDraft" class="form-control" rows="3" placeholder="Existing draft text or notes (optional &mdash; improves gap analysis)"></textarea>
+        <input id="draftAmount" class="form-control" type="number" step="0.01" placeholder="Amount requested ($)" />
+      </div>
+      <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.75rem; align-items:center;">
+        <button id="aiContextBtn" class="btn btn-outline-secondary btn-sm" type="button" title="Load all stored AI context for this opportunity">Load AI Context</button>
+        <button id="complianceBtn" class="btn btn-outline-primary btn-sm" type="button">Analyse Compliance</button>
+        <button id="draftBtn" class="btn btn-primary btn-sm" type="button">Generate Draft</button>
+        <button id="saveDraftBtn" class="btn btn-success btn-sm" type="button">Save Proposal Draft</button>
+        <span id="aiSpinner" style="display:none;"><span class="wb-spinner"></span></span>
+      </div>
+
+      <div style="margin-top:1rem;">
+        <p style="font-size:0.82rem; font-weight:700; color:var(--muted); margin:0 0 0.4rem; text-transform:uppercase; letter-spacing:0.05em;">Compliance Analysis</p>
+        <div id="complianceOutput" class="panel-output empty">No compliance analysis yet &mdash; select an opportunity and click Analyse Compliance.</div>
+      </div>
+      <div style="margin-top:1rem;">
+        <p style="font-size:0.82rem; font-weight:700; color:var(--muted); margin:0 0 0.4rem; text-transform:uppercase; letter-spacing:0.05em;">Proposal Draft</p>
+        <div id="draftOutput" class="panel-output empty" style="min-height:200px;">No draft yet &mdash; fill in organisation context and click Generate Draft.</div>
+      </div>
+    </section>
+
+  </div>
+</section>
+
+<script>
+(function () {
+  'use strict';
+  var selectedOpportunityId = document.getElementById('selectedOpportunityId');
+  var searchResults = document.getElementById('searchResults');
+  var searchMeta = document.getElementById('searchMeta');
+  var guidelineOutput = document.getElementById('guidelineOutput');
+  var complianceOutput = document.getElementById('complianceOutput');
+  var draftOutput = document.getElementById('draftOutput');
+  var alertStrip = document.getElementById('alertStrip');
+  var _selectedCard = null;
+
+  function escHtml(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function currentOpportunityId() {
+    return String(selectedOpportunityId.value || '').trim();
+  }
+
+  function currentDraftPayload() {
+    return {
+      organization_summary: document.getElementById('organizationSummary').value,
+      program_summary: document.getElementById('programSummary').value,
+      existing_draft: document.getElementById('existingDraft').value,
+      amount_requested: document.getElementById('draftAmount').value || null,
+      applicant_profile: document.getElementById('searchProfile').value
+    };
+  }
+
+  function setPanelLoading(el, msg) {
+    el.className = 'panel-output empty';
+    el.innerHTML = '<span class="wb-spinner"></span> ' + escHtml(msg || 'Loading\u2026');
+  }
+
+  function renderComplianceOutput(payload) {
+    complianceOutput.classList.remove('empty');
+    if (payload.error) { complianceOutput.textContent = 'Error: ' + payload.error; return; }
+    var checks = payload.compliance_checks || payload.checks || [];
+    if (!checks.length) {
+      complianceOutput.textContent = payload.summary || JSON.stringify(payload, null, 2);
+      return;
+    }
+    complianceOutput.innerHTML = '';
+    if (payload.summary) {
+      var s = document.createElement('p');
+      s.style.cssText = 'font-weight:600; margin:0 0 0.75rem;';
+      s.textContent = payload.summary;
+      complianceOutput.appendChild(s);
+    }
+    checks.forEach(function (item) {
+      var div = document.createElement('div');
+      var level = (item.level || item.status || 'info').toLowerCase();
+      var cls = level.includes('pass') || level.includes('ok') ? 'pass'
+        : level.includes('warn') || level.includes('partial') ? 'warn'
+        : level.includes('fail') || level.includes('gap') ? 'fail' : '';
+      div.className = 'compliance-item ' + cls;
+      div.innerHTML = '<strong>' + escHtml(item.check || item.criterion || item.label || '') + '</strong>'
+        + (item.note || item.detail || item.message
+          ? '<br><span style="font-size:0.84rem;">' + escHtml(item.note || item.detail || item.message || '') + '</span>'
+          : '');
+      complianceOutput.appendChild(div);
+    });
+  }
+
+  function renderDraftOutput(payload) {
+    draftOutput.classList.remove('empty');
+    if (payload.error) { draftOutput.textContent = 'Error: ' + payload.error; return; }
+    var text = payload.draft || payload.narrative || payload.content || payload.text || '';
+    if (text) {
+      draftOutput.className = 'panel-output draft-rendered';
+      if (typeof marked !== 'undefined') {
+        draftOutput.innerHTML = marked.parse(text);
+      } else {
+        draftOutput.textContent = text;
+      }
+    } else {
+      draftOutput.textContent = JSON.stringify(payload, null, 2);
+    }
+  }
+
+  function renderSearchResults(payload, sourceLabel) {
+    var count = payload.count || 0;
+    var synced = payload.synced_count || 0;
+    searchMeta.textContent = sourceLabel + ': ' + count + ' result(s)'
+      + (synced ? ' \u00b7 ' + synced + ' synced' : '');
+    searchResults.innerHTML = '';
+    var results = payload.results || [];
+    if (!results.length) {
+      searchResults.innerHTML = '<p style="margin:0; color:var(--muted); font-size:0.88rem;">No matching opportunities found.</p>';
+      return;
+    }
+    results.forEach(function (item) {
+      var card = document.createElement('div');
+      var selectedId = item.opportunity_id || item.id || '';
+      var score = item.applicability_score || 0;
+      card.className = 'result-card';
+      card.setAttribute('tabindex', '0');
+      card.setAttribute('role', 'button');
+      var reasons = (item.match_reasons || []).slice(0, 3).join(' \u00b7 ');
+      card.innerHTML = '<p style="font-weight:700; font-size:0.92rem; margin-bottom:0.2rem;">' + escHtml(item.title || '') + '</p>'
+        + '<div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">'
+        + '<span style="font-size:0.82rem; color:var(--muted);">' + escHtml(item.funder_name || 'Unknown funder') + '</span>'
+        + '<span class="score-chip"><span class="score-dot"></span>' + score + ' match</span>'
+        + (item.external_source ? '<span style="font-size:0.78rem; color:var(--muted);">' + escHtml(item.external_source) + '</span>' : '')
+        + '</div>'
+        + (reasons ? '<p class="ai-badge" style="margin:0.2rem 0 0;">\uD83E\uDD16 ' + escHtml(reasons) + '</p>' : '');
+      card.addEventListener('click', function () {
+        if (selectedId) {
+          selectedOpportunityId.removeAttribute('readonly');
+          selectedOpportunityId.value = selectedId;
+          selectedOpportunityId.setAttribute('readonly', '');
+        }
+        if (_selectedCard) _selectedCard.classList.remove('selected');
+        card.classList.add('selected');
+        _selectedCard = card;
+      });
+      searchResults.appendChild(card);
+    });
+  }
+
+  async function searchOpportunities() {
+    document.getElementById('searchSpinner').style.display = 'inline-block';
+    var params = new URLSearchParams();
+    params.set('q', document.getElementById('searchKeywords').value || '');
+    params.set('applicant_profile', document.getElementById('searchProfile').value || '');
+    params.set('requested_amount', document.getElementById('searchAmount').value || '');
+    params.set('statuses', document.getElementById('searchStatuses').value || '');
+    try {
+      var resp = await fetch('/api/v2/grants/opportunities/search?' + params.toString());
+      renderSearchResults(await resp.json(), 'Local');
+    } finally {
+      document.getElementById('searchSpinner').style.display = 'none';
+    }
+  }
+
+  async function searchExternalOpportunities() {
+    document.getElementById('searchSpinner').style.display = 'inline-block';
+    var params = new URLSearchParams();
+    params.set('q', document.getElementById('searchKeywords').value || '');
+    params.set('applicant_profile', document.getElementById('searchProfile').value || '');
+    params.set('requested_amount', document.getElementById('searchAmount').value || '');
+    params.set('sync', 'true');
+    try {
+      var resp = await fetch('/api/v2/grants/external/grants-gov/search?' + params.toString());
+      renderSearchResults(await resp.json(), 'Grants.gov');
+    } finally {
+      document.getElementById('searchSpinner').style.display = 'none';
+    }
+  }
+
+  async function saveSearchProfile() {
+    var name = document.getElementById('searchProfileName').value.trim() || 'Workbench Search ' + new Date().toLocaleDateString();
+    var resp = await fetch('/api/v2/grants/search-profiles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: name,
+        query: document.getElementById('searchKeywords').value || '',
+        applicant_profile: document.getElementById('searchProfile').value || '',
+        requested_amount: document.getElementById('searchAmount').value || null,
+        source: 'grants_gov'
+      })
+    });
+    var data = await resp.json();
+    if (data.error) {
+      searchMeta.textContent = 'Error saving profile: ' + data.error;
+    } else {
+      searchMeta.textContent = '\u2705 Alert profile "' + (data.name || name) + '" saved \u2014 alerts will refresh automatically.';
+      loadAlertStrip();
+    }
+  }
+
+  async function loadAlertStrip() {
+    try {
+      var resp = await fetch('/api/v2/grants/search-alerts?status=new&limit=10');
+      var data = await resp.json();
+      var alerts = data.results || [];
+      if (!alerts.length) {
+        alertStrip.innerHTML = '<span style="color:var(--muted); font-size:0.84rem;">No new alerts. Save a search profile to start receiving them.</span>';
+        return;
+      }
+      alertStrip.innerHTML = '';
+      alerts.forEach(function (a) {
+        var pill = document.createElement('a');
+        pill.href = '/grants/alerts';
+        pill.className = 'alert-pill';
+        pill.title = 'View alert: ' + a.title;
+        var title = a.title.length > 50 ? a.title.slice(0, 47) + '\u2026' : a.title;
+        pill.innerHTML = '&#x1F514; ' + escHtml(title);
+        alertStrip.appendChild(pill);
+      });
+    } catch (_) {
+      alertStrip.innerHTML = '';
+    }
+  }
+
+  async function loadAiContext() {
+    var opportunityId = currentOpportunityId();
+    if (!opportunityId) { complianceOutput.textContent = 'Select an opportunity first.'; return; }
+    setPanelLoading(complianceOutput, 'Loading AI context\u2026');
+    var resp = await fetch('/api/v2/grants/opportunities/' + opportunityId + '/ai-context');
+    complianceOutput.className = 'panel-output';
+    complianceOutput.textContent = JSON.stringify(await resp.json(), null, 2);
+  }
+
+  async function ingestGuidelines() {
+    var opportunityId = currentOpportunityId();
+    if (!opportunityId) { guidelineOutput.textContent = 'Select an opportunity first.'; return; }
+    setPanelLoading(guidelineOutput, 'Extracting requirements\u2026');
+    var fileInput = document.getElementById('guidelineFile');
+    var file = fileInput.files && fileInput.files[0];
+    var resp;
+    if (file) {
+      var formData = new FormData();
+      formData.append('guideline_file', file);
+      formData.append('merge_into_notes', document.getElementById('mergeIntoNotes').checked ? 'true' : 'false');
+      resp = await fetch('/api/v2/grants/opportunities/' + opportunityId + '/guidelines/ingest', { method: 'POST', body: formData });
+    } else {
+      resp = await fetch('/api/v2/grants/opportunities/' + opportunityId + '/guidelines/ingest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          guideline_text: document.getElementById('guidelineText').value,
+          merge_into_notes: document.getElementById('mergeIntoNotes').checked,
+          source_name: 'workbench-manual'
+        })
+      });
+    }
+    var data = await resp.json();
+    guidelineOutput.className = 'panel-output';
+    if (data.error) {
+      guidelineOutput.textContent = 'Error: ' + data.error;
+    } else {
+      var sections = [];
+      if (data.summary) sections.push('Summary: ' + data.summary);
+      if (data.eligibility && data.eligibility.length) sections.push('Eligibility:\n\u2022 ' + data.eligibility.join('\n\u2022 '));
+      if (data.requirements && data.requirements.length) sections.push('Requirements:\n\u2022 ' + data.requirements.join('\n\u2022 '));
+      guidelineOutput.textContent = sections.join('\n\n') || JSON.stringify(data, null, 2);
+    }
+  }
+
+  async function analyzeCompliance() {
+    var opportunityId = currentOpportunityId();
+    if (!opportunityId) { complianceOutput.textContent = 'Select an opportunity first.'; return; }
+    document.getElementById('aiSpinner').style.display = 'inline-block';
+    setPanelLoading(complianceOutput, 'Analysing compliance gaps\u2026');
+    try {
+      var resp = await fetch('/api/v2/grants/opportunities/' + opportunityId + '/compliance-guidance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ proposal_text: document.getElementById('existingDraft').value })
+      });
+      renderComplianceOutput(await resp.json());
+    } finally {
+      document.getElementById('aiSpinner').style.display = 'none';
+    }
+  }
+
+  async function generateDraft() {
+    var opportunityId = currentOpportunityId();
+    if (!opportunityId) { draftOutput.textContent = 'Select an opportunity first.'; return; }
+    document.getElementById('aiSpinner').style.display = 'inline-block';
+    setPanelLoading(draftOutput, 'Generating proposal draft\u2026');
+    try {
+      var resp = await fetch('/api/v2/grants/opportunities/' + opportunityId + '/draft-assist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(currentDraftPayload())
+      });
+      renderDraftOutput(await resp.json());
+    } finally {
+      document.getElementById('aiSpinner').style.display = 'none';
+    }
+  }
+
+  async function saveDraft() {
+    var opportunityId = currentOpportunityId();
+    if (!opportunityId) { draftOutput.textContent = 'Select an opportunity first.'; return; }
+    var payload = currentDraftPayload();
+    payload.document_ref = 'grant-intelligence-workbench.md';
+    var resp = await fetch('/api/v2/grants/opportunities/' + opportunityId + '/draft-assist/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    var data = await resp.json();
+    var saved = document.createElement('p');
+    saved.style.cssText = 'color:#198754; font-weight:600; margin-top:0.5rem;';
+    saved.textContent = data.error ? ('Error: ' + data.error) : '\u2705 Draft saved as proposal version ' + (data.version_number || '');
+    draftOutput.parentElement.appendChild(saved);
+    setTimeout(function () { saved.remove(); }, 5000);
+  }
+
+  document.getElementById('searchBtn').addEventListener('click', searchOpportunities);
+  document.getElementById('searchExternalBtn').addEventListener('click', searchExternalOpportunities);
+  document.getElementById('saveProfileBtn').addEventListener('click', saveSearchProfile);
+  document.getElementById('ingestBtn').addEventListener('click', ingestGuidelines);
+  document.getElementById('aiContextBtn').addEventListener('click', loadAiContext);
+  document.getElementById('complianceBtn').addEventListener('click', analyzeCompliance);
+  document.getElementById('draftBtn').addEventListener('click', generateDraft);
+  document.getElementById('saveDraftBtn').addEventListener('click', saveDraft);
+
+  loadAlertStrip();
+})();
+</script>
+{% endblock %}

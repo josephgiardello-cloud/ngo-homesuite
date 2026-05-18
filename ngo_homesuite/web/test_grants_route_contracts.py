@@ -12,6 +12,7 @@ from ngo_homesuite.models.core import db
 
 @pytest.fixture(scope="module")
 def app(shared_test_app):
+    shared_test_app.config["ROLES_REQUIRING_2FA"] = []
     return shared_test_app
 
 
@@ -102,3 +103,11 @@ def test_grants_route_closeout_requires_approved_request(client, app):
     )
     assert closed.status_code == 200
     assert closed.get_json()["status"] == "closed"
+
+
+def test_grants_workbench_page_renders_for_authenticated_user(client):
+    _login_admin(client)
+
+    rv = client.get("/grants/workbench")
+    assert rv.status_code == 200
+    assert b"Grant Intelligence Workbench" in rv.data

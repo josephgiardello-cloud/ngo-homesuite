@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, render_template, request
 from flask_login import current_user, login_required
 
 from ngo_homesuite.grants.facade import GrantsFacade
@@ -24,6 +24,34 @@ def _parse_iso_date(value: str) -> date:
 
 def _grants():
     return _GRANTS_FACADE
+
+
+@grants_bp.get("/workbench")
+@login_required
+def grants_workbench_page():
+    org_name = getattr(getattr(current_user, "organization", None), "name", None)
+    return render_template(
+        "grants/workbench.html",
+        active_page="grants_workbench",
+        ai_context={
+            "active_page": "grants_workbench",
+            "organization": org_name,
+        },
+    )
+
+
+@grants_bp.get("/alerts")
+@login_required
+def grants_alerts_page():
+    org_name = getattr(getattr(current_user, "organization", None), "name", None)
+    return render_template(
+        "grants/alerts.html",
+        active_page="grants_alerts",
+        ai_context={
+            "active_page": "grants_alerts",
+            "organization": org_name,
+        },
+    )
 
 
 @grants_bp.get("/")
