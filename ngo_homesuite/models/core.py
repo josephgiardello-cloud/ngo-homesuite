@@ -361,6 +361,7 @@ class Donation(db.Model):
     
     # Payment info
     payment_method = db.Column(db.String(50), nullable=True)  # e.g., 'credit_card', 'bank_transfer', 'cash'
+    channel = db.Column(db.String(50), nullable=True)  # web, event, mail, phone, p2p, grant_portal
     reference_number = db.Column(db.String(100), nullable=True, unique=True)
     
     # Status
@@ -368,6 +369,12 @@ class Donation(db.Model):
     
     # Purpose
     purpose = db.Column(db.String(200), nullable=True)  # e.g., 'General Fund', 'Emergency Relief', 'Specific Project'
+    is_anonymous = db.Column(db.Boolean, default=False, nullable=False)
+    public_display_name = db.Column(db.String(200), nullable=True)
+    tribute_type = db.Column(db.String(50), nullable=True)  # in_honor_of, in_memory_of
+    tribute_honoree_name = db.Column(db.String(200), nullable=True)
+    tribute_honoree_contact = db.Column(db.String(255), nullable=True)
+    soft_credit_name = db.Column(db.String(200), nullable=True)
     notes = db.Column(db.Text, nullable=True)
     
     # Timestamps
@@ -1252,6 +1259,11 @@ class P2PPage(db.Model):
     title = db.Column(db.String(300), nullable=False)
     story = db.Column(db.Text, nullable=True)
     goal_amount = db.Column(db.Float, nullable=False, default=0.0)
+    match_ratio = db.Column(db.Float, nullable=False, default=0.0)  # e.g. 1.0 = 1:1 match
+    match_cap_amount = db.Column(db.Float, nullable=False, default=0.0)
+    challenge_goal_amount = db.Column(db.Float, nullable=False, default=0.0)
+    challenge_end_date = db.Column(db.Date, nullable=True)
+    automation_contact_email = db.Column(db.String(255), nullable=True)
     currency = db.Column(db.String(3), default='USD', nullable=False)
     status = db.Column(db.String(20), default='active', nullable=False, index=True)  # draft, active, closed
     public_slug = db.Column(db.String(80), unique=True, nullable=False, index=True)

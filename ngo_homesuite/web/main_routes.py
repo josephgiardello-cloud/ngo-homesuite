@@ -562,6 +562,11 @@ class P2PPageForm(FlaskForm):
     goal_amount = FloatField('Goal Amount', validators=[WTOptional(), NumberRange(min=0)])
     story = TextAreaField('Story', validators=[WTOptional()])
     campaign_slug = StringField('Campaign Slug (optional)', validators=[WTOptional()])
+    match_ratio = FloatField('Match Ratio (e.g. 1 for 1:1)', validators=[WTOptional(), NumberRange(min=0, max=10)])
+    match_cap_amount = FloatField('Match Cap Amount', validators=[WTOptional(), NumberRange(min=0)])
+    challenge_goal_amount = FloatField('Challenge Goal Amount', validators=[WTOptional(), NumberRange(min=0)])
+    challenge_end_date = DateField('Challenge End Date', validators=[WTOptional()], format='%Y-%m-%d')
+    automation_contact_email = StringField('Automation Contact Email', validators=[WTOptional(), Email()])
     submit = SubmitField('Create Fundraiser')
 
 
@@ -2244,7 +2249,7 @@ def mobile_intake():
 @login_required
 @roles_required('admin', 'staff')
 def p2p_manage():
-    from ngo_homesuite.services.p2p_service import close_page, create_page, get_progress, list_pages, publish_page
+    from ngo_homesuite.services.p2p_service import close_page, create_page, get_progress, list_pages, publish_page, update_page
 
     org = _current_org()
     if not org:
@@ -2254,21 +2259,26 @@ def p2p_manage():
     form = P2PPageForm()
     donors = DonorService().list_all_donors(org.id)
     form.donor_id.choices = [(int(d.id), d.name) for d in donors]
+    donor_name_by_id = {int(d.id): d.name for d in donors}
 
     status_filter = (request.args.get('status') or '').strip().lower() or None
+    owner_filter = request.args.get('owner_id', type=int)
+    campaign_filter = (request.args.get('campaign') or '').strip().lower()
     query = (request.args.get('q') or '').strip().lower()
     sort_by = (request.args.get('sort_by') or 'created').strip().lower()
     sort_dir = (request.args.get('sort_dir') or 'desc').strip().lower()
-    if sort_by not in {'created', 'title', 'raised', 'progress', 'supporters'}:
+    if sort_by not in {'created', 'title', 'raised', 'progress', 'supporters', 'recent30'}:
         sort_by = 'created'
     if sort_dir not in {'asc', 'desc'}:
         sort_dir = 'desc'
 
+    pages = list_pages(org.id, status=status_filter)
+
     if request.method == 'POST':
         action = (request.form.get('action') or '').strip().lower()
+        page_id = request.form.get('page_id', type=int)
 
         if action in {'publish', 'close'}:
-            page_id = request.form.get('page_id', type=int)
             if not page_id:
                 flash('A valid fundraiser page id is required.', 'error')
                 return redirect(url_for('main.p2p_manage'))
@@ -2286,9 +2296,101 @@ def p2p_manage():
                 flash(str(exc), 'error')
             return redirect(url_for('main.p2p_manage'))
 
+        if action == 'bulk_status':
+            selected_ids = [
+                int(raw_id)
+                for raw_id in request.form.getlist('selected_page_ids')
+                if str(raw_id).isdigit()
+            ]
+            bulk_target = (request.form.get('bulk_target_status') or '').strip().lower()
+            if not selected_ids:
+                flash('Select at least one fundraiser for a bulk action.', 'error')
+                return redirect(url_for('main.p2p_manage'))
+            if bulk_target not in {'active', 'closed'}:
+                flash('Unsupported bulk status action.', 'error')
+                return redirect(url_for('main.p2p_manage'))
+
+            processed = 0
+            for selected_id in selected_ids:
+                try:
+                    if bulk_target == 'active':
+                        publish_page(selected_id, org.id)
+                    else:
+                        close_page(selected_id, org.id)
+                    processed += 1
+                except Exception:
+                    continue
+            flash(f'Bulk action applied to {processed} fundraiser(s).', 'success')
+            return redirect(url_for('main.p2p_manage'))
+
+        if action == 'update':
+            if not page_id:
+                flash('A valid fundraiser page id is required.', 'error')
+                return redirect(url_for('main.p2p_manage'))
+            challenge_end_date = None
+            raw_challenge_end = (request.form.get('challenge_end_date') or '').strip()
+            if raw_challenge_end:
+                try:
+                    challenge_end_date = date.fromisoformat(raw_challenge_end)
+                except ValueError:
+                    flash('Challenge end date must be in YYYY-MM-DD format.', 'error')
+                    return redirect(url_for('main.p2p_manage'))
+            try:
+                update_page(
+                    page_id,
+                    org.id,
+                    title=(request.form.get('title') or '').strip(),
+                    story=(request.form.get('story') or '').strip() or None,
+                    goal_amount=float(request.form.get('goal_amount') or 0.0),
+                    campaign_slug=(request.form.get('campaign_slug') or '').strip() or None,
+                    match_ratio=float(request.form.get('match_ratio') or 0.0),
+                    match_cap_amount=float(request.form.get('match_cap_amount') or 0.0),
+                    challenge_goal_amount=float(request.form.get('challenge_goal_amount') or 0.0),
+                    challenge_end_date=challenge_end_date,
+                    automation_contact_email=(request.form.get('automation_contact_email') or '').strip() or None,
+                )
+                flash('Fundraiser updated.', 'success')
+            except NotFound:
+                flash('Fundraiser page not found for this organization.', 'error')
+            except ValueError as exc:
+                flash(str(exc), 'error')
+            return redirect(url_for('main.p2p_manage'))
+
+        if action == 'reassign_owner':
+            if not page_id:
+                flash('A valid fundraiser page id is required.', 'error')
+                return redirect(url_for('main.p2p_manage'))
+            new_owner_id = request.form.get('new_owner_id', type=int)
+            if not new_owner_id:
+                flash('Select a valid owner to reassign.', 'error')
+                return redirect(url_for('main.p2p_manage'))
+            try:
+                update_page(page_id, org.id, donor_id=int(new_owner_id))
+                flash('Fundraiser owner reassigned.', 'success')
+            except NotFound:
+                flash('Fundraiser page not found for this organization.', 'error')
+            except ValueError as exc:
+                flash(str(exc), 'error')
+            return redirect(url_for('main.p2p_manage'))
+
+        if action == 'send_nudge':
+            if not page_id:
+                flash('A valid fundraiser page id is required.', 'error')
+                return redirect(url_for('main.p2p_manage'))
+            page = next((p for p in pages if int(p.id) == int(page_id)), None)
+            if page is None:
+                flash('Fundraiser page not found for this organization.', 'error')
+                return redirect(url_for('main.p2p_manage'))
+            contact_email = str(getattr(page, 'automation_contact_email', '') or '').strip()
+            owner_name = donor_name_by_id.get(int(page.donor_id), 'Fundraiser Owner')
+            if contact_email:
+                flash(f'Readiness nudge prepared for {owner_name} at {contact_email}.', 'success')
+            else:
+                flash('No automation contact email is configured for this page.', 'error')
+            return redirect(url_for('main.p2p_manage'))
+
         if not donors:
             flash('Create at least one donor before creating a fundraiser page.', 'error')
-            pages = list_pages(org.id, status=status_filter)
             return render_template('p2p_manage.html', form=form, pages=pages, active_page='p2p')
 
         if form.validate_on_submit():
@@ -2300,6 +2402,11 @@ def p2p_manage():
                     goal_amount=float(form.goal_amount.data or 0.0),
                     story=(form.story.data or '').strip() or None,
                     campaign_slug=(form.campaign_slug.data or '').strip() or None,
+                    match_ratio=float(form.match_ratio.data or 0.0),
+                    match_cap_amount=float(form.match_cap_amount.data or 0.0),
+                    challenge_goal_amount=float(form.challenge_goal_amount.data or 0.0),
+                    challenge_end_date=form.challenge_end_date.data,
+                    automation_contact_email=(form.automation_contact_email.data or '').strip() or None,
                 )
                 flash('Fundraiser page created.', 'success')
                 return redirect(url_for('main.p2p_manage'))
@@ -2308,7 +2415,6 @@ def p2p_manage():
         else:
             flash('Please fix the highlighted form issues.', 'error')
 
-    pages = list_pages(org.id, status=status_filter)
     if query:
         pages = [
             p for p in pages
@@ -2317,15 +2423,53 @@ def p2p_manage():
             or query in str(getattr(p, 'story', '') or '').lower()
             or query in str(getattr(getattr(p, 'owner', None), 'name', '') or '').lower()
         ]
+    if owner_filter:
+        pages = [p for p in pages if int(getattr(p, 'donor_id', 0) or 0) == int(owner_filter)]
+    if campaign_filter:
+        pages = [p for p in pages if campaign_filter in str(getattr(p, 'campaign_slug', '') or '').lower()]
 
     page_stats: dict[int, dict[str, object]] = {}
     total_raised = 0.0
     pages_at_goal = 0
+    total_raised_30d = 0.0
+    campaign_rollups: dict[str, dict[str, object]] = {}
+    owner_rollups: dict[int, dict[str, object]] = {}
+    automation_queue: list[dict[str, object]] = []
+    now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+
     for page in pages:
         progress = get_progress(int(page.id), int(org.id))
         raised = float(progress.get('total_raised', 0.0) or 0.0)
         pct = float(progress.get('pct_of_goal', 0.0) or 0.0)
         supporters = int(progress.get('donor_count', 0) or 0)
+        linked_donations = list(getattr(page, 'donations', []) or [])
+
+        raised_30d = 0.0
+        raised_7d = 0.0
+        last_donation_at = None
+        for donation in linked_donations:
+            amount = float(getattr(donation, 'amount', 0.0) or 0.0)
+            donation_date = getattr(donation, 'donation_date', None)
+            if isinstance(donation_date, datetime):
+                dt = donation_date
+                if dt.tzinfo is not None:
+                    dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+            else:
+                continue
+            if last_donation_at is None or dt > last_donation_at:
+                last_donation_at = dt
+            if dt >= now_utc_naive - timedelta(days=30):
+                raised_30d += amount
+            if dt >= now_utc_naive - timedelta(days=7):
+                raised_7d += amount
+
+        total_raised_30d += raised_30d
+        match_ratio = float(getattr(page, 'match_ratio', 0.0) or 0.0)
+        match_cap = float(getattr(page, 'match_cap_amount', 0.0) or 0.0)
+        challenge_goal = float(getattr(page, 'challenge_goal_amount', 0.0) or 0.0)
+        matched_value = min(raised * match_ratio, match_cap) if match_ratio > 0 and match_cap > 0 else 0.0
+        challenge_pct = round((raised / challenge_goal) * 100, 1) if challenge_goal > 0 else 0.0
+
         if pct >= 100.0:
             pages_at_goal += 1
         total_raised += raised
@@ -2333,7 +2477,48 @@ def p2p_manage():
             'raised': round(raised, 2),
             'pct_of_goal': round(pct, 1),
             'supporters': supporters,
+            'raised_30d': round(raised_30d, 2),
+            'raised_7d': round(raised_7d, 2),
+            'matched_value': round(matched_value, 2),
+            'challenge_pct': challenge_pct,
+            'last_donation_at': last_donation_at,
         }
+
+        campaign_key = str(getattr(page, 'campaign_slug', '') or '').strip() or 'unmapped'
+        rollup = campaign_rollups.setdefault(
+            campaign_key,
+            {'campaign': campaign_key, 'pages': 0, 'raised': 0.0, 'supporters': 0, 'active': 0},
+        )
+        rollup['pages'] = int(rollup['pages']) + 1
+        rollup['raised'] = float(rollup['raised']) + raised
+        rollup['supporters'] = int(rollup['supporters']) + supporters
+        if str(getattr(page, 'status', '') or '') == 'active':
+            rollup['active'] = int(rollup['active']) + 1
+
+        owner_id = int(getattr(page, 'donor_id', 0) or 0)
+        owner_rollup = owner_rollups.setdefault(
+            owner_id,
+            {'owner_id': owner_id, 'owner_name': donor_name_by_id.get(owner_id, 'Unknown'), 'pages': 0, 'raised': 0.0},
+        )
+        owner_rollup['pages'] = int(owner_rollup['pages']) + 1
+        owner_rollup['raised'] = float(owner_rollup['raised']) + raised
+
+        inactive_days = None
+        if isinstance(last_donation_at, datetime):
+            inactive_days = max((now_utc_naive - last_donation_at).days, 0)
+        if str(getattr(page, 'status', '') or '') == 'active' and (
+            (inactive_days is not None and inactive_days >= 14)
+            or (pct >= 80 and pct < 100)
+        ):
+            automation_queue.append(
+                {
+                    'page_id': int(page.id),
+                    'title': str(getattr(page, 'title', '') or ''),
+                    'inactive_days': inactive_days,
+                    'pct': round(pct, 1),
+                    'owner_name': donor_name_by_id.get(owner_id, 'Owner'),
+                }
+            )
 
     def _sort_key(page):
         stats = page_stats.get(int(page.id), {})
@@ -2345,6 +2530,8 @@ def p2p_manage():
             return float(stats.get('pct_of_goal', 0.0) or 0.0)
         if sort_by == 'supporters':
             return int(stats.get('supporters', 0) or 0)
+        if sort_by == 'recent30':
+            return float(stats.get('raised_30d', 0.0) or 0.0)
         return getattr(page, 'created_at', datetime.min)
 
     pages.sort(key=_sort_key, reverse=(sort_dir == 'desc'))
@@ -2355,8 +2542,21 @@ def p2p_manage():
         'draft_pages': sum(1 for p in pages if str(getattr(p, 'status', '') or '') == 'draft'),
         'closed_pages': sum(1 for p in pages if str(getattr(p, 'status', '') or '') == 'closed'),
         'total_raised': round(total_raised, 2),
+        'raised_30d': round(total_raised_30d, 2),
+        'average_progress_pct': round((sum(float(page_stats[int(p.id)]['pct_of_goal']) for p in pages) / len(pages)), 1) if pages else 0.0,
         'pages_at_goal': pages_at_goal,
     }
+
+    campaign_rollup_rows = sorted(
+        campaign_rollups.values(),
+        key=lambda row: float(row.get('raised', 0.0)),
+        reverse=True,
+    )
+    owner_rollup_rows = sorted(
+        owner_rollups.values(),
+        key=lambda row: float(row.get('raised', 0.0)),
+        reverse=True,
+    )[:8]
 
     ai_context = {
         'active_page': 'p2p',
@@ -2369,8 +2569,14 @@ def p2p_manage():
         pages=pages,
         page_stats=page_stats,
         summary=summary,
+        donors=donors,
+        campaign_rollups=campaign_rollup_rows,
+        owner_rollups=owner_rollup_rows,
+        automation_queue=automation_queue,
         filter_q=request.args.get('q', ''),
         filter_status=status_filter or '',
+        filter_owner_id=owner_filter or 0,
+        filter_campaign=request.args.get('campaign', ''),
         filter_sort_by=sort_by,
         filter_sort_dir=sort_dir,
         active_page='p2p',
@@ -3974,18 +4180,19 @@ def funds_list():
         expenses_by_fund: dict[int, dict[str, float | int]] = {}
 
         if fund_ids:
-            donation_rollups = db.session.execute(
-                select(
+            donation_rollups = (
+                db.session.query(
                     Donation.fund_id,
                     func.count(Donation.id),
                     func.coalesce(func.sum(Donation.amount), 0.0),
                 )
-                .where(
+                .filter(
                     Donation.organization_id == org.id,
                     Donation.fund_id.in_(fund_ids),
                 )
                 .group_by(Donation.fund_id)
-            ).all()
+                .all()
+            )
             for fund_id, count, amount in donation_rollups:
                 if fund_id is None:
                     continue
@@ -3994,18 +4201,19 @@ def funds_list():
                     'amount': float(amount or 0.0),
                 }
 
-            expense_rollups = db.session.execute(
-                select(
+            expense_rollups = (
+                db.session.query(
                     Expense.fund_id,
                     func.count(Expense.id),
                     func.coalesce(func.sum(Expense.amount), 0.0),
                 )
-                .where(
+                .filter(
                     Expense.organization_id == org.id,
                     Expense.fund_id.in_(fund_ids),
                 )
                 .group_by(Expense.fund_id)
-            ).all()
+                .all()
+            )
             for fund_id, count, amount in expense_rollups:
                 if fund_id is None:
                     continue
@@ -4067,13 +4275,15 @@ def funds_list():
             trend_map: dict[int, dict[str, float]] = {fid: {label: 0.0 for label in trend_labels} for fid in fund_ids}
             earliest_dt = trend_ranges[0][0] if trend_ranges else now_dt
 
-            donation_trend_rows = db.session.execute(
-                select(Donation.fund_id, Donation.donation_date, Donation.amount).where(
+            donation_trend_rows = (
+                db.session.query(Donation.fund_id, Donation.donation_date, Donation.amount)
+                .filter(
                     Donation.organization_id == org.id,
                     Donation.fund_id.in_(fund_ids),
                     Donation.donation_date >= earliest_dt,
                 )
-            ).all()
+                .all()
+            )
             for d_fund_id, donation_date, amount in donation_trend_rows:
                 if d_fund_id is None or donation_date is None:
                     continue
@@ -4085,13 +4295,15 @@ def funds_list():
                             fund_trend[label] += float(amount or 0.0)
                         break
 
-            expense_trend_rows = db.session.execute(
-                select(Expense.fund_id, Expense.paid_at, Expense.amount).where(
+            expense_trend_rows = (
+                db.session.query(Expense.fund_id, Expense.paid_at, Expense.amount)
+                .filter(
                     Expense.organization_id == org.id,
                     Expense.fund_id.in_(fund_ids),
                     Expense.paid_at >= earliest_dt,
                 )
-            ).all()
+                .all()
+            )
             for e_fund_id, paid_at, amount in expense_trend_rows:
                 if e_fund_id is None or paid_at is None:
                     continue

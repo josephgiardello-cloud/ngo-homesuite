@@ -102,6 +102,9 @@ def test_public_p2p_page_renders_html_and_json(client, app):
             title="Spring Field Kits",
             story="Funding community field kits for youth volunteers.",
             goal_amount=500.0,
+            match_ratio=1.0,
+            match_cap_amount=250.0,
+            challenge_goal_amount=800.0,
             public_slug="spring-field-kits",
             status="active",
         )
@@ -130,6 +133,8 @@ def test_public_p2p_page_renders_html_and_json(client, app):
     assert "Embed This Fundraiser" in html_body
     assert "Recent Supporters" in html_body
     assert "Share This Fundraiser" in html_body
+    assert "Matching Challenge Active" in html_body
+    assert "Supporter Messages" in html_body
 
     json_resp = client.get("/p2p/spring-field-kits", headers={"Accept": "application/json"})
     assert json_resp.status_code == 200
@@ -270,9 +275,16 @@ def test_staff_p2p_manage_page_create_publish_close(client, app):
             email="p2p.staff.owner@example.org",
             donor_type="individual",
         )
-        db.session.add(donor)
+        donor_alt = Donor(
+            organization_id=org_id,
+            name="P2P Alternate Owner",
+            email="p2p.alt.owner@example.org",
+            donor_type="individual",
+        )
+        db.session.add_all([donor, donor_alt])
         db.session.commit()
         donor_id = donor.id
+        donor_alt_id = donor_alt.id
 
     manage = client.get("/p2p/manage")
     assert manage.status_code == 200
@@ -287,6 +299,10 @@ def test_staff_p2p_manage_page_create_publish_close(client, app):
             "goal_amount": "900",
             "story": "A page created through the staff dashboard.",
             "campaign_slug": "staff-managed-campaign",
+            "match_ratio": "1",
+            "match_cap_amount": "300",
+            "challenge_goal_amount": "1200",
+            "automation_contact_email": "p2p.staff.owner@example.org",
         },
         follow_redirects=True,
     )
@@ -297,6 +313,7 @@ def test_staff_p2p_manage_page_create_publish_close(client, app):
     filtered_body = filtered_manage.get_data(as_text=True)
     assert "Apply" in filtered_body
     assert "Copy Link" in filtered_body
+    assert "Automation Queue" in filtered_body
 
     with app.app_context():
         page = P2PPage.query.filter_by(title="Staff Managed Page", organization_id=org_id).first()
@@ -315,6 +332,46 @@ def test_staff_p2p_manage_page_create_publish_close(client, app):
         page = db.session.get(P2PPage, page_id)
         assert page.status == "active"
 
+    update_resp = client.post(
+        "/p2p/manage",
+        data={
+            "action": "update",
+            "page_id": str(page_id),
+            "title": "Staff Managed Page Updated",
+            "goal_amount": "1200",
+            "story": "Updated story",
+            "campaign_slug": "staff-managed-campaign",
+            "match_ratio": "2",
+            "match_cap_amount": "400",
+            "challenge_goal_amount": "1800",
+            "automation_contact_email": "updated.owner@example.org",
+        },
+        follow_redirects=True,
+    )
+    assert update_resp.status_code == 200
+
+    reassign_resp = client.post(
+        "/p2p/manage",
+        data={
+            "action": "reassign_owner",
+            "page_id": str(page_id),
+            "new_owner_id": str(donor_alt_id),
+        },
+        follow_redirects=True,
+    )
+    assert reassign_resp.status_code == 200
+
+    bulk_resp = client.post(
+        "/p2p/manage",
+        data={
+            "action": "bulk_status",
+            "bulk_target_status": "closed",
+            "selected_page_ids": [str(page_id)],
+        },
+        follow_redirects=True,
+    )
+    assert bulk_resp.status_code == 200
+
     close_resp = client.post(
         "/p2p/manage",
         data={"action": "close", "page_id": str(page_id)},
@@ -326,6 +383,8 @@ def test_staff_p2p_manage_page_create_publish_close(client, app):
         db.session.expire_all()
         page = db.session.get(P2PPage, page_id)
         assert page.status == "closed"
+        assert page.title == "Staff Managed Page Updated"
+        assert int(page.donor_id) == int(donor_alt_id)
 
 
 def test_task_board_page_renders_for_authenticated_user(client):
@@ -631,12 +690,12 @@ def test_donations_page_handles_malformed_amount_rows(client, app):
             INSERT INTO donations (
                 organization_id, donor_id, donor_name, donor_email,
                 amount, currency, donation_date, status, purpose,
-                payment_method, created_at, updated_at, version_id
+                payment_method, is_anonymous, created_at, updated_at, version_id
             )
             VALUES (
                 :organization_id, :donor_id, :donor_name, :donor_email,
                 :amount, :currency, CURRENT_TIMESTAMP, :status, :purpose,
-                :payment_method, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, :version_id
+                :payment_method, :is_anonymous, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, :version_id
             )
             """,
             {
@@ -649,6 +708,7 @@ def test_donations_page_handles_malformed_amount_rows(client, app):
                 'status': 'received',
                 'purpose': 'Legacy import',
                 'payment_method': 'bank_transfer',
+                'is_anonymous': 0,
                 'version_id': 0,
             },
         )

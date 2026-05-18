@@ -55,6 +55,12 @@
         margin-bottom: 0.8rem;
     }
 
+    .advanced-grid {
+        display: grid;
+        gap: 0.55rem;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
     .progress-wrap {
         display: grid;
         gap: 0.25rem;
@@ -118,13 +124,44 @@
         margin: 0;
     }
 
+    .insight-grid {
+        display: grid;
+        gap: 0.7rem;
+        grid-template-columns: 1fr;
+    }
+
+    .compact-table td,
+    .compact-table th {
+        padding: 0.45rem 0.55rem;
+        font-size: 0.86rem;
+    }
+
+    .queue-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 0.45rem;
+    }
+
+    .queue-list li {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface-soft);
+        padding: 0.45rem 0.55rem;
+    }
+
     @media (min-width: 980px) {
         .grid-layout {
-            grid-template-columns: minmax(300px, 1fr) minmax(560px, 1.4fr);
+            grid-template-columns: minmax(320px, 1fr) minmax(640px, 1.5fr);
         }
 
         .kpi-grid {
-            grid-template-columns: repeat(6, minmax(0, 1fr));
+            grid-template-columns: repeat(8, minmax(0, 1fr));
+        }
+
+        .insight-grid {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
         }
     }
 </style>
@@ -132,7 +169,7 @@
 <div class="p2p-manage-shell">
     <section class="p2p-hero">
         <h1>P2P Fundraising</h1>
-        <p class="text-muted">Create and operate peer fundraising pages with campaign-level visibility and quick actions.</p>
+        <p class="text-muted">Manage advanced peer fundraising with matching, challenge goals, campaign rollups, and outreach readiness.</p>
         <div class="kpi-grid">
             <div class="kpi-card">
                 <div class="kpi-label">Pages</div>
@@ -153,6 +190,14 @@
             <div class="kpi-card">
                 <div class="kpi-label">Raised</div>
                 <div class="kpi-value">${{ '%.2f'|format(summary.total_raised if summary else 0) }}</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">Raised (30d)</div>
+                <div class="kpi-value">${{ '%.2f'|format(summary.raised_30d if summary else 0) }}</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">Avg Progress</div>
+                <div class="kpi-value">{{ summary.average_progress_pct if summary else 0 }}%</div>
             </div>
             <div class="kpi-card">
                 <div class="kpi-label">At Goal</div>
@@ -197,7 +242,33 @@
                     {% for error in form.campaign_slug.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
                 </div>
 
-                <div class="actions-row">
+                <details>
+                    <summary>Advanced Mechanics</summary>
+                    <div class="advanced-grid mt-1">
+                        <div class="form-group {% if form.match_ratio.errors %}error{% endif %}">
+                            {{ form.match_ratio.label }}
+                            {{ form.match_ratio(placeholder='1.0', min='0', max='10', step='0.1') }}
+                        </div>
+                        <div class="form-group {% if form.match_cap_amount.errors %}error{% endif %}">
+                            {{ form.match_cap_amount.label }}
+                            {{ form.match_cap_amount(placeholder='500.00', min='0', step='0.01') }}
+                        </div>
+                        <div class="form-group {% if form.challenge_goal_amount.errors %}error{% endif %}">
+                            {{ form.challenge_goal_amount.label }}
+                            {{ form.challenge_goal_amount(placeholder='2500.00', min='0', step='0.01') }}
+                        </div>
+                        <div class="form-group {% if form.challenge_end_date.errors %}error{% endif %}">
+                            {{ form.challenge_end_date.label }}
+                            {{ form.challenge_end_date() }}
+                        </div>
+                        <div class="form-group {% if form.automation_contact_email.errors %}error{% endif %}" style="grid-column: 1 / -1;">
+                            {{ form.automation_contact_email.label }}
+                            {{ form.automation_contact_email(placeholder='owner@example.org') }}
+                        </div>
+                    </div>
+                </details>
+
+                <div class="actions-row mt-1">
                     {{ form.submit(class_='btn btn-primary') }}
                 </div>
             </form>
@@ -213,12 +284,20 @@
                     <option value="active" {% if filter_status == 'active' %}selected{% endif %}>Active</option>
                     <option value="closed" {% if filter_status == 'closed' %}selected{% endif %}>Closed</option>
                 </select>
+                <select name="owner_id">
+                    <option value="0" {% if not filter_owner_id %}selected{% endif %}>All owners</option>
+                    {% for donor in donors %}
+                    <option value="{{ donor.id }}" {% if filter_owner_id and donor.id == filter_owner_id %}selected{% endif %}>{{ donor.name }}</option>
+                    {% endfor %}
+                </select>
+                <input type="text" name="campaign" value="{{ filter_campaign or '' }}" placeholder="Filter campaign slug">
                 <select name="sort_by">
                     <option value="created" {% if filter_sort_by == 'created' %}selected{% endif %}>Newest</option>
                     <option value="title" {% if filter_sort_by == 'title' %}selected{% endif %}>Title</option>
                     <option value="raised" {% if filter_sort_by == 'raised' %}selected{% endif %}>Raised</option>
                     <option value="progress" {% if filter_sort_by == 'progress' %}selected{% endif %}>Progress</option>
                     <option value="supporters" {% if filter_sort_by == 'supporters' %}selected{% endif %}>Supporters</option>
+                    <option value="recent30" {% if filter_sort_by == 'recent30' %}selected{% endif %}>Recent 30d</option>
                 </select>
                 <select name="sort_dir">
                     <option value="desc" {% if filter_sort_dir == 'desc' %}selected{% endif %}>Desc</option>
@@ -227,16 +306,27 @@
                 <button class="btn btn-secondary" type="submit">Apply</button>
             </form>
 
+            <form id="bulk-p2p-form" method="post" class="action-row mb-1">
+                <input type="hidden" name="action" value="bulk_status">
+                <select name="bulk_target_status">
+                    <option value="active">Bulk Publish</option>
+                    <option value="closed">Bulk Close</option>
+                </select>
+                <button class="btn btn-secondary" type="submit">Apply To Selected</button>
+            </form>
+
             {% if pages %}
             <div class="table-wrap">
                 <table>
                     <thead>
                         <tr>
+                            <th><input type="checkbox" data-select-all="bulk"></th>
                             <th>Page</th>
                             <th>Status</th>
                             <th>Goal</th>
                             <th>Raised / Progress</th>
-                            <th>Supporters</th>
+                            <th>Recent (30d)</th>
+                            <th>Mechanics</th>
                             <th>Public URL</th>
                             <th>Actions</th>
                         </tr>
@@ -245,6 +335,7 @@
                         {% for page in pages %}
                         {% set stats = page_stats.get(page.id, {}) if page_stats else {} %}
                         <tr>
+                            <td><input type="checkbox" form="bulk-p2p-form" name="selected_page_ids" value="{{ page.id }}"></td>
                             <td>
                                 <strong>{{ page.title }}</strong>
                                 {% if page.campaign_slug %}
@@ -258,10 +349,14 @@
                                 <div class="progress-wrap">
                                     <div>${{ '%.2f'|format(stats.get('raised', 0) or 0) }}</div>
                                     <div class="progress-track"><span style="width: {{ stats.get('pct_of_goal', 0) or 0 }}%;"></span></div>
-                                    <small class="text-muted">{{ stats.get('pct_of_goal', 0) or 0 }}%</small>
+                                    <small class="text-muted">{{ stats.get('pct_of_goal', 0) or 0 }}% | {{ stats.get('supporters', 0) or 0 }} supporters</small>
                                 </div>
                             </td>
-                            <td>{{ stats.get('supporters', 0) or 0 }}</td>
+                            <td>${{ '%.2f'|format(stats.get('raised_30d', 0) or 0) }}</td>
+                            <td>
+                                <div class="text-muted">Match: {{ page.match_ratio or 0 }}x up to ${{ '%.2f'|format(page.match_cap_amount or 0) }}</div>
+                                <div class="text-muted">Challenge: ${{ '%.2f'|format(page.challenge_goal_amount or 0) }} ({{ stats.get('challenge_pct', 0) or 0 }}%)</div>
+                            </td>
                             <td class="url-cell">
                                 <a href="{{ url_for('p2p.public_page_route', slug=page.public_slug) }}" target="_blank" rel="noopener">/p2p/{{ page.public_slug }}</a>
                                 <button type="button" class="btn btn-link" data-copy-link="{{ request.url_root.rstrip('/') }}{{ url_for('p2p.public_page_route', slug=page.public_slug) }}">Copy Link</button>
@@ -283,7 +378,39 @@
                                         <button class="btn btn-secondary" type="submit">Close</button>
                                     </form>
                                     {% endif %}
+                                    <form method="post">
+                                        <input type="hidden" name="action" value="send_nudge">
+                                        <input type="hidden" name="page_id" value="{{ page.id }}">
+                                        <button class="btn btn-secondary" type="submit">Nudge</button>
+                                    </form>
                                 </div>
+                                <details>
+                                    <summary>Edit / Reassign</summary>
+                                    <form method="post" class="advanced-grid mt-1">
+                                        <input type="hidden" name="action" value="update">
+                                        <input type="hidden" name="page_id" value="{{ page.id }}">
+                                        <input type="text" name="title" value="{{ page.title }}" placeholder="Title" required>
+                                        <input type="number" name="goal_amount" value="{{ page.goal_amount or 0 }}" min="0" step="0.01" placeholder="Goal">
+                                        <input type="text" name="campaign_slug" value="{{ page.campaign_slug or '' }}" placeholder="Campaign slug">
+                                        <input type="number" name="match_ratio" value="{{ page.match_ratio or 0 }}" min="0" max="10" step="0.1" placeholder="Match ratio">
+                                        <input type="number" name="match_cap_amount" value="{{ page.match_cap_amount or 0 }}" min="0" step="0.01" placeholder="Match cap">
+                                        <input type="number" name="challenge_goal_amount" value="{{ page.challenge_goal_amount or 0 }}" min="0" step="0.01" placeholder="Challenge goal">
+                                        <input type="date" name="challenge_end_date" value="{{ page.challenge_end_date.isoformat() if page.challenge_end_date else '' }}">
+                                        <input type="email" name="automation_contact_email" value="{{ page.automation_contact_email or '' }}" placeholder="Automation email">
+                                        <textarea name="story" rows="3" style="grid-column: 1 / -1;">{{ page.story or '' }}</textarea>
+                                        <button class="btn btn-primary" type="submit" style="grid-column: 1 / -1;">Save Changes</button>
+                                    </form>
+                                    <form method="post" class="action-row mt-1">
+                                        <input type="hidden" name="action" value="reassign_owner">
+                                        <input type="hidden" name="page_id" value="{{ page.id }}">
+                                        <select name="new_owner_id" required>
+                                            {% for donor in donors %}
+                                            <option value="{{ donor.id }}" {% if donor.id == page.donor_id %}selected{% endif %}>{{ donor.name }}</option>
+                                            {% endfor %}
+                                        </select>
+                                        <button class="btn btn-secondary" type="submit">Reassign Owner</button>
+                                    </form>
+                                </details>
                             </td>
                         </tr>
                         {% endfor %}
@@ -292,6 +419,75 @@
             </div>
             {% else %}
             <p class="text-muted">No fundraiser pages yet. Create your first one using the form.</p>
+            {% endif %}
+        </section>
+    </div>
+
+    <div class="insight-grid">
+        <section class="card">
+            <div class="card-title">Campaign Rollups</div>
+            {% if campaign_rollups %}
+            <div class="table-wrap">
+                <table class="compact-table">
+                    <thead>
+                        <tr><th>Campaign</th><th>Pages</th><th>Active</th><th>Raised</th><th>Supporters</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for row in campaign_rollups %}
+                        <tr>
+                            <td>{{ row.campaign }}</td>
+                            <td>{{ row.pages }}</td>
+                            <td>{{ row.active }}</td>
+                            <td>${{ '%.2f'|format(row.raised) }}</td>
+                            <td>{{ row.supporters }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted">No campaign rollups yet.</p>
+            {% endif %}
+        </section>
+
+        <section class="card">
+            <div class="card-title">Top Fundraiser Owners</div>
+            {% if owner_rollups %}
+            <div class="table-wrap">
+                <table class="compact-table">
+                    <thead>
+                        <tr><th>Owner</th><th>Pages</th><th>Raised</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for row in owner_rollups %}
+                        <tr>
+                            <td>{{ row.owner_name }}</td>
+                            <td>{{ row.pages }}</td>
+                            <td>${{ '%.2f'|format(row.raised) }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted">No owner performance data yet.</p>
+            {% endif %}
+        </section>
+
+        <section class="card">
+            <div class="card-title">Automation Queue</div>
+            {% if automation_queue %}
+            <ul class="queue-list">
+                {% for item in automation_queue[:8] %}
+                <li>
+                    <strong>{{ item.title }}</strong>
+                    <div class="text-muted">Owner: {{ item.owner_name }}</div>
+                    <div class="text-muted">Progress: {{ item.pct }}%{% if item.inactive_days is not none %} | Inactive {{ item.inactive_days }}d{% endif %}</div>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="text-muted">No pages currently require automation nudges.</p>
             {% endif %}
         </section>
     </div>
@@ -315,6 +511,15 @@
                 }, 1200);
             });
         });
+
+        var selectAll = document.querySelector('[data-select-all="bulk"]');
+        if (selectAll) {
+            selectAll.addEventListener('change', function () {
+                document.querySelectorAll('input[name="selected_page_ids"]').forEach(function (box) {
+                    box.checked = selectAll.checked;
+                });
+            });
+        }
     })();
 </script>
 {% endblock %}

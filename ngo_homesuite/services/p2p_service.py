@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import re
 import unicodedata
+from datetime import date
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select
@@ -61,6 +62,11 @@ def create_page(
     story: Optional[str] = None,
     campaign_slug: Optional[str] = None,
     slug: Optional[str] = None,
+    match_ratio: Optional[float] = None,
+    match_cap_amount: Optional[float] = None,
+    challenge_goal_amount: Optional[float] = None,
+    challenge_end_date: Optional[date] = None,
+    automation_contact_email: Optional[str] = None,
 ) -> P2PPage:
     donor = db.session.scalars(
         select(Donor).where(Donor.id == donor_id, Donor.organization_id == organization_id).limit(1)
@@ -82,6 +88,19 @@ def create_page(
     if normalized_story and len(normalized_story) > 5000:
         raise ValueError("invalid fundraiser story")
 
+    normalized_match_ratio = float(match_ratio or 0.0)
+    normalized_match_cap = float(match_cap_amount or 0.0)
+    normalized_challenge_goal = float(challenge_goal_amount or 0.0)
+    normalized_automation_email = (automation_contact_email or "").strip() or None
+    normalized_campaign_slug = (campaign_slug or "").strip() or None
+
+    if normalized_match_ratio < 0 or normalized_match_ratio > 10:
+        raise ValueError("invalid matching ratio")
+    if normalized_match_cap < 0:
+        raise ValueError("invalid match cap")
+    if normalized_challenge_goal < 0:
+        raise ValueError("invalid challenge goal")
+
     public_slug = _unique_slug(slug or normalized_title)
     page = P2PPage(
         organization_id=organization_id,
@@ -89,9 +108,14 @@ def create_page(
         title=normalized_title,
         story=normalized_story,
         goal_amount=normalized_goal,
-        campaign_slug=campaign_slug,
+        campaign_slug=normalized_campaign_slug,
         public_slug=public_slug,
         status="draft",
+        match_ratio=normalized_match_ratio,
+        match_cap_amount=normalized_match_cap,
+        challenge_goal_amount=normalized_challenge_goal,
+        challenge_end_date=challenge_end_date,
+        automation_contact_email=normalized_automation_email,
     )
     db.session.add(page)
     db.session.commit()
@@ -157,14 +181,60 @@ def update_page(
     title: Optional[str] = None,
     story: Optional[str] = None,
     goal_amount: Optional[float] = None,
+    campaign_slug: Optional[str] = None,
+    donor_id: Optional[int] = None,
+    match_ratio: Optional[float] = None,
+    match_cap_amount: Optional[float] = None,
+    challenge_goal_amount: Optional[float] = None,
+    challenge_end_date: Optional[date] = None,
+    automation_contact_email: Optional[str] = None,
 ) -> P2PPage:
     page = _get_page_or_404(page_id, organization_id)
     if title is not None:
-        page.title = title
+        normalized_title = (title or "").strip()
+        if not normalized_title:
+            raise ValueError("invalid fundraiser title")
+        if len(normalized_title) > 180:
+            raise ValueError("invalid fundraiser title")
+        page.title = normalized_title
     if story is not None:
-        page.story = story
+        normalized_story = (story or "").strip() or None
+        if normalized_story and len(normalized_story) > 5000:
+            raise ValueError("invalid fundraiser story")
+        page.story = normalized_story
     if goal_amount is not None:
-        page.goal_amount = goal_amount
+        normalized_goal = float(goal_amount)
+        if normalized_goal < 0:
+            raise ValueError("invalid fundraiser goal")
+        page.goal_amount = normalized_goal
+    if campaign_slug is not None:
+        page.campaign_slug = (campaign_slug or "").strip() or None
+    if donor_id is not None:
+        donor = db.session.scalars(
+            select(Donor).where(Donor.id == int(donor_id), Donor.organization_id == organization_id).limit(1)
+        ).first()
+        if donor is None:
+            raise ValueError("invalid resource reference")
+        page.donor_id = int(donor.id)
+    if match_ratio is not None:
+        normalized_match_ratio = float(match_ratio)
+        if normalized_match_ratio < 0 or normalized_match_ratio > 10:
+            raise ValueError("invalid matching ratio")
+        page.match_ratio = normalized_match_ratio
+    if match_cap_amount is not None:
+        normalized_match_cap = float(match_cap_amount)
+        if normalized_match_cap < 0:
+            raise ValueError("invalid match cap")
+        page.match_cap_amount = normalized_match_cap
+    if challenge_goal_amount is not None:
+        normalized_challenge_goal = float(challenge_goal_amount)
+        if normalized_challenge_goal < 0:
+            raise ValueError("invalid challenge goal")
+        page.challenge_goal_amount = normalized_challenge_goal
+    if challenge_end_date is not None:
+        page.challenge_end_date = challenge_end_date
+    if automation_contact_email is not None:
+        page.automation_contact_email = (automation_contact_email or "").strip() or None
     db.session.commit()
     return page
 

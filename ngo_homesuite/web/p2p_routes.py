@@ -150,6 +150,15 @@ def public_page_route(slug: str):
     average_gift = (raised / gift_count) if gift_count > 0 else 0.0
     amount_left = max(goal_amount - raised, 0.0)
     pct = float(progress.get("pct_of_goal", 0.0) or 0.0)
+    match_ratio = float(getattr(page, "match_ratio", 0.0) or 0.0)
+    match_cap = float(getattr(page, "match_cap_amount", 0.0) or 0.0)
+    challenge_goal = float(getattr(page, "challenge_goal_amount", 0.0) or 0.0)
+    challenge_end_date = getattr(page, "challenge_end_date", None)
+
+    effective_match_value = 0.0
+    if match_ratio > 0 and match_cap > 0:
+        effective_match_value = min(raised * match_ratio, match_cap)
+    challenge_pct = round((raised / challenge_goal) * 100, 1) if challenge_goal > 0 else 0.0
 
     milestone_markers = [25, 50, 75, 100]
     milestone_rows = [{"pct": m, "reached": pct >= m} for m in milestone_markers]
@@ -167,6 +176,23 @@ def public_page_route(slug: str):
         now_naive_utc = datetime.now(timezone.utc).replace(tzinfo=None)
         days_live = max((now_naive_utc - created_at).days, 0)
 
+    supporter_notes = []
+    for donation in linked_donations:
+        note_text = str(getattr(donation, "notes", "") or "").strip()
+        if not note_text:
+            continue
+        snippet = note_text[:120]
+        if len(note_text) > 120:
+            snippet += "..."
+        supporter_notes.append(
+            {
+                "display_name": "Anonymous Supporter" if bool(getattr(donation, "is_anonymous", False)) else (getattr(donation, "donor_name", None) or "Supporter"),
+                "snippet": snippet,
+            }
+        )
+        if len(supporter_notes) >= 4:
+            break
+
     return render_template(
         "p2p_public_page.html",
         page=page,
@@ -180,6 +206,13 @@ def public_page_route(slug: str):
         donation_tiers=fallback_amounts,
         public_url=public_url,
         share_text=encoded_share_text,
+        match_ratio=match_ratio,
+        match_cap=match_cap,
+        effective_match_value=effective_match_value,
+        challenge_goal=challenge_goal,
+        challenge_pct=challenge_pct,
+        challenge_end_date=challenge_end_date,
+        supporter_notes=supporter_notes,
         days_live=days_live,
         active_page="give",
         is_embed=request.args.get("embed", "0") == "1",
