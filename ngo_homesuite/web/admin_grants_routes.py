@@ -5,7 +5,10 @@ Handles grant budget line creation, editing, and budget variance reporting.
 """
 from __future__ import annotations
 
-from flask import Blueprint, jsonify, render_template, request
+import csv
+from io import BytesIO, StringIO
+
+from flask import Blueprint, jsonify, render_template, request, send_file
 from flask_login import current_user, login_required
 from sqlalchemy import select
 
@@ -14,6 +17,41 @@ from ngo_homesuite.grants.models import Grant, GrantBudgetLine, GrantExpenseAllo
 from ngo_homesuite.web.rbac import roles_required
 
 grant_admin_bp = Blueprint("grant_admin", __name__, url_prefix="/admin/grants")
+
+
+def _build_variance_report_csv(report_data: dict) -> bytes:
+    stream = StringIO()
+    writer = csv.writer(stream)
+    writer.writerow([
+        "category",
+        "line_name",
+        "allocated",
+        "committed",
+        "reconciled",
+        "spent",
+        "actual_spent",
+        "remaining",
+        "variance",
+        "variance_pct",
+        "utilization_pct",
+        "alert_status",
+    ])
+    for line in report_data["lines"]:
+        writer.writerow([
+            line["category"],
+            line["line_name"],
+            line["allocated"],
+            line["committed"],
+            line["reconciled"],
+            line["spent"],
+            line["actual_spent"],
+            line["remaining"],
+            line["variance"],
+            line["variance_pct"],
+            line["utilization_pct"],
+            line["alert_status"],
+        ])
+    return stream.getvalue().encode("utf-8-sig")
 
 
 def _org_id() -> int:
@@ -240,55 +278,40 @@ def delete_budget_line(grant_id: int, line_id: int):
 @login_required
 @roles_required("admin")
 def get_budget_variance_report(grant_id: int):
-    """Get budget variance report for a grant (allocated vs spent per line)."""
-    org_id = _org_id()
+    """Get budget variance report for a grant, or export it as CSV."""
+    from ngo_homesuite.grants.services import lifecycle as grant_svc
+    from ngo_homesuite.grants.exceptions import GrantNotFound
 
-    # Fetch grant
-    stmt = select(Grant).where(Grant.id == grant_id, Grant.organization_id == org_id)
-    grant = db.session.scalar(stmt)
-    if not grant:
+    org_id = _org_id()
+    try:
+        summary = grant_svc.get_grant_budget_summary(grant_id, org_id)
+    except GrantNotFound:
         return jsonify({"error": "Grant not found"}), 404
 
-    # Fetch budget lines
-    stmt = select(GrantBudgetLine).where(
-        GrantBudgetLine.grant_id == grant_id,
-        GrantBudgetLine.organization_id == org_id
-    )
-    budget_lines = db.session.scalars(stmt).all()
-
     report_data = {
-        "grant_id": grant_id,
-        "grant_title": grant.title,
-        "total_awarded": grant.amount_awarded,
-        "lines": [],
+        "grant_id": summary["grant_id"],
+        "grant_title": summary["title"],
+        "total_awarded": summary["amount_awarded"],
+        "lines": summary["lines"],
         "summary": {
-            "total_allocated": 0.0,
-            "total_spent": 0.0,
-            "total_remaining": 0.0
-        }
+            "total_allocated": summary["total_allocated"],
+            "total_committed": summary["total_committed"],
+            "total_reconciled": summary["total_reconciled"],
+            "total_spent": summary["total_spent"],
+            "total_actual_spent": summary["total_actual_spent"],
+            "total_remaining": summary["total_remaining"],
+            "total_variance": summary["total_variance"],
+            "utilization_pct": summary["utilization_pct"],
+        },
     }
 
-    for line in budget_lines:
-        stmt = select(db.func.sum(GrantExpenseAllocation.amount)).where(
-            GrantExpenseAllocation.budget_line_id == line.id
+    if request.args.get("format") == "csv":
+        csv_bytes = _build_variance_report_csv(report_data)
+        return send_file(
+            BytesIO(csv_bytes),
+            mimetype="text/csv",
+            as_attachment=True,
+            download_name=f"grant-{grant_id}-variance-report.csv",
         )
-        spent = db.session.scalar(stmt) or 0.0
-
-        variance = line.allocated_amount - spent
-        variance_pct = (variance / line.allocated_amount * 100) if line.allocated_amount > 0 else 0
-
-        report_data["lines"].append({
-            "category": line.category,
-            "line_name": line.line_name,
-            "allocated": line.allocated_amount,
-            "spent": spent,
-            "remaining": variance,
-            "variance_pct": round(variance_pct, 2),
-            "status": "over_budget" if variance < 0 else ("alert" if variance_pct < 10 else "ok")
-        })
-
-        report_data["summary"]["total_allocated"] += line.allocated_amount
-        report_data["summary"]["total_spent"] += spent
-        report_data["summary"]["total_remaining"] += variance
 
     return jsonify(report_data)

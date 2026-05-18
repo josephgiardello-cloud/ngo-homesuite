@@ -834,8 +834,9 @@ def get_grant_budget_summary(grant_id: int, organization_id: int) -> dict:
     """Return per-grant, per-line spending vs. allocation breakdown for funder reporting.
 
     Returns a dict with totals and a ``lines`` list, each entry containing:
-    ``budget_line_id``, ``category``, ``line_name``, ``allocated``, ``spent``,
-    ``remaining``, ``utilization_pct``.
+    ``budget_line_id``, ``category``, ``line_name``, ``allocated``, ``committed``,
+    ``reconciled``, ``spent``, ``actual_spent``, ``remaining``, ``variance``,
+    ``variance_pct``, ``utilization_pct``, and ``alert_status``.
     """
     from ngo_homesuite.grants.exceptions import GrantNotFound  # local import avoids circular
     grant = db.session.scalars(
@@ -849,6 +850,8 @@ def get_grant_budget_summary(grant_id: int, organization_id: int) -> dict:
 
     lines = list_budget_lines(grant_id, organization_id)
     line_results = []
+    total_committed = 0.0
+    total_reconciled = 0.0
     for bl in lines:
         spent = float(
             db.session.scalar(
@@ -859,30 +862,50 @@ def get_grant_budget_summary(grant_id: int, organization_id: int) -> dict:
             ) or 0
         )
         allocated = float(bl.allocated_amount or 0)
-        remaining = max(0.0, allocated - spent)
-        util_pct = round(spent / allocated * 100, 2) if allocated > 0 else 0.0
+        committed = float(bl.committed_amount or 0)
+        reconciled = float(bl.reconciled_amount or 0)
+        actual_spent = max(spent, reconciled)
+        remaining = allocated - actual_spent
+        variance = allocated - actual_spent
+        variance_pct = round(variance / allocated * 100, 2) if allocated > 0 else 0.0
+        util_pct = round(actual_spent / allocated * 100, 2) if allocated > 0 else 0.0
+        alert_status = "over_budget" if variance < 0 else ("alert" if util_pct >= 90 or variance_pct < 10 else "ok")
         line_results.append({
             "budget_line_id": int(bl.id),
             "category": bl.category,
             "line_name": bl.line_name,
             "allocated": allocated,
+            "committed": committed,
+            "reconciled": reconciled,
             "spent": spent,
+            "actual_spent": actual_spent,
             "remaining": remaining,
+            "variance": variance,
+            "variance_pct": variance_pct,
             "utilization_pct": util_pct,
+            "alert_status": alert_status,
         })
+        total_committed += committed
+        total_reconciled += reconciled
 
     total_allocated = _grant_budget_allocated_total(grant_id, organization_id)
     total_spent = _grant_spent_total(grant_id, organization_id)
-    total_remaining = max(0.0, total_allocated - total_spent)
-    total_util_pct = round(total_spent / total_allocated * 100, 2) if total_allocated > 0 else 0.0
+    total_actual_spent = max(total_spent, total_reconciled)
+    total_remaining = total_allocated - total_actual_spent
+    total_variance = total_allocated - total_actual_spent
+    total_util_pct = round(total_actual_spent / total_allocated * 100, 2) if total_allocated > 0 else 0.0
     return {
         "grant_id": int(grant.id),
         "title": grant.title,
         "status": grant.status,
         "amount_awarded": float(grant.amount_awarded or 0),
         "total_allocated": total_allocated,
+        "total_committed": total_committed,
+        "total_reconciled": total_reconciled,
         "total_spent": total_spent,
+        "total_actual_spent": total_actual_spent,
         "total_remaining": total_remaining,
+        "total_variance": total_variance,
         "utilization_pct": total_util_pct,
         "lines": line_results,
     }

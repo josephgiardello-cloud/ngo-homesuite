@@ -608,3 +608,95 @@ class TestGrantBudgetAdminRoutes:
             data = response.get_json()
             assert data["grant_id"] == grant_id
             assert data["summary"]["total_allocated"] == 5000.0
+
+    def test_get_budget_variance_report_uses_commitments_and_reconciliation(self, client, admin_user, org, app):
+        """Variance report includes B-2 commitment and reconciliation fields."""
+        with app.app_context():
+            grant = Grant(
+                organization_id=org.id,
+                funder_name="Test Funder",
+                title="Tracked Grant",
+                amount_awarded=10000.0,
+                status="awarded"
+            )
+            db.session.add(grant)
+            db.session.flush()
+
+            line = GrantBudgetLine(
+                grant_id=grant.id,
+                organization_id=org.id,
+                category="Operations",
+                line_name="Ops",
+                allocated_amount=5000.0,
+                committed_amount=4800.0,
+                reconciled_amount=4600.0,
+                status="active"
+            )
+            db.session.add(line)
+            db.session.commit()
+            grant_id = grant.id
+
+        with client:
+            rv = client.post(
+                "/auth/login",
+                data={"username": admin_user.username, "password": "test_password"},
+                follow_redirects=True
+            )
+            assert rv.status_code == 200
+
+            response = client.get(f"/admin/grants/{grant_id}/budget/variance-report")
+            assert response.status_code == 200
+            data = response.get_json()
+
+            assert data["summary"]["total_committed"] == 4800.0
+            assert data["summary"]["total_reconciled"] == 4600.0
+            assert data["summary"]["total_actual_spent"] == 4600.0
+            assert data["summary"]["total_variance"] == 400.0
+
+            line_data = data["lines"][0]
+            assert line_data["committed"] == 4800.0
+            assert line_data["reconciled"] == 4600.0
+            assert line_data["actual_spent"] == 4600.0
+            assert line_data["variance_pct"] == 8.0
+            assert line_data["alert_status"] == "alert"
+
+    def test_get_budget_variance_report_csv_export(self, client, admin_user, org, app):
+        """Variance report supports CSV export for downstream reporting."""
+        with app.app_context():
+            grant = Grant(
+                organization_id=org.id,
+                funder_name="Test Funder",
+                title="CSV Grant",
+                amount_awarded=8000.0,
+                status="awarded"
+            )
+            db.session.add(grant)
+            db.session.flush()
+
+            line = GrantBudgetLine(
+                grant_id=grant.id,
+                organization_id=org.id,
+                category="Travel",
+                line_name="Flights",
+                allocated_amount=2000.0,
+                committed_amount=1500.0,
+                reconciled_amount=1200.0,
+            )
+            db.session.add(line)
+            db.session.commit()
+            grant_id = grant.id
+
+        with client:
+            rv = client.post(
+                "/auth/login",
+                data={"username": admin_user.username, "password": "test_password"},
+                follow_redirects=True
+            )
+            assert rv.status_code == 200
+
+            response = client.get(f"/admin/grants/{grant_id}/budget/variance-report?format=csv")
+            assert response.status_code == 200
+            assert response.mimetype == "text/csv"
+            payload = response.get_data(as_text=True)
+            assert "category,line_name,allocated,committed,reconciled,spent,actual_spent" in payload
+            assert "Travel,Flights,2000.0,1500.0,1200.0" in payload
