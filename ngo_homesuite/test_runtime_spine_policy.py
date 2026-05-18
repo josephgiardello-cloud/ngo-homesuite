@@ -30,8 +30,10 @@ def test_runtime_spine_delegates_through_main_create_app() -> None:
     assert "def create_app(*, compat_mode: bool = False):" in main_text
     assert "raise RuntimeError(\"Non-standard entrypoint blocked\")" in main_text
     assert "from ngo_homesuite.main import create_app" in wsgi_text
+    assert "wsgi.py is disabled in production" in wsgi_text
     assert "app = create_app(compat_mode=True)" in wsgi_text
     assert "from ngo_homesuite.main import create_app" in bootstrap_text
+    assert "bootstrap.py is disabled in production" in bootstrap_text
     assert "app = create_app(compat_mode=True)" in bootstrap_text
     assert "from ngo_homesuite.main import create_app" in api_text
     assert "from ngo_homesuite.db.migrate import auto_migrate" in cli_text
