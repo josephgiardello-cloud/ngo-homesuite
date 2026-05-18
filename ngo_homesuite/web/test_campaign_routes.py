@@ -1,6 +1,8 @@
 """Tests for campaign V2 API routes."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+import time
 import unittest.mock as mock
 from io import BytesIO
 from pathlib import Path
@@ -14,6 +16,7 @@ from ngo_homesuite.models.core import (
     Campaign,
     CampaignEmailBatch,
     CampaignEmailDelivery,
+    CampaignEmailOptOut,
     Donation,
     Donor,
     ExternalCommunicationAuthorization,
@@ -759,3 +762,150 @@ def test_campaign_send_email_internal_details_allows_confirmed_human_in_loop(cli
         assert auth.username
         assert auth.authorized_at is not None
         assert int(auth.batch_id or 0) == int(batch.id)
+
+
+def test_campaign_send_email_can_be_scheduled_without_immediate_delivery(client, app):
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "Scheduled Delivery Campaign"})
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+    org_id = _admin_org_id(app)
+
+    with app.app_context():
+        donor = Donor(organization_id=org_id, name="Scheduled Donor", email="scheduled@example.org", donor_type="individual")
+        db.session.add(donor)
+        db.session.commit()
+        donor_id = int(donor.id)
+
+    scheduled_at = (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=30)).isoformat()
+
+    with mock.patch("ngo_homesuite.services.campaign_email_service.send_email", return_value=True) as send_mock:
+        rv = client.post(
+            f"/api/v2/campaigns/{campaign_id}/emails/send",
+            json={
+                "subject": "Scheduled campaign send",
+                "body": "Hi {name}, this is a scheduled update for {campaign_name}.",
+                "audience": {"donor_ids": [donor_id]},
+                "scheduled_at": scheduled_at,
+                "compliance": _human_authorization_payload(),
+            },
+        )
+
+    assert rv.status_code == 200
+    payload = rv.get_json() or {}
+    assert payload.get("scheduled") is True
+    assert payload.get("status") == "scheduled"
+    assert send_mock.call_count == 0
+
+    with app.app_context():
+        batch = db.session.scalars(
+            db.select(CampaignEmailBatch).where(CampaignEmailBatch.id == int(payload.get("batch_id"))).limit(1)
+        ).first()
+        assert batch is not None
+        assert batch.status == "scheduled"
+        assert batch.scheduled_at is not None
+        assert int(batch.total_recipients) == 1
+
+
+def test_campaign_unsubscribe_creates_opt_out_and_suppresses_future_send(client, app):
+    from ngo_homesuite.services.campaign_email_service import _unsub_signature
+
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "Unsubscribe Suppression Campaign"})
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+    org_id = _admin_org_id(app)
+
+    with app.app_context():
+        donor = Donor(organization_id=org_id, name="Opt Out Donor", email="optout-campaign@example.org", donor_type="individual")
+        db.session.add(donor)
+        db.session.commit()
+        donor_id = int(donor.id)
+
+    ts = int(time.time())
+    email = "optout-campaign@example.org"
+    with app.app_context():
+        sig = _unsub_signature(email=email, donor_id=donor_id, campaign_id=campaign_id, issued_at=ts)
+
+    rv = client.get(
+        "/api/v2/campaigns/email/unsubscribe",
+        query_string={
+            "email": email,
+            "donor_id": donor_id,
+            "campaign_id": campaign_id,
+            "ts": ts,
+            "sig": sig,
+        },
+    )
+    assert rv.status_code == 200
+
+    with app.app_context():
+        opt_out = db.session.scalars(
+            db.select(CampaignEmailOptOut).where(
+                CampaignEmailOptOut.organization_id == org_id,
+                CampaignEmailOptOut.email == email,
+            ).limit(1)
+        ).first()
+        assert opt_out is not None
+
+    with mock.patch("ngo_homesuite.services.campaign_email_service.send_email", return_value=True) as send_mock:
+        send_rv = client.post(
+            f"/api/v2/campaigns/{campaign_id}/emails/send",
+            json={
+                "subject": "Post-unsubscribe message",
+                "body": "Hello {name}, this should be suppressed for opted-out recipients.",
+                "audience": {"donor_ids": [donor_id]},
+                "compliance": _human_authorization_payload(),
+            },
+        )
+
+    assert send_rv.status_code == 200
+    send_payload = send_rv.get_json() or {}
+    assert int(send_payload.get("total_recipients") or 0) == 0
+    assert send_mock.call_count == 0
+
+
+def test_process_scheduled_campaign_batches_dispatches_due_batch(client, app):
+    from ngo_homesuite.services.campaign_email_service import process_scheduled_campaign_email_batches
+
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "Scheduled Processor Campaign"})
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+    org_id = _admin_org_id(app)
+
+    with app.app_context():
+        donor = Donor(organization_id=org_id, name="Due Batch Donor", email="duebatch@example.org", donor_type="individual")
+        db.session.add(donor)
+        db.session.commit()
+        donor_id = int(donor.id)
+
+    scheduled_at = (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=20)).isoformat()
+    queue_rv = client.post(
+        f"/api/v2/campaigns/{campaign_id}/emails/send",
+        json={
+            "subject": "Scheduled dispatch",
+            "body": "Hello {name}, this should be sent by the due-batch processor.",
+            "audience": {"donor_ids": [donor_id]},
+            "scheduled_at": scheduled_at,
+            "compliance": _human_authorization_payload(),
+        },
+    )
+    assert queue_rv.status_code == 200
+    queue_payload = queue_rv.get_json() or {}
+    batch_id = int(queue_payload.get("batch_id"))
+
+    with app.app_context():
+        with mock.patch("ngo_homesuite.services.campaign_email_service.send_email", return_value=True) as send_mock:
+            result = process_scheduled_campaign_email_batches(
+                limit=10,
+                now=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=30),
+            )
+        assert int(result.get("processed_batches") or 0) >= 1
+        assert int(result.get("emails_sent") or 0) >= 1
+        assert send_mock.call_count >= 1
+
+        batch = db.session.get(CampaignEmailBatch, batch_id)
+        assert batch is not None
+        assert batch.status in {"sent", "partial_failed"}
+        assert int(batch.sent_count or 0) >= 1

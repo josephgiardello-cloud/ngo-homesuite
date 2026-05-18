@@ -211,13 +211,22 @@ CREATE TABLE IF NOT EXISTS bank_accounts (
 CREATE TABLE IF NOT EXISTS donors (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
+    salutation TEXT,
+    preferred_name TEXT,
     -- email is stored as a hash for privacy (see app logic)
     email TEXT UNIQUE,
     -- phone and address are stored as hashes for privacy (see app logic)
     phone TEXT,
     address TEXT,
+    city TEXT,
+    country TEXT,
+    postal_code TEXT,
     donor_type TEXT CHECK (donor_type IN ('individual', 'corporate', 'foundation', 'anonymous')),
     status TEXT NOT NULL CHECK (status IN ('active', 'lapsed', 'prospect', 'archived')),
+    preferred_contact_method TEXT DEFAULT 'email' CHECK (preferred_contact_method IN ('email', 'phone', 'mail', 'none')),
+    communication_opt_in INTEGER DEFAULT 1,
+    employer TEXT,
+    source TEXT,
     created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     created_by INTEGER REFERENCES staff(id) ON DELETE SET NULL,
     updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -1071,7 +1080,35 @@ def migration_v12(conn: Any, cur: Any) -> None:
         log_migration_event(cur, 12, 'FAIL', f'Migration v12 failed: {e}')
         raise
 
-MIGRATION_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+
+def migration_v13(conn: Any, cur: Any) -> None:
+    log_migration_event(cur, 13, 'START', 'Applying donor CRM schema v13 (profile, contact, and stewardship fields)')
+    try:
+        cur.execute("PRAGMA table_info(donors);")
+        existing_columns = {row[1] for row in cur.fetchall()}
+
+        column_statements = [
+            ("salutation", "ALTER TABLE donors ADD COLUMN salutation TEXT;"),
+            ("preferred_name", "ALTER TABLE donors ADD COLUMN preferred_name TEXT;"),
+            ("city", "ALTER TABLE donors ADD COLUMN city TEXT;"),
+            ("country", "ALTER TABLE donors ADD COLUMN country TEXT;"),
+            ("postal_code", "ALTER TABLE donors ADD COLUMN postal_code TEXT;"),
+            ("preferred_contact_method", "ALTER TABLE donors ADD COLUMN preferred_contact_method TEXT DEFAULT 'email';"),
+            ("communication_opt_in", "ALTER TABLE donors ADD COLUMN communication_opt_in INTEGER DEFAULT 1;"),
+            ("employer", "ALTER TABLE donors ADD COLUMN employer TEXT;"),
+            ("source", "ALTER TABLE donors ADD COLUMN source TEXT;"),
+        ]
+
+        for column_name, statement in column_statements:
+            if column_name not in existing_columns:
+                cur.execute(statement)
+
+        log_migration_event(cur, 13, 'SUCCESS', 'Migration v13 applied successfully (donor CRM fields)')
+    except Exception as e:
+        log_migration_event(cur, 13, 'FAIL', f'Migration v13 failed: {e}')
+        raise
+
+MIGRATION_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
 MIGRATIONS: Dict[int, Callable[[Any, Any], None]] = {
     1: migration_v1,
     2: migration_v2,
@@ -1085,6 +1122,7 @@ MIGRATIONS: Dict[int, Callable[[Any, Any], None]] = {
     10: migration_v10,
     11: migration_v11,
     12: migration_v12,
+    13: migration_v13,
 }
 
 

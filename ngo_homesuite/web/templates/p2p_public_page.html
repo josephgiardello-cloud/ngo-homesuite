@@ -5,17 +5,38 @@
 {% block extra_css %}
 <style>
     .p2p-shell {
-        max-width: 980px;
+        max-width: 1080px;
         margin: 0 auto;
     }
 
     .p2p-hero {
-        border-radius: 14px;
-        padding: 1.2rem;
+        border-radius: 18px;
+        padding: 1.35rem;
         color: #f5fbff;
-        background: linear-gradient(125deg, #0c2c4f 0%, #1366b4 45%, #1d8cdc 100%);
+        background: radial-gradient(circle at 18% 18%, rgba(186, 252, 255, 0.24), transparent 44%),
+                    linear-gradient(125deg, #04213e 0%, #0f4f8f 42%, #0b77b7 100%);
         box-shadow: 0 14px 28px rgba(7, 29, 54, 0.25);
         margin-bottom: 1rem;
+    }
+
+    .hero-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.8rem;
+        flex-wrap: wrap;
+    }
+
+    .hero-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        border: 1px solid rgba(255, 255, 255, 0.24);
+        border-radius: 999px;
+        padding: 0.3rem 0.7rem;
+        font-size: 0.78rem;
+        background: rgba(255, 255, 255, 0.12);
+        color: #f4fbff;
     }
 
     .p2p-hero h1 {
@@ -52,6 +73,40 @@
         font-size: 1.25rem;
         font-weight: 700;
         margin-top: 0.15rem;
+    }
+
+    .layout-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 1rem;
+    }
+
+    .aside-stack {
+        display: grid;
+        gap: 0.9rem;
+    }
+
+    .milestones {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0.45rem;
+        margin-top: 0.7rem;
+    }
+
+    .milestone {
+        border: 1px solid var(--border);
+        background: var(--surface-soft);
+        border-radius: 10px;
+        text-align: center;
+        padding: 0.42rem 0.3rem;
+        font-size: 0.8rem;
+        color: var(--muted);
+    }
+
+    .milestone.reached {
+        border-color: rgba(13, 153, 115, 0.5);
+        color: #0d664f;
+        background: rgba(161, 247, 208, 0.23);
     }
 
     .thermometer {
@@ -125,6 +180,81 @@
         margin-top: 0.9rem;
     }
 
+    .tier-grid {
+        display: grid;
+        gap: 0.55rem;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .tier-btn {
+        border: 1px solid var(--border);
+        background: var(--surface-soft);
+        border-radius: 10px;
+        padding: 0.5rem;
+        text-decoration: none;
+        color: inherit;
+        font-weight: 600;
+        text-align: center;
+    }
+
+    .supporters {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 0.45rem;
+    }
+
+    .supporters li {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 0.48rem 0.6rem;
+        background: var(--surface-soft);
+        font-size: 0.88rem;
+    }
+
+    .share-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+        margin-top: 0.65rem;
+    }
+
+    .trust-list {
+        margin: 0;
+        padding-left: 1rem;
+        color: var(--muted);
+        display: grid;
+        gap: 0.28rem;
+    }
+
+    .match-banner {
+        margin-top: 0.7rem;
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        border-radius: 12px;
+        padding: 0.55rem 0.7rem;
+        background: rgba(255, 255, 255, 0.12);
+        font-size: 0.9rem;
+    }
+
+    .notes-wall {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 0.5rem;
+    }
+
+    .notes-wall li {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface-soft);
+        padding: 0.45rem 0.55rem;
+    }
+
     body.embed-mode header,
     body.embed-mode footer,
     body.embed-mode .sidebar,
@@ -151,6 +281,17 @@
         .goal-row {
             grid-template-columns: repeat(3, minmax(0, 1fr));
         }
+
+        .tier-grid {
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+    }
+
+    @media (min-width: 930px) {
+        .layout-grid {
+            grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.9fr);
+            align-items: start;
+        }
     }
 </style>
 {% endblock %}
@@ -166,9 +307,22 @@
 
 <div class="p2p-shell">
     <section class="p2p-hero">
+        <div class="hero-head">
+            <div class="hero-chip">Peer Fundraiser</div>
+            {% if days_live is not none %}
+            <div class="hero-chip">Live {{ days_live }} day{{ '' if days_live == 1 else 's' }}</div>
+            {% endif %}
+        </div>
         <h1>{{ page.title }}</h1>
         {% if page.story %}
         <p class="p2p-story">{{ page.story }}</p>
+        {% endif %}
+
+        {% if match_ratio > 0 and match_cap > 0 %}
+        <div class="match-banner">
+            Matching Challenge Active: {{ match_ratio }}x up to ${{ '%.2f'|format(match_cap) }}
+            ({% if effective_match_value >= match_cap %}fully unlocked{% else %}${{ '%.2f'|format(effective_match_value) }} unlocked{% endif %})
+        </div>
         {% endif %}
 
         <div class="thermometer" aria-label="Progress toward fundraising goal">
@@ -190,6 +344,12 @@
             </div>
         </div>
 
+        <div class="milestones" aria-label="Milestone progress">
+            {% for marker in milestone_rows %}
+            <div class="milestone {{ 'reached' if marker.reached else '' }}">{{ marker.pct }}%</div>
+            {% endfor %}
+        </div>
+
         <div class="cta-row">
             <a class="btn btn-primary" href="{{ url_for('main.public_give', purpose='P2P: ' ~ page.title) }}">Support this fundraiser</a>
             {% if not is_embed %}
@@ -198,21 +358,124 @@
         </div>
     </section>
 
-    <section class="card">
-        <div class="card-title">Leaderboard</div>
-        {% if leaderboard_rows %}
-        <ol class="leaderboard-list">
-            {% for row in leaderboard_rows %}
-            <li class="leaderboard-item {{ 'current' if row.slug == page.public_slug else '' }}">
-                <span>{{ loop.index }}. {{ row.title }}</span>
-                <strong>${{ '%.2f'|format(row.raised) }}</strong>
-            </li>
-            {% endfor %}
-        </ol>
-        {% else %}
-        <p class="text-muted">No contributions recorded yet. Be the first to contribute.</p>
-        {% endif %}
-    </section>
+    <div class="layout-grid">
+        <div class="aside-stack">
+            <section class="card">
+                <div class="card-title">Support This Story</div>
+                <p class="text-muted">Choose a quick amount or open the full donation form.</p>
+                <div class="tier-grid">
+                    {% for amount in donation_tiers %}
+                    <a class="tier-btn" href="{{ url_for('main.public_give', amount=amount, purpose='P2P: ' ~ page.title) }}">${{ amount }}</a>
+                    {% endfor %}
+                </div>
+                <div class="cta-row">
+                    <a class="btn btn-primary" href="{{ url_for('main.public_give', purpose='P2P: ' ~ page.title) }}">Support this fundraiser</a>
+                </div>
+            </section>
+
+            <section class="card">
+                <div class="card-title">Campaign Snapshot</div>
+                <div class="goal-row">
+                    <div class="goal-card">
+                        <div class="goal-label">Supporters</div>
+                        <div class="goal-value">{{ gift_count }}</div>
+                    </div>
+                    <div class="goal-card">
+                        <div class="goal-label">Avg Gift</div>
+                        <div class="goal-value">${{ '%.2f'|format(average_gift) }}</div>
+                    </div>
+                    <div class="goal-card">
+                        <div class="goal-label">Left To Goal</div>
+                        <div class="goal-value">${{ '%.2f'|format(amount_left) }}</div>
+                    </div>
+                </div>
+                {% if challenge_goal > 0 %}
+                <p class="text-muted mt-1 mb-0">
+                    Challenge Goal: ${{ '%.2f'|format(challenge_goal) }}
+                    ({{ challenge_pct }}% complete)
+                    {% if challenge_end_date %}
+                    by {{ challenge_end_date.strftime('%Y-%m-%d') }}
+                    {% endif %}
+                </p>
+                {% endif %}
+            </section>
+
+            <section class="card">
+                <div class="card-title">Recent Supporters</div>
+                {% if linked_donations %}
+                <ul class="supporters">
+                    {% for donation in linked_donations %}
+                    <li>
+                        <span>
+                            {% if donation.is_anonymous %}
+                            Anonymous Supporter
+                            {% else %}
+                            {{ donation.donor_name or 'Supporter' }}
+                            {% endif %}
+                        </span>
+                        <strong>${{ '%.2f'|format(donation.amount or 0) }}</strong>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="text-muted">No contributions yet. Your gift can be the first on this wall.</p>
+                {% endif %}
+            </section>
+        </div>
+
+        <div class="aside-stack">
+            <section class="card">
+                <div class="card-title">Share This Fundraiser</div>
+                <p class="text-muted mb-1">Help the page owner grow momentum by sharing this link.</p>
+                <div class="share-row">
+                    <a class="btn btn-secondary" target="_blank" rel="noopener" href="https://x.com/intent/tweet?text={{ share_text|urlencode }}&url={{ public_url|urlencode }}">Share on X</a>
+                    <a class="btn btn-secondary" target="_blank" rel="noopener" href="https://www.facebook.com/sharer/sharer.php?u={{ public_url|urlencode }}">Share on Facebook</a>
+                    <button class="btn btn-secondary" type="button" data-copy-link="{{ public_url }}">Copy Link</button>
+                </div>
+            </section>
+
+            <section class="card">
+                <div class="card-title">Supporter Messages</div>
+                {% if supporter_notes %}
+                <ul class="notes-wall">
+                    {% for item in supporter_notes %}
+                    <li>
+                        <strong>{{ item.display_name }}</strong>
+                        <div class="text-muted">{{ item.snippet }}</div>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="text-muted">No supporter messages yet. Add one in your donation note.</p>
+                {% endif %}
+            </section>
+
+            <section class="card">
+                <div class="card-title">Leaderboard</div>
+                {% if leaderboard_rows %}
+                <ol class="leaderboard-list">
+                    {% for row in leaderboard_rows %}
+                    <li class="leaderboard-item {{ 'current' if row.slug == page.public_slug else '' }}">
+                        <span>{{ loop.index }}. {{ row.title }}</span>
+                        <strong>${{ '%.2f'|format(row.raised) }}</strong>
+                    </li>
+                    {% endfor %}
+                </ol>
+                {% else %}
+                <p class="text-muted">No contributions recorded yet. Be the first to contribute.</p>
+                {% endif %}
+            </section>
+
+            <section class="card">
+                <div class="card-title">Giving Confidence</div>
+                <ul class="trust-list">
+                    <li>Secure checkout with instant receipt delivery</li>
+                    <li>Progress updates reflected in near real-time</li>
+                    <li>P2P and organization donation pages remain linked</li>
+                </ul>
+            </section>
+        </div>
+    </div>
 
     {% if not is_embed %}
     <section class="embed-block">
@@ -222,4 +485,25 @@
     </section>
     {% endif %}
 </div>
+
+<script>
+    (function () {
+        var copyButtons = document.querySelectorAll('[data-copy-link]');
+        copyButtons.forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var value = btn.getAttribute('data-copy-link') || '';
+                if (!value) {
+                    return;
+                }
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(value);
+                }
+                btn.textContent = 'Copied';
+                setTimeout(function () {
+                    btn.textContent = 'Copy Link';
+                }, 1200);
+            });
+        });
+    })();
+</script>
 {% endblock %}

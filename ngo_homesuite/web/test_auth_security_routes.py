@@ -505,6 +505,17 @@ def test_normalized_identity_from_oauth_normalizes_provider_and_email():
     assert identity.display_name == 'User Name'
 
 
+def test_normalized_identity_rejects_missing_fields():
+    with pytest.raises(ValueError, match='provider is required'):
+        NormalizedIdentity.from_oauth(provider=' ', provider_user_id='abc', email='user@example.com')
+
+    with pytest.raises(ValueError, match='provider_user_id is required'):
+        NormalizedIdentity.from_oauth(provider='google', provider_user_id=' ', email='user@example.com')
+
+    with pytest.raises(ValueError, match='email is required'):
+        NormalizedIdentity.from_oauth(provider='google', provider_user_id='abc', email=' ')
+
+
 def test_oauth_repeated_login_reuses_account(oauth_client, oauth_app):
     """Second OAuth login with the same provider ID should reuse the existing user."""
     token = {'access_token': 'tok', 'token_type': 'Bearer',

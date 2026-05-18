@@ -62,7 +62,18 @@ class DonorService:
             stmt = stmt.where(Donor.donor_type == donor_type)
         if search:
             term = f"%{search.strip()}%"
-            stmt = stmt.where(or_(Donor.name.ilike(term), Donor.email.ilike(term)))
+            stmt = stmt.where(
+                or_(
+                    Donor.name.ilike(term),
+                    Donor.preferred_name.ilike(term),
+                    Donor.email.ilike(term),
+                    Donor.phone.ilike(term),
+                    Donor.address.ilike(term),
+                    Donor.city.ilike(term),
+                    Donor.employer.ilike(term),
+                    Donor.source.ilike(term),
+                )
+            )
         stmt = stmt.order_by(Donor.name.asc())
         pagination = db.paginate(stmt, page=page, per_page=per_page, error_out=False)
         return {
@@ -85,7 +96,18 @@ class DonorService:
             stmt = stmt.where(Donor.donor_type == donor_type)
         if search:
             term = f"%{search.strip()}%"
-            stmt = stmt.where(or_(Donor.name.ilike(term), Donor.email.ilike(term), Donor.phone.ilike(term)))
+            stmt = stmt.where(
+                or_(
+                    Donor.name.ilike(term),
+                    Donor.preferred_name.ilike(term),
+                    Donor.email.ilike(term),
+                    Donor.phone.ilike(term),
+                    Donor.address.ilike(term),
+                    Donor.city.ilike(term),
+                    Donor.employer.ilike(term),
+                    Donor.source.ilike(term),
+                )
+            )
         stmt = stmt.order_by(Donor.name.asc(), Donor.id.asc())
         return list(db.session.scalars(stmt))
 
@@ -101,6 +123,17 @@ class DonorService:
         email: Optional[str] = None,
         phone: Optional[str] = None,
         donor_type: str = "individual",
+        salutation: Optional[str] = None,
+        preferred_name: Optional[str] = None,
+        status: str = "active",
+        address: Optional[str] = None,
+        city: Optional[str] = None,
+        country: Optional[str] = None,
+        postal_code: Optional[str] = None,
+        preferred_contact_method: str = "email",
+        communication_opt_in: bool = True,
+        employer: Optional[str] = None,
+        source: Optional[str] = None,
         notes: Optional[str] = None,
         actor_id: Optional[int] = None,
     ) -> Donor:
@@ -116,6 +149,14 @@ class DonorService:
             raise ValueError(
                 f"Invalid donor_type {donor_type!r}. Valid: {sorted(_VALID_DONOR_TYPES)}"
             )
+        allowed_statuses = {"active", "prospect", "lapsed", "archived"}
+        if status not in allowed_statuses:
+            raise ValueError(f"Invalid status {status!r}. Valid: {sorted(allowed_statuses)}")
+        allowed_contact_methods = {"email", "phone", "mail", "none"}
+        if preferred_contact_method not in allowed_contact_methods:
+            raise ValueError(
+                f"Invalid preferred_contact_method {preferred_contact_method!r}. Valid: {sorted(allowed_contact_methods)}"
+            )
         email_clean = email.strip().lower() if email and email.strip() else None
 
         donor = Donor(
@@ -124,6 +165,17 @@ class DonorService:
             email=email_clean,
             phone=(phone or "").strip() or None,
             donor_type=donor_type,
+            salutation=(salutation or "").strip() or None,
+            preferred_name=(preferred_name or "").strip() or None,
+            status=status,
+            address=(address or "").strip() or None,
+            city=(city or "").strip() or None,
+            country=(country or "").strip() or None,
+            postal_code=(postal_code or "").strip() or None,
+            preferred_contact_method=preferred_contact_method,
+            communication_opt_in=bool(communication_opt_in),
+            employer=(employer or "").strip() or None,
+            source=(source or "").strip() or None,
             notes=notes,
         )
         db.session.add(donor)
@@ -138,6 +190,17 @@ class DonorService:
         *,
         phone: Optional[str] = None,
         donor_type: str = "individual",
+        salutation: Optional[str] = None,
+        preferred_name: Optional[str] = None,
+        status: str = "active",
+        address: Optional[str] = None,
+        city: Optional[str] = None,
+        country: Optional[str] = None,
+        postal_code: Optional[str] = None,
+        preferred_contact_method: str = "email",
+        communication_opt_in: bool = True,
+        employer: Optional[str] = None,
+        source: Optional[str] = None,
         notes: Optional[str] = None,
     ) -> tuple[Donor, bool]:
         """Return (donor, created) — find by email if available, else create.
@@ -161,6 +224,17 @@ class DonorService:
             email=email_clean,
             phone=(phone or "").strip() or None,
             donor_type=donor_type,
+            salutation=(salutation or "").strip() or None,
+            preferred_name=(preferred_name or "").strip() or None,
+            status=status,
+            address=(address or "").strip() or None,
+            city=(city or "").strip() or None,
+            country=(country or "").strip() or None,
+            postal_code=(postal_code or "").strip() or None,
+            preferred_contact_method=preferred_contact_method,
+            communication_opt_in=bool(communication_opt_in),
+            employer=(employer or "").strip() or None,
+            source=(source or "").strip() or None,
             notes=notes,
         )
         db.session.add(donor)
@@ -176,11 +250,28 @@ class DonorService:
     ) -> Donor:
         """Update mutable fields on a donor.
 
-        Allowed fields: name, email, phone, donor_type, notes.
+        Allowed fields: name, email, phone, donor_type, status, salutation, preferred_name, address, city, country, postal_code, preferred_contact_method, communication_opt_in, employer, source, notes.
         Email is normalised to lower-case.
         """
         donor = self.get_donor(donor_id, org_id)
-        mutable = {"name", "email", "phone", "donor_type", "notes"}
+        mutable = {
+            "name",
+            "email",
+            "phone",
+            "salutation",
+            "preferred_name",
+            "donor_type",
+            "status",
+            "address",
+            "city",
+            "country",
+            "postal_code",
+            "preferred_contact_method",
+            "communication_opt_in",
+            "employer",
+            "source",
+            "notes",
+        }
         for key, value in fields.items():
             if key not in mutable:
                 raise ValueError(f"Field {key!r} is not updatable via this method")
@@ -190,6 +281,14 @@ class DonorService:
                 raise ValueError(
                     f"Invalid donor_type {value!r}. Valid: {sorted(_VALID_DONOR_TYPES)}"
                 )
+            if key == "status" and value not in {"active", "prospect", "lapsed", "archived"}:
+                raise ValueError("Invalid status value")
+            if key == "preferred_contact_method" and value not in {"email", "phone", "mail", "none"}:
+                raise ValueError("Invalid preferred_contact_method value")
+            if key == "communication_opt_in" and value is not None:
+                value = bool(value)
+            if key in {"salutation", "preferred_name", "address", "city", "country", "postal_code", "employer", "source"} and value is not None:
+                value = str(value).strip() or None
             setattr(donor, key, value)
         db.session.commit()
         return donor

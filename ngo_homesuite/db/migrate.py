@@ -381,6 +381,7 @@ def auto_migrate(db_path: str | None = None) -> None:
                     31: {"users"},
                     32: {"users"},
                     33: {"users"},
+                    34: {"campaign_email_batches"},
                 }
                 required_tables = precondition_tables.get(version)
                 if required_tables is not None:
@@ -419,6 +420,19 @@ def auto_migrate(db_path: str | None = None) -> None:
                         )
                         print(f"Skipped migration {version} ({mf.name}) until required tables are created by bootstrap.")
                         continue
+
+                if version == 34:
+                    table_info = list(conn.execute("PRAGMA table_info(campaign_email_batches)").fetchall())
+                    existing_cols = {str(row[1]).strip().lower() for row in table_info if row and len(row) > 1}
+                    if "scheduled_at" in existing_cols:
+                        sql_lines: list[str] = []
+                        for line in sql.splitlines():
+                            normalized = line.strip().lower()
+                            if normalized.startswith("alter table campaign_email_batches add column scheduled_at"):
+                                continue
+                            sql_lines.append(line)
+                        sql = "\n".join(sql_lines)
+
                 _execute_script_with_retry(conn, sql, version=version, filename=mf.name)
             except Exception:
                 raise

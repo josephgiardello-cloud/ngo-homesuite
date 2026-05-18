@@ -1184,6 +1184,15 @@ def campaign_send_emails_route(campaign_id: int):
     audience_payload["_human_in_the_loop"] = hitl_metadata
 
     try:
+        scheduled_at_raw = data.get("scheduled_at")
+        scheduled_at_dt = None
+        if scheduled_at_raw:
+            from datetime import datetime as _dt
+            try:
+                scheduled_at_dt = _dt.fromisoformat(str(scheduled_at_raw).replace("Z", "+00:00")).replace(tzinfo=None)
+            except (ValueError, TypeError):
+                scheduled_at_dt = None
+
         payload = send_campaign_bulk_email(
             _org_id(),
             campaign_id,
@@ -1195,6 +1204,7 @@ def campaign_send_emails_route(campaign_id: int):
             audience=audience_payload,
             human_authorization=hitl_metadata,
             dry_run=bool(data.get("dry_run", False)),
+            scheduled_at=scheduled_at_dt,
         )
     except LookupError:
         return jsonify({"error": "Campaign not found"}), 404
@@ -1340,3 +1350,69 @@ def campaign_email_click_redirect():
     db.session.commit()
 
     return redirect(target_url, code=302)
+
+
+@v2_bp.get("/campaigns/email/unsubscribe")
+def campaign_email_unsubscribe():
+    """Process an unsubscribe request via a signed link from a campaign email."""
+    from ngo_homesuite.services.campaign_email_service import verify_unsub_signature
+    from ngo_homesuite.models.core import CampaignEmailOptOut
+
+    email = request.args.get("email", "").strip().lower()
+    donor_id_raw = request.args.get("donor_id", "0")
+    campaign_id_raw = request.args.get("campaign_id", "0")
+    issued_at_raw = request.args.get("ts", "0")
+    signature = request.args.get("sig", "")
+
+    try:
+        donor_id = int(donor_id_raw)
+        campaign_id = int(campaign_id_raw)
+        issued_at = int(issued_at_raw)
+    except (ValueError, TypeError):
+        return "<html><body><h2>Invalid unsubscribe link.</h2></body></html>", 400
+
+    if not email or not verify_unsub_signature(
+        email=email,
+        donor_id=donor_id,
+        campaign_id=campaign_id,
+        issued_at=issued_at,
+        signature=signature,
+    ):
+        return "<html><body><h2>Invalid or expired unsubscribe link.</h2></body></html>", 400
+
+    # Find organization via campaign
+    from ngo_homesuite.models.core import Campaign as _Campaign
+    campaign_obj = db.session.get(_Campaign, campaign_id)
+    org_id = int(campaign_obj.organization_id) if campaign_obj else 0
+    if not org_id:
+        return "<html><body><h2>Campaign not found.</h2></body></html>", 404
+
+    # Idempotent: only insert if not already opted out
+    existing = db.session.scalars(
+        select(CampaignEmailOptOut).where(
+            CampaignEmailOptOut.organization_id == org_id,
+            CampaignEmailOptOut.email == email,
+        ).limit(1)
+    ).first()
+    if not existing:
+        token = signature[:64]
+        opt_out = CampaignEmailOptOut(
+            organization_id=org_id,
+            donor_id=donor_id if donor_id > 0 else None,
+            email=email,
+            token=token,
+            campaign_id=campaign_id if campaign_id > 0 else None,
+        )
+        db.session.add(opt_out)
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+
+    return (
+        "<html><head><title>Unsubscribed</title>"
+        "<style>body{font-family:Arial,sans-serif;max-width:480px;margin:80px auto;text-align:center;}</style></head>"
+        "<body><h2>You have been unsubscribed.</h2>"
+        "<p>You will no longer receive campaign emails from this organization.</p>"
+        "</body></html>"
+    ), 200

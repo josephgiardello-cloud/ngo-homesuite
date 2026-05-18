@@ -14,17 +14,17 @@ from flask_login import login_required, current_user
 from flask_wtf import FlaskForm
 from werkzeug.exceptions import NotFound
 from werkzeug.utils import secure_filename
-from wtforms import BooleanField, DateField, FloatField, SelectField, StringField, SubmitField, TextAreaField
-from wtforms.validators import DataRequired, Optional as WTOptional, NumberRange, Email
+from wtforms import BooleanField, DateField, FloatField, HiddenField, SelectField, StringField, SubmitField, TextAreaField
+from wtforms.validators import DataRequired, Optional as WTOptional, NumberRange, Email, Length, Regexp
 from io import BytesIO
 from openpyxl import Workbook, load_workbook
 
 from ngo_homesuite.models.core import (
-    Organization, Beneficiary, Project, Donation, Donor, Fund, Expense, DonationReceipt, P2PPage, Volunteer, Campaign, EventDiscountCode, db
+    Organization, Beneficiary, Project, Donation, Donor, Fund, Expense, DonationReceipt, P2PPage, Volunteer, Campaign, EventDiscountCode, Task, CampaignEmailDelivery, DonorEngagementScore, db
 )
 from ngo_homesuite.services.beneficiary_service import create_beneficiary, get_beneficiary, list_beneficiaries, update_beneficiary
 from ngo_homesuite.services.program_impact_service import list_cases
-from ngo_homesuite.services.donation_service import DonationConcurrencyError, DonationNotFound, DonationService
+from ngo_homesuite.services.donation_service import DonationConcurrencyError, DonationNotFound, DonationService, InvalidStatusTransition
 from ngo_homesuite.services.donor_service import DonorNotFound, DonorService
 from ngo_homesuite.services.expense_service import ExpenseService
 from ngo_homesuite.services.payment_service import PaymentService, StripeNotConfigured
@@ -325,6 +325,8 @@ def health_ready() -> Response:
 
 class DonorForm(FlaskForm):
     name = StringField('Name', validators=[DataRequired()])
+    salutation = StringField('Salutation', validators=[WTOptional(), Length(max=50)])
+    preferred_name = StringField('Preferred Name', validators=[WTOptional(), Length(max=200)])
     email = StringField('Email', validators=[WTOptional(), Email()])
     phone = StringField('Phone', validators=[WTOptional()])
     donor_type = SelectField(
@@ -337,12 +339,35 @@ class DonorForm(FlaskForm):
         ],
         validators=[DataRequired()],
     )
+    status = SelectField(
+        'Status',
+        choices=[
+            ('active', 'Active'),
+            ('prospect', 'Prospect'),
+            ('lapsed', 'Lapsed'),
+            ('archived', 'Archived'),
+        ],
+        validators=[WTOptional()],
+    )
+    preferred_contact_method = SelectField(
+        'Preferred Contact Method',
+        choices=[('email', 'Email'), ('phone', 'Phone'), ('mail', 'Mail'), ('none', 'Do Not Contact')],
+        validators=[WTOptional()],
+    )
+    communication_opt_in = BooleanField('Can Contact This Donor', default=True)
+    address = StringField('Address', validators=[WTOptional(), Length(max=300)])
+    city = StringField('City', validators=[WTOptional(), Length(max=100)])
+    country = StringField('Country', validators=[WTOptional(), Length(max=100)])
+    postal_code = StringField('Postal Code', validators=[WTOptional(), Length(max=20)])
+    employer = StringField('Employer / Organization', validators=[WTOptional(), Length(max=200)])
+    source = StringField('Lead Source', validators=[WTOptional(), Length(max=120)])
     notes = TextAreaField('Notes', validators=[WTOptional()])
     submit = SubmitField('Save Donor')
 
 
 class DonationForm(FlaskForm):
     donor_id = SelectField('Donor', coerce=int, validators=[DataRequired()])
+    campaign_id = SelectField('Campaign', coerce=int, validators=[WTOptional()])
     project_id = SelectField('Project', coerce=int, validators=[WTOptional()])
     fund_id = SelectField('Fund', coerce=int, validators=[WTOptional()])
     amount = FloatField('Amount', validators=[DataRequired(), NumberRange(min=0.01)])
@@ -352,10 +377,96 @@ class DonationForm(FlaskForm):
         choices=[('cash', 'Cash'), ('bank_transfer', 'Bank Transfer'), ('credit_card', 'Credit Card')],
         validators=[DataRequired()],
     )
+    channel = SelectField(
+        'Channel/Source',
+        choices=[
+            ('', 'Unspecified'),
+            ('web', 'Web'),
+            ('event', 'Event'),
+            ('mail', 'Mail'),
+            ('phone', 'Phone'),
+            ('p2p', 'Peer-to-Peer'),
+            ('grant_portal', 'Grant Portal'),
+        ],
+        validators=[WTOptional()],
+    )
+    is_anonymous = BooleanField('Anonymous/Publicly Hidden')
+    public_display_name = StringField('Public Display Name', validators=[WTOptional(), Length(max=200)])
+    tribute_type = SelectField(
+        'Tribute Type',
+        choices=[('', 'None'), ('in_honor_of', 'In Honor Of'), ('in_memory_of', 'In Memory Of')],
+        validators=[WTOptional()],
+    )
+    tribute_honoree_name = StringField('Honoree Name', validators=[WTOptional(), Length(max=200)])
+    tribute_honoree_contact = StringField('Honoree Contact', validators=[WTOptional(), Length(max=255)])
+    soft_credit_name = StringField('Soft Credit Name', validators=[WTOptional(), Length(max=200)])
     purpose = StringField('Purpose', validators=[WTOptional()])
     reference_number = StringField('Reference Number', validators=[WTOptional()])
+    bank_routing_number = StringField('Bank Routing Number', validators=[WTOptional(), Length(max=20)])
+    bank_account_number = StringField('Bank Account Number', validators=[WTOptional(), Length(max=32)])
+    card_holder_name = StringField('Cardholder Name', validators=[WTOptional(), Length(max=120)])
+    card_brand = SelectField(
+        'Card Brand',
+        choices=[('', 'Select brand'), ('visa', 'Visa'), ('mastercard', 'Mastercard'), ('amex', 'American Express'), ('discover', 'Discover')],
+        validators=[WTOptional()],
+    )
+    card_last4 = StringField('Card Last 4', validators=[WTOptional(), Length(min=4, max=4), Regexp(r'^\d{4}$', message='Card last 4 must be 4 digits')])
+    card_exp_month = StringField('Expiry Month', validators=[WTOptional(), Length(min=2, max=2), Regexp(r'^\d{2}$', message='Use MM format')])
+    card_exp_year = StringField('Expiry Year', validators=[WTOptional(), Length(min=2, max=4), Regexp(r'^\d{2,4}$', message='Use YY or YYYY format')])
+    cash_award_reference = StringField('Cash Award Reference', validators=[WTOptional(), Length(max=100)])
     notes = TextAreaField('Notes', validators=[WTOptional()])
     submit = SubmitField('Record Donation')
+
+
+class DonorQuickDonationForm(FlaskForm):
+    amount = FloatField('Amount', validators=[DataRequired(), NumberRange(min=0.01)])
+    currency = SelectField('Currency', choices=[('USD', 'USD'), ('EUR', 'EUR'), ('GBP', 'GBP')], validators=[DataRequired()])
+    payment_method = SelectField(
+        'Payment Method',
+        choices=[('cash', 'Cash'), ('bank_transfer', 'Bank Transfer'), ('credit_card', 'Credit Card')],
+        validators=[DataRequired()],
+    )
+    project_id = SelectField('Project', coerce=int, validators=[WTOptional()])
+    fund_id = SelectField('Fund', coerce=int, validators=[WTOptional()])
+    purpose = StringField('Purpose', validators=[WTOptional()])
+    reference_number = StringField('Reference / Receipt Number', validators=[WTOptional(), Length(max=100)])
+    notes = TextAreaField('Notes', validators=[WTOptional()])
+    bank_routing_number = StringField('Bank Routing Number', validators=[WTOptional(), Length(max=20)])
+    bank_account_number = StringField('Bank Account Number', validators=[WTOptional(), Length(max=32)])
+    card_holder_name = StringField('Cardholder Name', validators=[WTOptional(), Length(max=120)])
+    card_brand = SelectField(
+        'Card Brand',
+        choices=[('', 'Select brand'), ('visa', 'Visa'), ('mastercard', 'Mastercard'), ('amex', 'American Express'), ('discover', 'Discover')],
+        validators=[WTOptional()],
+    )
+    card_last4 = StringField('Card Last 4', validators=[WTOptional(), Length(min=4, max=4), Regexp(r'^\d{4}$', message='Card last 4 must be 4 digits')])
+    card_exp_month = StringField('Expiry Month', validators=[WTOptional(), Length(min=2, max=2), Regexp(r'^\d{2}$', message='Use MM format')])
+    card_exp_year = StringField('Expiry Year', validators=[WTOptional(), Length(min=2, max=4), Regexp(r'^\d{2,4}$', message='Use YY or YYYY format')])
+    cash_award_reference = StringField('Cash Award Reference', validators=[WTOptional(), Length(max=100)])
+    submit = SubmitField('Record Donation')
+
+
+class DonorQuickTaskForm(FlaskForm):
+    title = StringField('Task Title', validators=[DataRequired(), Length(max=300)])
+    task_type = SelectField(
+        'Task Type',
+        choices=[
+            ('follow_up', 'Follow Up'),
+            ('call', 'Call'),
+            ('email', 'Email'),
+            ('meeting', 'Meeting'),
+            ('general', 'General'),
+        ],
+        validators=[DataRequired()],
+    )
+    priority = SelectField(
+        'Priority',
+        choices=[('low', 'Low'), ('medium', 'Medium'), ('high', 'High'), ('urgent', 'Urgent')],
+        validators=[DataRequired()],
+    )
+    due_date = DateField('Due Date', validators=[WTOptional()])
+    notes = TextAreaField('Task Notes', validators=[WTOptional(), Length(max=2000)])
+    submit = SubmitField('Create Task')
 
 
 class ExpenseForm(FlaskForm):
@@ -398,6 +509,32 @@ class ConfirmDeleteForm(FlaskForm):
     submit = SubmitField('Delete')
 
 
+class FundStatusActionForm(FlaskForm):
+    fund_id = HiddenField(validators=[DataRequired()])
+    next_url = HiddenField(validators=[WTOptional()])
+    set_status = HiddenField(validators=[DataRequired()])
+    submit = SubmitField('Update')
+
+
+class BulkFundActionForm(FlaskForm):
+    next_url = HiddenField(validators=[WTOptional()])
+    set_status = HiddenField(validators=[DataRequired()])
+    submit = SubmitField('Apply')
+
+
+class DonationRowActionForm(FlaskForm):
+    donation_id = HiddenField(validators=[DataRequired()])
+    next_url = HiddenField(validators=[WTOptional()])
+    new_status = HiddenField(validators=[WTOptional()])
+    submit = SubmitField('Submit')
+
+
+class BulkDonationActionForm(FlaskForm):
+    next_url = HiddenField(validators=[WTOptional()])
+    new_status = HiddenField(validators=[WTOptional()])
+    submit = SubmitField('Apply')
+
+
 class PublicDonationForm(FlaskForm):
     donor_name = StringField('Full Name', validators=[DataRequired()])
     donor_email = StringField('Email', validators=[WTOptional(), Email()])
@@ -425,6 +562,11 @@ class P2PPageForm(FlaskForm):
     goal_amount = FloatField('Goal Amount', validators=[WTOptional(), NumberRange(min=0)])
     story = TextAreaField('Story', validators=[WTOptional()])
     campaign_slug = StringField('Campaign Slug (optional)', validators=[WTOptional()])
+    match_ratio = FloatField('Match Ratio (e.g. 1 for 1:1)', validators=[WTOptional(), NumberRange(min=0, max=10)])
+    match_cap_amount = FloatField('Match Cap Amount', validators=[WTOptional(), NumberRange(min=0)])
+    challenge_goal_amount = FloatField('Challenge Goal Amount', validators=[WTOptional(), NumberRange(min=0)])
+    challenge_end_date = DateField('Challenge End Date', validators=[WTOptional()], format='%Y-%m-%d')
+    automation_contact_email = StringField('Automation Contact Email', validators=[WTOptional(), Email()])
     submit = SubmitField('Create Fundraiser')
 
 
@@ -444,6 +586,67 @@ class RecurringDonationForm(FlaskForm):
         validators=[DataRequired()],
     )
     submit = SubmitField('Create Recurring Plan')
+
+
+def _mask_tail(value: str | None, *, keep: int = 4) -> str | None:
+    text = str(value or '').strip()
+    if not text:
+        return None
+    if len(text) <= keep:
+        return text
+    return f"****{text[-keep:]}"
+
+
+def _build_quick_donation_notes(form: FlaskForm) -> str | None:
+    parts: list[str] = []
+    notes = str(getattr(form, 'notes', None).data or '').strip() if hasattr(form, 'notes') else ''
+    if notes:
+        parts.append(notes)
+
+    method = str(getattr(form, 'payment_method', None).data or '').strip().lower()
+    if method == 'bank_transfer':
+        routing = _mask_tail(getattr(form, 'bank_routing_number', None).data)
+        account = _mask_tail(getattr(form, 'bank_account_number', None).data)
+        details = ['Method: Bank Transfer']
+        if routing:
+            details.append(f'Routing: {routing}')
+        if account:
+            details.append(f'Account: {account}')
+        parts.append(' | '.join(details))
+    elif method == 'credit_card':
+        holder = str(getattr(form, 'card_holder_name', None).data or '').strip()
+        brand = str(getattr(form, 'card_brand', None).data or '').strip()
+        last4 = _mask_tail(getattr(form, 'card_last4', None).data)
+        exp_month = str(getattr(form, 'card_exp_month', None).data or '').strip()
+        exp_year = str(getattr(form, 'card_exp_year', None).data or '').strip()
+        details = ['Method: Credit Card']
+        if holder:
+            details.append(f'Cardholder: {holder}')
+        if brand:
+            details.append(f'Brand: {brand}')
+        if last4:
+            details.append(f'Last4: {last4}')
+        if exp_month or exp_year:
+            details.append(f'Expiry: {exp_month}/{exp_year}'.rstrip('/'))
+        parts.append(' | '.join(details))
+    elif method == 'cash':
+        award_ref = str(getattr(form, 'cash_award_reference', None).data or '').strip()
+        details = ['Method: Cash']
+        if award_ref:
+            details.append(f'Award Ref: {award_ref}')
+        parts.append(' | '.join(details))
+
+    if not parts:
+        return None
+    return '\n'.join(parts)
+
+
+def _build_quick_donation_reference(form: FlaskForm) -> str | None:
+    reference = str(getattr(form, 'reference_number', None).data or '').strip() if hasattr(form, 'reference_number') else ''
+    if reference:
+        return reference
+    method = str(getattr(form, 'payment_method', None).data or '').strip().upper() or 'DONATION'
+    return f"{method}-{uuid.uuid4().hex[:10].upper()}"
 
 
 class BeneficiaryIntakeForm(FlaskForm):
@@ -518,7 +721,10 @@ def _build_iif_bytes(trns_type: str, rows):
         trns_sign = -1.0
 
     for txn_id, date_iso, name, amount, memo in rows:
-        amount_val = float(amount or 0)
+        try:
+            amount_val = float(amount or 0)
+        except (TypeError, ValueError):
+            amount_val = 0.0
         trns_amt = trns_sign * amount_val
         spl_amt = -trns_amt
         date_value = (date_iso or '').strip() or datetime.now(timezone.utc).strftime('%Y-%m-%d')
@@ -544,12 +750,28 @@ def _parse_float(value: str):
         return None
 
 
+def _parse_date(value: str):
+    value = (value or '').strip()
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value).date()
+    except ValueError:
+        return None
+
+
 def _normalize_text(value: str) -> str:
     return (value or '').strip().lower()
 
 
 def _normalize_phone(value: str) -> str:
     return ''.join(ch for ch in (value or '') if ch.isdigit())
+
+
+def _normalize_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or '').strip().lower() in {'1', 'true', 'yes', 'on', 'y'}
 
 
 def _donor_import_cache_dir() -> Path:
@@ -651,13 +873,41 @@ def _parse_donor_import_file(path: Path) -> tuple[list[str], list[dict[str, str]
 def _guess_donor_import_mapping(headers: list[str]) -> dict[str, str]:
     aliases = {
         'name': {'name', 'full name', 'donor', 'donor name'},
+        'salutation': {'salutation', 'title', 'prefix'},
+        'preferred_name': {'preferred name', 'preferred_name', 'nickname', 'preferred'},
         'email': {'email', 'email address', 'e-mail'},
         'phone': {'phone', 'phone number', 'mobile', 'telephone'},
         'donor_type': {'type', 'donor type', 'category'},
+        'status': {'status', 'crm status', 'donor status'},
+        'preferred_contact_method': {'preferred contact method', 'contact preference', 'contact method'},
+        'communication_opt_in': {'can contact this donor', 'opt in', 'communication opt in', 'contact ok'},
+        'address': {'address', 'street', 'mailing address'},
+        'city': {'city', 'town'},
+        'country': {'country', 'nation'},
+        'postal_code': {'postal code', 'zip', 'zip code', 'postcode'},
+        'employer': {'employer', 'organization', 'company'},
+        'source': {'source', 'lead source', 'donor source'},
         'notes': {'notes', 'note', 'comments', 'comment'},
     }
 
-    mapping: dict[str, str] = {'name': '', 'email': '', 'phone': '', 'donor_type': '', 'notes': ''}
+    mapping: dict[str, str] = {
+        'name': '',
+        'salutation': '',
+        'preferred_name': '',
+        'email': '',
+        'phone': '',
+        'donor_type': '',
+        'status': '',
+        'preferred_contact_method': '',
+        'communication_opt_in': '',
+        'address': '',
+        'city': '',
+        'country': '',
+        'postal_code': '',
+        'employer': '',
+        'source': '',
+        'notes': '',
+    }
     normalized = {h: _normalize_text(h) for h in headers}
     for target, candidates in aliases.items():
         for header, normalized_header in normalized.items():
@@ -671,9 +921,20 @@ def _guess_donor_import_mapping(headers: list[str]) -> dict[str, str]:
 def _extract_donor_import_mapping(form_data) -> dict[str, str]:
     mapping = {
         'name': (form_data.get('map_name') or '').strip(),
+        'salutation': (form_data.get('map_salutation') or '').strip(),
+        'preferred_name': (form_data.get('map_preferred_name') or '').strip(),
         'email': (form_data.get('map_email') or '').strip(),
         'phone': (form_data.get('map_phone') or '').strip(),
         'donor_type': (form_data.get('map_donor_type') or '').strip(),
+        'status': (form_data.get('map_status') or '').strip(),
+        'preferred_contact_method': (form_data.get('map_preferred_contact_method') or '').strip(),
+        'communication_opt_in': (form_data.get('map_communication_opt_in') or '').strip(),
+        'address': (form_data.get('map_address') or '').strip(),
+        'city': (form_data.get('map_city') or '').strip(),
+        'country': (form_data.get('map_country') or '').strip(),
+        'postal_code': (form_data.get('map_postal_code') or '').strip(),
+        'employer': (form_data.get('map_employer') or '').strip(),
+        'source': (form_data.get('map_source') or '').strip(),
         'notes': (form_data.get('map_notes') or '').strip(),
     }
     return mapping
@@ -698,9 +959,20 @@ def _build_donor_import_preview(org_id: int, rows: list[dict[str, str]], mapping
 
     for idx, row in enumerate(rows, start=1):
         mapped_name = str(row.get(mapping['name'], '') if mapping.get('name') else '').strip()
+        mapped_salutation = str(row.get(mapping['salutation'], '') if mapping.get('salutation') else '').strip()
+        mapped_preferred_name = str(row.get(mapping['preferred_name'], '') if mapping.get('preferred_name') else '').strip()
         mapped_email = str(row.get(mapping['email'], '') if mapping.get('email') else '').strip().lower()
         mapped_phone = str(row.get(mapping['phone'], '') if mapping.get('phone') else '').strip()
         mapped_type = str(row.get(mapping['donor_type'], '') if mapping.get('donor_type') else '').strip().lower() or 'individual'
+        mapped_status = str(row.get(mapping['status'], '') if mapping.get('status') else '').strip().lower() or 'active'
+        mapped_contact_method = str(row.get(mapping['preferred_contact_method'], '') if mapping.get('preferred_contact_method') else '').strip().lower() or 'email'
+        mapped_opt_in = _normalize_bool(row.get(mapping['communication_opt_in'], '') if mapping.get('communication_opt_in') else True)
+        mapped_address = str(row.get(mapping['address'], '') if mapping.get('address') else '').strip()
+        mapped_city = str(row.get(mapping['city'], '') if mapping.get('city') else '').strip()
+        mapped_country = str(row.get(mapping['country'], '') if mapping.get('country') else '').strip()
+        mapped_postal_code = str(row.get(mapping['postal_code'], '') if mapping.get('postal_code') else '').strip()
+        mapped_employer = str(row.get(mapping['employer'], '') if mapping.get('employer') else '').strip()
+        mapped_source = str(row.get(mapping['source'], '') if mapping.get('source') else '').strip()
         mapped_notes = str(row.get(mapping['notes'], '') if mapping.get('notes') else '').strip()
 
         errors: list[str] = []
@@ -711,6 +983,12 @@ def _build_donor_import_preview(org_id: int, rows: list[dict[str, str]], mapping
         if mapped_type not in _DONOR_IMPORT_VALID_TYPES:
             warnings.append(f"Unknown donor type '{mapped_type}' -> default to individual")
             mapped_type = 'individual'
+        if mapped_status not in {'active', 'prospect', 'lapsed', 'archived'}:
+            warnings.append(f"Unknown status '{mapped_status}' -> default to active")
+            mapped_status = 'active'
+        if mapped_contact_method not in {'email', 'phone', 'mail', 'none'}:
+            warnings.append(f"Unknown preferred contact method '{mapped_contact_method}' -> default to email")
+            mapped_contact_method = 'email'
 
         duplicate_match = None
         if mapped_email:
@@ -732,11 +1010,22 @@ def _build_donor_import_preview(org_id: int, rows: list[dict[str, str]], mapping
             {
                 'row_number': idx,
                 'name': mapped_name,
+                'salutation': mapped_salutation,
+                'preferred_name': mapped_preferred_name,
                 'email': mapped_email,
                 'phone': mapped_phone,
                 'donor_type': mapped_type,
+                'crm_status': mapped_status,
+                'preferred_contact_method': mapped_contact_method,
+                'communication_opt_in': mapped_opt_in,
+                'address': mapped_address,
+                'city': mapped_city,
+                'country': mapped_country,
+                'postal_code': mapped_postal_code,
+                'employer': mapped_employer,
+                'source': mapped_source,
                 'notes': mapped_notes,
-                'status': status,
+                'import_status': status,
                 'errors': errors,
                 'warnings': warnings,
                 'duplicate_match': duplicate_match,
@@ -770,9 +1059,20 @@ def _apply_donor_import(org_id: int, preview_rows: list[dict[str, object]]) -> d
         DonorService().create_donor(
             org_id,
             str(item.get('name') or '').strip(),
+            salutation=(str(item.get('salutation') or '').strip() or None),
+            preferred_name=(str(item.get('preferred_name') or '').strip() or None),
             email=(str(item.get('email') or '').strip() or None),
             phone=(str(item.get('phone') or '').strip() or None),
             donor_type=str(item.get('donor_type') or 'individual').strip() or 'individual',
+            status=str(item.get('crm_status') or 'active').strip() or 'active',
+            preferred_contact_method=str(item.get('preferred_contact_method') or 'email').strip() or 'email',
+            communication_opt_in=_normalize_bool(item.get('communication_opt_in', True)),
+            address=(str(item.get('address') or '').strip() or None),
+            city=(str(item.get('city') or '').strip() or None),
+            country=(str(item.get('country') or '').strip() or None),
+            postal_code=(str(item.get('postal_code') or '').strip() or None),
+            employer=(str(item.get('employer') or '').strip() or None),
+            source=(str(item.get('source') or '').strip() or None),
             notes=(str(item.get('notes') or '').strip() or None),
         )
         created += 1
@@ -1949,7 +2249,7 @@ def mobile_intake():
 @login_required
 @roles_required('admin', 'staff')
 def p2p_manage():
-    from ngo_homesuite.services.p2p_service import close_page, create_page, list_pages, publish_page
+    from ngo_homesuite.services.p2p_service import close_page, create_page, get_progress, list_pages, publish_page, update_page
 
     org = _current_org()
     if not org:
@@ -1959,14 +2259,26 @@ def p2p_manage():
     form = P2PPageForm()
     donors = DonorService().list_all_donors(org.id)
     form.donor_id.choices = [(int(d.id), d.name) for d in donors]
+    donor_name_by_id = {int(d.id): d.name for d in donors}
 
     status_filter = (request.args.get('status') or '').strip().lower() or None
+    owner_filter = request.args.get('owner_id', type=int)
+    campaign_filter = (request.args.get('campaign') or '').strip().lower()
+    query = (request.args.get('q') or '').strip().lower()
+    sort_by = (request.args.get('sort_by') or 'created').strip().lower()
+    sort_dir = (request.args.get('sort_dir') or 'desc').strip().lower()
+    if sort_by not in {'created', 'title', 'raised', 'progress', 'supporters', 'recent30'}:
+        sort_by = 'created'
+    if sort_dir not in {'asc', 'desc'}:
+        sort_dir = 'desc'
+
+    pages = list_pages(org.id, status=status_filter)
 
     if request.method == 'POST':
         action = (request.form.get('action') or '').strip().lower()
+        page_id = request.form.get('page_id', type=int)
 
         if action in {'publish', 'close'}:
-            page_id = request.form.get('page_id', type=int)
             if not page_id:
                 flash('A valid fundraiser page id is required.', 'error')
                 return redirect(url_for('main.p2p_manage'))
@@ -1984,9 +2296,101 @@ def p2p_manage():
                 flash(str(exc), 'error')
             return redirect(url_for('main.p2p_manage'))
 
+        if action == 'bulk_status':
+            selected_ids = [
+                int(raw_id)
+                for raw_id in request.form.getlist('selected_page_ids')
+                if str(raw_id).isdigit()
+            ]
+            bulk_target = (request.form.get('bulk_target_status') or '').strip().lower()
+            if not selected_ids:
+                flash('Select at least one fundraiser for a bulk action.', 'error')
+                return redirect(url_for('main.p2p_manage'))
+            if bulk_target not in {'active', 'closed'}:
+                flash('Unsupported bulk status action.', 'error')
+                return redirect(url_for('main.p2p_manage'))
+
+            processed = 0
+            for selected_id in selected_ids:
+                try:
+                    if bulk_target == 'active':
+                        publish_page(selected_id, org.id)
+                    else:
+                        close_page(selected_id, org.id)
+                    processed += 1
+                except Exception:
+                    continue
+            flash(f'Bulk action applied to {processed} fundraiser(s).', 'success')
+            return redirect(url_for('main.p2p_manage'))
+
+        if action == 'update':
+            if not page_id:
+                flash('A valid fundraiser page id is required.', 'error')
+                return redirect(url_for('main.p2p_manage'))
+            challenge_end_date = None
+            raw_challenge_end = (request.form.get('challenge_end_date') or '').strip()
+            if raw_challenge_end:
+                try:
+                    challenge_end_date = date.fromisoformat(raw_challenge_end)
+                except ValueError:
+                    flash('Challenge end date must be in YYYY-MM-DD format.', 'error')
+                    return redirect(url_for('main.p2p_manage'))
+            try:
+                update_page(
+                    page_id,
+                    org.id,
+                    title=(request.form.get('title') or '').strip(),
+                    story=(request.form.get('story') or '').strip() or None,
+                    goal_amount=float(request.form.get('goal_amount') or 0.0),
+                    campaign_slug=(request.form.get('campaign_slug') or '').strip() or None,
+                    match_ratio=float(request.form.get('match_ratio') or 0.0),
+                    match_cap_amount=float(request.form.get('match_cap_amount') or 0.0),
+                    challenge_goal_amount=float(request.form.get('challenge_goal_amount') or 0.0),
+                    challenge_end_date=challenge_end_date,
+                    automation_contact_email=(request.form.get('automation_contact_email') or '').strip() or None,
+                )
+                flash('Fundraiser updated.', 'success')
+            except NotFound:
+                flash('Fundraiser page not found for this organization.', 'error')
+            except ValueError as exc:
+                flash(str(exc), 'error')
+            return redirect(url_for('main.p2p_manage'))
+
+        if action == 'reassign_owner':
+            if not page_id:
+                flash('A valid fundraiser page id is required.', 'error')
+                return redirect(url_for('main.p2p_manage'))
+            new_owner_id = request.form.get('new_owner_id', type=int)
+            if not new_owner_id:
+                flash('Select a valid owner to reassign.', 'error')
+                return redirect(url_for('main.p2p_manage'))
+            try:
+                update_page(page_id, org.id, donor_id=int(new_owner_id))
+                flash('Fundraiser owner reassigned.', 'success')
+            except NotFound:
+                flash('Fundraiser page not found for this organization.', 'error')
+            except ValueError as exc:
+                flash(str(exc), 'error')
+            return redirect(url_for('main.p2p_manage'))
+
+        if action == 'send_nudge':
+            if not page_id:
+                flash('A valid fundraiser page id is required.', 'error')
+                return redirect(url_for('main.p2p_manage'))
+            page = next((p for p in pages if int(p.id) == int(page_id)), None)
+            if page is None:
+                flash('Fundraiser page not found for this organization.', 'error')
+                return redirect(url_for('main.p2p_manage'))
+            contact_email = str(getattr(page, 'automation_contact_email', '') or '').strip()
+            owner_name = donor_name_by_id.get(int(page.donor_id), 'Fundraiser Owner')
+            if contact_email:
+                flash(f'Readiness nudge prepared for {owner_name} at {contact_email}.', 'success')
+            else:
+                flash('No automation contact email is configured for this page.', 'error')
+            return redirect(url_for('main.p2p_manage'))
+
         if not donors:
             flash('Create at least one donor before creating a fundraiser page.', 'error')
-            pages = list_pages(org.id, status=status_filter)
             return render_template('p2p_manage.html', form=form, pages=pages, active_page='p2p')
 
         if form.validate_on_submit():
@@ -1998,6 +2402,11 @@ def p2p_manage():
                     goal_amount=float(form.goal_amount.data or 0.0),
                     story=(form.story.data or '').strip() or None,
                     campaign_slug=(form.campaign_slug.data or '').strip() or None,
+                    match_ratio=float(form.match_ratio.data or 0.0),
+                    match_cap_amount=float(form.match_cap_amount.data or 0.0),
+                    challenge_goal_amount=float(form.challenge_goal_amount.data or 0.0),
+                    challenge_end_date=form.challenge_end_date.data,
+                    automation_contact_email=(form.automation_contact_email.data or '').strip() or None,
                 )
                 flash('Fundraiser page created.', 'success')
                 return redirect(url_for('main.p2p_manage'))
@@ -2006,13 +2415,173 @@ def p2p_manage():
         else:
             flash('Please fix the highlighted form issues.', 'error')
 
-    pages = list_pages(org.id, status=status_filter)
+    if query:
+        pages = [
+            p for p in pages
+            if query in str(getattr(p, 'title', '') or '').lower()
+            or query in str(getattr(p, 'public_slug', '') or '').lower()
+            or query in str(getattr(p, 'story', '') or '').lower()
+            or query in str(getattr(getattr(p, 'owner', None), 'name', '') or '').lower()
+        ]
+    if owner_filter:
+        pages = [p for p in pages if int(getattr(p, 'donor_id', 0) or 0) == int(owner_filter)]
+    if campaign_filter:
+        pages = [p for p in pages if campaign_filter in str(getattr(p, 'campaign_slug', '') or '').lower()]
+
+    page_stats: dict[int, dict[str, object]] = {}
+    total_raised = 0.0
+    pages_at_goal = 0
+    total_raised_30d = 0.0
+    campaign_rollups: dict[str, dict[str, object]] = {}
+    owner_rollups: dict[int, dict[str, object]] = {}
+    automation_queue: list[dict[str, object]] = []
+    now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    for page in pages:
+        progress = get_progress(int(page.id), int(org.id))
+        raised = float(progress.get('total_raised', 0.0) or 0.0)
+        pct = float(progress.get('pct_of_goal', 0.0) or 0.0)
+        supporters = int(progress.get('donor_count', 0) or 0)
+        linked_donations = list(getattr(page, 'donations', []) or [])
+
+        raised_30d = 0.0
+        raised_7d = 0.0
+        last_donation_at = None
+        for donation in linked_donations:
+            amount = float(getattr(donation, 'amount', 0.0) or 0.0)
+            donation_date = getattr(donation, 'donation_date', None)
+            if isinstance(donation_date, datetime):
+                dt = donation_date
+                if dt.tzinfo is not None:
+                    dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+            else:
+                continue
+            if last_donation_at is None or dt > last_donation_at:
+                last_donation_at = dt
+            if dt >= now_utc_naive - timedelta(days=30):
+                raised_30d += amount
+            if dt >= now_utc_naive - timedelta(days=7):
+                raised_7d += amount
+
+        total_raised_30d += raised_30d
+        match_ratio = float(getattr(page, 'match_ratio', 0.0) or 0.0)
+        match_cap = float(getattr(page, 'match_cap_amount', 0.0) or 0.0)
+        challenge_goal = float(getattr(page, 'challenge_goal_amount', 0.0) or 0.0)
+        matched_value = min(raised * match_ratio, match_cap) if match_ratio > 0 and match_cap > 0 else 0.0
+        challenge_pct = round((raised / challenge_goal) * 100, 1) if challenge_goal > 0 else 0.0
+
+        if pct >= 100.0:
+            pages_at_goal += 1
+        total_raised += raised
+        page_stats[int(page.id)] = {
+            'raised': round(raised, 2),
+            'pct_of_goal': round(pct, 1),
+            'supporters': supporters,
+            'raised_30d': round(raised_30d, 2),
+            'raised_7d': round(raised_7d, 2),
+            'matched_value': round(matched_value, 2),
+            'challenge_pct': challenge_pct,
+            'last_donation_at': last_donation_at,
+        }
+
+        campaign_key = str(getattr(page, 'campaign_slug', '') or '').strip() or 'unmapped'
+        rollup = campaign_rollups.setdefault(
+            campaign_key,
+            {'campaign': campaign_key, 'pages': 0, 'raised': 0.0, 'supporters': 0, 'active': 0},
+        )
+        rollup['pages'] = int(rollup['pages']) + 1
+        rollup['raised'] = float(rollup['raised']) + raised
+        rollup['supporters'] = int(rollup['supporters']) + supporters
+        if str(getattr(page, 'status', '') or '') == 'active':
+            rollup['active'] = int(rollup['active']) + 1
+
+        owner_id = int(getattr(page, 'donor_id', 0) or 0)
+        owner_rollup = owner_rollups.setdefault(
+            owner_id,
+            {'owner_id': owner_id, 'owner_name': donor_name_by_id.get(owner_id, 'Unknown'), 'pages': 0, 'raised': 0.0},
+        )
+        owner_rollup['pages'] = int(owner_rollup['pages']) + 1
+        owner_rollup['raised'] = float(owner_rollup['raised']) + raised
+
+        inactive_days = None
+        if isinstance(last_donation_at, datetime):
+            inactive_days = max((now_utc_naive - last_donation_at).days, 0)
+        if str(getattr(page, 'status', '') or '') == 'active' and (
+            (inactive_days is not None and inactive_days >= 14)
+            or (pct >= 80 and pct < 100)
+        ):
+            automation_queue.append(
+                {
+                    'page_id': int(page.id),
+                    'title': str(getattr(page, 'title', '') or ''),
+                    'inactive_days': inactive_days,
+                    'pct': round(pct, 1),
+                    'owner_name': donor_name_by_id.get(owner_id, 'Owner'),
+                }
+            )
+
+    def _sort_key(page):
+        stats = page_stats.get(int(page.id), {})
+        if sort_by == 'title':
+            return str(getattr(page, 'title', '') or '').lower()
+        if sort_by == 'raised':
+            return float(stats.get('raised', 0.0) or 0.0)
+        if sort_by == 'progress':
+            return float(stats.get('pct_of_goal', 0.0) or 0.0)
+        if sort_by == 'supporters':
+            return int(stats.get('supporters', 0) or 0)
+        if sort_by == 'recent30':
+            return float(stats.get('raised_30d', 0.0) or 0.0)
+        return getattr(page, 'created_at', datetime.min)
+
+    pages.sort(key=_sort_key, reverse=(sort_dir == 'desc'))
+
+    summary = {
+        'total_pages': len(pages),
+        'active_pages': sum(1 for p in pages if str(getattr(p, 'status', '') or '') == 'active'),
+        'draft_pages': sum(1 for p in pages if str(getattr(p, 'status', '') or '') == 'draft'),
+        'closed_pages': sum(1 for p in pages if str(getattr(p, 'status', '') or '') == 'closed'),
+        'total_raised': round(total_raised, 2),
+        'raised_30d': round(total_raised_30d, 2),
+        'average_progress_pct': round((sum(float(page_stats[int(p.id)]['pct_of_goal']) for p in pages) / len(pages)), 1) if pages else 0.0,
+        'pages_at_goal': pages_at_goal,
+    }
+
+    campaign_rollup_rows = sorted(
+        campaign_rollups.values(),
+        key=lambda row: float(row.get('raised', 0.0)),
+        reverse=True,
+    )
+    owner_rollup_rows = sorted(
+        owner_rollups.values(),
+        key=lambda row: float(row.get('raised', 0.0)),
+        reverse=True,
+    )[:8]
+
     ai_context = {
         'active_page': 'p2p',
         'organization': org.name,
         'p2p_page_count': len(pages),
     }
-    return render_template('p2p_manage.html', form=form, pages=pages, active_page='p2p', ai_context=ai_context)
+    return render_template(
+        'p2p_manage.html',
+        form=form,
+        pages=pages,
+        page_stats=page_stats,
+        summary=summary,
+        donors=donors,
+        campaign_rollups=campaign_rollup_rows,
+        owner_rollups=owner_rollup_rows,
+        automation_queue=automation_queue,
+        filter_q=request.args.get('q', ''),
+        filter_status=status_filter or '',
+        filter_owner_id=owner_filter or 0,
+        filter_campaign=request.args.get('campaign', ''),
+        filter_sort_by=sort_by,
+        filter_sort_dir=sort_dir,
+        active_page='p2p',
+        ai_context=ai_context,
+    )
 
 
 @main_bp.route('/donors')
@@ -2044,14 +2613,88 @@ def donors_list():
     return render_template('donors.html', **ctx)
 
 
-@main_bp.route('/donors/<int:donor_id>')
+@main_bp.route('/donors/<int:donor_id>', methods=['GET', 'POST'])
 @login_required
+@roles_required('admin', 'staff', 'viewer')
 def donor_detail(donor_id: int):
     from ngo_homesuite.services.activity_timeline_service import ActivityTimelineService
 
     org = _current_org()
     donor_summary = ReportingService().donor_profile_summary(org.id, donor_id, recent_limit=10)
     donor = donor_summary['donor']
+    donation_service = DonationService()
+
+    quick_donation_form = DonorQuickDonationForm()
+    quick_task_form = DonorQuickTaskForm(prefix='task')
+    quick_donation_form.project_id.choices = [(0, 'General / None')] + [(p.id, p.name) for p in ProjectService().list_all_projects(org.id)]
+    quick_donation_form.fund_id.choices = [(0, 'General / None')] + [
+        (f.id, f.name)
+        for f in FundService().list_funds(org.id, active_only=True, page=1, per_page=500)['items']
+    ]
+
+    if request.method == 'POST' and quick_task_form.submit.name in request.form:
+        if quick_task_form.validate_on_submit():
+            task = Task(
+                organization_id=int(org.id),
+                donor_id=int(donor.id),
+                assigned_to_id=getattr(current_user, 'id', None),
+                title=(quick_task_form.title.data or '').strip(),
+                description=(quick_task_form.notes.data or '').strip() or None,
+                task_type=str(quick_task_form.task_type.data or 'follow_up'),
+                priority=str(quick_task_form.priority.data or 'medium'),
+                status='open',
+                due_date=quick_task_form.due_date.data,
+            )
+            db.session.add(task)
+            db.session.commit()
+            flash('Stewardship task created from donor profile.', 'success')
+            return redirect(url_for('main.donor_detail', donor_id=donor.id))
+        flash('Please fix task form errors and try again.', 'error')
+
+    if request.method == 'POST' and quick_donation_form.submit.name in request.form and quick_donation_form.validate_on_submit():
+        payment_method = str(quick_donation_form.payment_method.data or '').strip().lower()
+        validation_errors: list[str] = []
+        if payment_method == 'bank_transfer':
+            if not str(quick_donation_form.bank_routing_number.data or '').strip():
+                validation_errors.append('Bank routing number is required for bank transfers.')
+            if not str(quick_donation_form.bank_account_number.data or '').strip():
+                validation_errors.append('Bank account number is required for bank transfers.')
+        elif payment_method == 'credit_card':
+            if not str(quick_donation_form.card_holder_name.data or '').strip():
+                validation_errors.append('Cardholder name is required for credit card donations.')
+            if not str(quick_donation_form.card_last4.data or '').strip():
+                validation_errors.append('Card last 4 digits are required for credit card donations.')
+
+        if validation_errors:
+            for message in validation_errors:
+                flash(message, 'error')
+        else:
+            try:
+                donation = donation_service.create_donation(
+                    org_id=org.id,
+                    donor_name=donor.name,
+                    amount=float(quick_donation_form.amount.data),
+                    currency=quick_donation_form.currency.data,
+                    donor_email=donor.email,
+                    donor_phone=donor.phone,
+                    donor_id=donor.id,
+                    project_id=quick_donation_form.project_id.data or None,
+                    fund_id=quick_donation_form.fund_id.data or None,
+                    payment_method=payment_method,
+                    reference_number=_build_quick_donation_reference(quick_donation_form),
+                    purpose=(quick_donation_form.purpose.data or '').strip() or None,
+                    notes=_build_quick_donation_notes(quick_donation_form),
+                    status='received',
+                )
+                donation_service.update_status(donation.id, org.id, 'processed', actor_id=getattr(current_user, 'id', None))
+                if donor.email:
+                    _issue_receipt_for_donation(donation, recipient_email=donor.email)
+                flash('Donation recorded from donor profile.', 'success')
+                return redirect(url_for('main.donor_detail', donor_id=donor.id))
+            except ValueError as exc:
+                flash(str(exc), 'error')
+            except DonationConcurrencyError:
+                flash('This donation was updated by another user. Please reload and try again.', 'error')
 
     ai_context = {
         'active_page': 'donors',
@@ -2078,6 +2721,131 @@ def donor_detail(donor_id: int):
         donor_ai_insights = None
 
     activity_query = (request.args.get('activity_q') or '').strip()
+
+    engagement_score = db.session.scalars(
+        select(DonorEngagementScore).where(
+            DonorEngagementScore.organization_id == int(org.id),
+            DonorEngagementScore.donor_id == int(donor.id),
+        ).limit(1)
+    ).first()
+
+    generated_tags: list[str] = []
+    if donor.donor_type:
+        generated_tags.append(f"type:{str(donor.donor_type).strip().lower()}")
+    if getattr(donor, 'status', None):
+        generated_tags.append(f"status:{str(donor.status).strip().lower()}")
+    if getattr(donor, 'preferred_contact_method', None):
+        generated_tags.append(f"contact:{str(donor.preferred_contact_method).strip().lower()}")
+    if getattr(donor, 'source', None):
+        generated_tags.append(f"source:{str(donor.source).strip().lower()}")
+    if engagement_score and engagement_score.segment:
+        generated_tags.append(f"segment:{str(engagement_score.segment).strip().lower()}")
+
+    custom_field_schema = []
+    org_metadata = org.metadata_json if isinstance(getattr(org, 'metadata_json', None), dict) else {}
+    schema = org_metadata.get('custom_fields_schema', {}) if isinstance(org_metadata, dict) else {}
+    if isinstance(schema, dict):
+        donor_schema = schema.get('donor', [])
+        if isinstance(donor_schema, list):
+            custom_field_schema = [field for field in donor_schema if isinstance(field, dict)]
+
+    donor_custom_metadata = getattr(donor, 'metadata_json', None)
+    donor_custom_metadata = donor_custom_metadata if isinstance(donor_custom_metadata, dict) else {}
+    donor_custom_field_values: list[dict[str, str]] = []
+    for field in custom_field_schema:
+        key = str(field.get('key') or '').strip()
+        if not key:
+            continue
+        display_name = str(field.get('label') or key)
+        value = donor_custom_metadata.get(key)
+        if value is None and hasattr(donor, key):
+            value = getattr(donor, key)
+        if isinstance(value, (list, dict)):
+            value_text = json.dumps(value, ensure_ascii=True)
+        else:
+            value_text = '' if value is None else str(value)
+        donor_custom_field_values.append(
+            {
+                'key': key,
+                'label': display_name,
+                'value': value_text,
+                'is_available': bool(value_text.strip()),
+            }
+        )
+
+    household_name = None
+    donor_relationships: list[dict[str, object]] = []
+    try:
+        conn = db.session.connection()
+        household_row = conn.exec_driver_sql(
+            """
+            SELECT h.name
+            FROM donors d
+            LEFT JOIN households h ON h.id = d.household_id
+            WHERE d.id = :donor_id AND d.organization_id = :org_id
+            LIMIT 1
+            """,
+            {'donor_id': int(donor.id), 'org_id': int(org.id)},
+        ).first()
+        household_name = household_row[0] if household_row and household_row[0] else None
+
+        relationship_rows = conn.exec_driver_sql(
+            """
+            SELECT
+                dr.relationship_type,
+                d2.id AS related_donor_id,
+                d2.name AS related_donor_name
+            FROM donor_relationships dr
+            JOIN donors d1 ON d1.id = dr.from_donor_id
+            JOIN donors d2 ON d2.id = dr.to_donor_id
+            WHERE d1.id = :donor_id
+              AND d1.organization_id = :org_id
+            ORDER BY d2.name ASC
+            """,
+            {'donor_id': int(donor.id), 'org_id': int(org.id)},
+        ).fetchall()
+        donor_relationships = [
+            {
+                'relationship_type': row[0],
+                'related_donor_id': row[1],
+                'related_donor_name': row[2],
+            }
+            for row in relationship_rows
+        ]
+    except Exception as exc:
+        current_app.logger.warning(
+            'donor_detail_household_relationship_lookup_failed org_id=%s donor_id=%s error=%s',
+            int(org.id),
+            int(donor.id),
+            exc,
+            exc_info=True,
+        )
+        household_name = None
+        donor_relationships = []
+
+    stewardship_tasks = list(
+        db.session.scalars(
+            select(Task)
+            .where(
+                Task.organization_id == int(org.id),
+                Task.donor_id == int(donor.id),
+            )
+            .order_by(Task.due_date.desc(), Task.created_at.desc())
+            .limit(10)
+        )
+    )
+
+    communication_history = list(
+        db.session.scalars(
+            select(CampaignEmailDelivery)
+            .where(
+                CampaignEmailDelivery.organization_id == int(org.id),
+                CampaignEmailDelivery.donor_id == int(donor.id),
+            )
+            .order_by(CampaignEmailDelivery.sent_at.desc(), CampaignEmailDelivery.created_at.desc())
+            .limit(10)
+        )
+    )
 
     # Fetch unified activity timeline
     timeline_items = []
@@ -2107,6 +2875,16 @@ def donor_detail(donor_id: int):
         active_page='donors',
         ai_context=ai_context,
         donor_ai_insights=donor_ai_insights,
+        quick_donation_form=quick_donation_form,
+        quick_task_form=quick_task_form,
+        household_name=household_name,
+        donor_relationships=donor_relationships,
+        engagement_score=engagement_score,
+        generated_tags=generated_tags,
+        custom_field_schema=custom_field_schema,
+        donor_custom_field_values=donor_custom_field_values,
+        stewardship_tasks=stewardship_tasks,
+        communication_history=communication_history,
     )
 
 
@@ -2152,13 +2930,30 @@ def donor_create():
         return redirect(url_for('main.dashboard'))
 
     form = DonorForm()
+    if request.method == 'GET':
+        form.status.data = 'active'
+        form.preferred_contact_method.data = 'email'
+        form.communication_opt_in.data = True
     if form.validate_on_submit():
+        donor_status = form.status.data or 'active'
+        preferred_contact_method = form.preferred_contact_method.data or 'email'
         donor = DonorService().create_donor(
             org.id,
             form.name.data,
+            salutation=form.salutation.data,
+            preferred_name=form.preferred_name.data,
             email=form.email.data,
             phone=form.phone.data,
             donor_type=form.donor_type.data,
+            status=donor_status,
+            preferred_contact_method=preferred_contact_method,
+            communication_opt_in=bool(form.communication_opt_in.data),
+            address=form.address.data,
+            city=form.city.data,
+            country=form.country.data,
+            postal_code=form.postal_code.data,
+            employer=form.employer.data,
+            source=form.source.data,
             notes=form.notes.data,
         )
 
@@ -2186,13 +2981,26 @@ def donor_edit(donor_id: int):
     form = DonorForm(obj=donor)
 
     if form.validate_on_submit():
+        donor_status = form.status.data or 'active'
+        preferred_contact_method = form.preferred_contact_method.data or 'email'
         donor = DonorService().update_donor(
             donor.id,
             org.id,
             name=form.name.data,
+            salutation=form.salutation.data,
+            preferred_name=form.preferred_name.data,
             email=form.email.data,
             phone=form.phone.data,
             donor_type=form.donor_type.data,
+            status=donor_status,
+            preferred_contact_method=preferred_contact_method,
+            communication_opt_in=bool(form.communication_opt_in.data),
+            address=form.address.data,
+            city=form.city.data,
+            country=form.country.data,
+            postal_code=form.postal_code.data,
+            employer=form.employer.data,
+            source=form.source.data,
             notes=form.notes.data,
         )
 
@@ -2467,6 +3275,12 @@ def donation_create():
     donor_service = DonorService()
     donation_service = DonationService()
     donor_options = [(0, 'Select a donor')] + [(d.id, d.name) for d in donor_service.list_all_donors(org.id)]
+    campaign_options = [(0, 'General / None')] + [
+        (c.id, c.name)
+        for c in db.session.scalars(
+            select(Campaign).where(Campaign.organization_id == org.id).order_by(Campaign.name.asc())
+        ).all()
+    ]
     project_options = [(0, 'General / None')] + [(p.id, p.name) for p in ProjectService().list_all_projects(org.id)]
     fund_options = [(0, 'General / None')] + [
         (f.id, f.name)
@@ -2475,8 +3289,13 @@ def donation_create():
 
     form = DonationForm()
     form.donor_id.choices = donor_options
+    form.campaign_id.choices = campaign_options
     form.project_id.choices = project_options
     form.fund_id.choices = fund_options
+
+    donor_id_query = request.args.get('donor_id', type=int)
+    if donor_id_query:
+        form.donor_id.data = donor_id_query
 
     if form.validate_on_submit():
         try:
@@ -2496,12 +3315,20 @@ def donation_create():
                 donor_email=donor.email,
                 donor_phone=donor.phone,
                 donor_id=donor.id,
+                campaign_id=form.campaign_id.data or None,
                 project_id=form.project_id.data or None,
                 fund_id=form.fund_id.data or None,
                 payment_method=form.payment_method.data,
-                reference_number=form.reference_number.data or None,
+                channel=form.channel.data or None,
+                reference_number=_build_quick_donation_reference(form),
                 purpose=form.purpose.data,
-                notes=form.notes.data,
+                is_anonymous=bool(form.is_anonymous.data),
+                public_display_name=form.public_display_name.data,
+                tribute_type=form.tribute_type.data or None,
+                tribute_honoree_name=form.tribute_honoree_name.data,
+                tribute_honoree_contact=form.tribute_honoree_contact.data,
+                soft_credit_name=form.soft_credit_name.data,
+                notes=_build_quick_donation_notes(form),
                 status='received',
             )
             donation_service.update_status(donation.id, org.id, 'processed', actor_id=getattr(current_user, 'id', None))
@@ -2595,8 +3422,28 @@ def process_recurring_donations():
 def donations_list():
     org = _current_org()
     query = request.args.get('q', '').strip()
+    fund_id = request.args.get('fund_id', type=int)
     payment_method = request.args.get('payment_method', '').strip()
+    channel = request.args.get('channel', '').strip().lower()
     status = request.args.get('status', '').strip()
+    currency = request.args.get('currency', '').strip().upper()
+    donor_type = request.args.get('donor_type', '').strip().lower()
+    start_date = _parse_date(request.args.get('start_date', ''))
+    end_date = _parse_date(request.args.get('end_date', ''))
+    sort_by = request.args.get('sort_by', 'date').strip().lower()
+    sort_dir = request.args.get('sort_dir', 'desc').strip().lower()
+    if sort_by not in {'date', 'amount', 'donor', 'status'}:
+        sort_by = 'date'
+    if sort_dir not in {'asc', 'desc'}:
+        sort_dir = 'desc'
+
+    per_page_options = [25, 50, 100, 250]
+    per_page = request.args.get('per_page', type=int) or 50
+    if per_page not in per_page_options:
+        per_page = 50
+    page = request.args.get('page', type=int) or 1
+    page = max(page, 1)
+
     min_amount = _parse_float(request.args.get('min_amount', ''))
     max_amount = _parse_float(request.args.get('max_amount', ''))
 
@@ -2610,23 +3457,323 @@ def donations_list():
             min_amount=min_amount,
             max_amount=max_amount,
         )
+
+    if currency:
+        donations = [d for d in donations if str(getattr(d, 'currency', '') or '').upper() == currency]
+
+    if fund_id:
+        donations = [d for d in donations if int(getattr(d, 'fund_id', 0) or 0) == int(fund_id)]
+
+    if channel:
+        donations = [
+            d for d in donations
+            if str(getattr(d, 'channel', '') or '').strip().lower() == channel
+        ]
+
+    if donor_type:
+        donations = [
+            d for d in donations
+            if str(getattr(getattr(d, 'donor', None), 'donor_type', '') or '').strip().lower() == donor_type
+        ]
+
+    if start_date or end_date:
+        filtered: list[Donation] = []
+        for d in donations:
+            donation_dt = getattr(d, 'donation_date', None)
+            donation_day = donation_dt.date() if hasattr(donation_dt, 'date') else None
+            if donation_day is None:
+                continue
+            if start_date and donation_day < start_date:
+                continue
+            if end_date and donation_day > end_date:
+                continue
+            filtered.append(d)
+        donations = filtered
+
+    def _safe_amount(item: Donation) -> float:
+        try:
+            return float(getattr(item, 'amount', 0) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _sort_key(item: Donation):
+        if sort_by == 'amount':
+            return _safe_amount(item)
+        if sort_by == 'donor':
+            return str(getattr(item, 'donor_name', '') or '').strip().lower()
+        if sort_by == 'status':
+            return str(getattr(item, 'status', '') or '').strip().lower()
+        return getattr(item, 'donation_date', datetime.min)
+
+    donations.sort(key=_sort_key, reverse=(sort_dir == 'desc'))
+
+    total_filtered = len(donations)
+    total_pages = max(1, (total_filtered + per_page - 1) // per_page)
+    if page > total_pages:
+        page = total_pages
+    start_idx = (page - 1) * per_page
+    end_idx = start_idx + per_page
+    paged_donations = donations[start_idx:end_idx]
+
+    total_visible_amount = 0.0
+    for donation in donations:
+        try:
+            total_visible_amount += float(getattr(donation, 'amount', 0) or 0)
+        except (TypeError, ValueError):
+            continue
+
+    average_visible_amount = (total_visible_amount / total_filtered) if total_filtered else 0.0
+    status_counts = {
+        'received': 0,
+        'processed': 0,
+        'receipted': 0,
+        'failed': 0,
+        'refunded': 0,
+    }
+    for d in donations:
+        status_key = str(getattr(d, 'status', '') or '').strip().lower()
+        if status_key in status_counts:
+            status_counts[status_key] += 1
+
+    row_action_form = DonationRowActionForm()
+    bulk_action_form = BulkDonationActionForm()
+    next_status_map = {
+        'pending': ['received', 'failed'],
+        'received': ['processed', 'refunded'],
+        'processed': ['receipted', 'refunded'],
+        'receipted': ['refunded'],
+        'failed': ['pending'],
+        'refunded': [],
+    }
+    donation_next_statuses: dict[int, list[str]] = {
+        int(d.id): next_status_map.get(str(getattr(d, 'status', '') or '').strip().lower(), [])
+        for d in paged_donations
+    }
+
+    available_currencies = sorted(
+        {
+            str(getattr(d, 'currency', '') or '').upper()
+            for d in donations
+            if str(getattr(d, 'currency', '') or '').strip()
+        }
+    )
+    available_funds = []
+    if org:
+        available_funds = FundService().list_all_funds(org.id)
+    available_channels = sorted(
+        {
+            str(getattr(d, 'channel', '') or '').strip().lower()
+            for d in donations
+            if str(getattr(d, 'channel', '') or '').strip()
+        }
+    )
+    donor_type_options = ['individual', 'corporate', 'foundation', 'anonymous']
+
     ai_context = {
         'active_page': 'donations',
         'organization': org.name if org else None,
-        'donation_count': len(donations),
-        'total_donations': sum(float(d.amount or 0) for d in donations),
+        'donation_count': total_filtered,
+        'total_donations': total_visible_amount,
+        'average_donation': average_visible_amount,
     }
     return render_template(
         'donations.html',
-        donations=donations,
+        donations=paged_donations,
+        total_filtered=total_filtered,
+        status_counts=status_counts,
+        row_action_form=row_action_form,
+        bulk_action_form=bulk_action_form,
+        donation_next_statuses=donation_next_statuses,
+        page=page,
+        total_pages=total_pages,
+        per_page=per_page,
+        per_page_options=per_page_options,
+        available_currencies=available_currencies,
+        available_funds=available_funds,
+        available_channels=available_channels,
+        donor_type_options=donor_type_options,
         active_page='donations',
         filter_q=query,
+        filter_fund_id=fund_id,
         filter_payment_method=payment_method,
+        filter_channel=channel,
         filter_status=status,
+        filter_currency=currency,
+        filter_donor_type=donor_type,
+        filter_start_date=request.args.get('start_date', ''),
+        filter_end_date=request.args.get('end_date', ''),
+        filter_sort_by=sort_by,
+        filter_sort_dir=sort_dir,
         filter_min_amount=request.args.get('min_amount', ''),
         filter_max_amount=request.args.get('max_amount', ''),
         ai_context=ai_context,
     )
+
+
+@main_bp.route('/donations/<int:donation_id>/status', methods=['POST'])
+@login_required
+@roles_required('admin', 'staff')
+def donation_status_update(donation_id: int):
+    org = _current_org()
+    if not org:
+        flash('No organization is available.', 'error')
+        return redirect(url_for('main.donations_list'))
+
+    form = DonationRowActionForm()
+    if not form.validate_on_submit():
+        flash('Invalid donation status update request.', 'error')
+        return redirect(url_for('main.donations_list'))
+
+    if int(form.donation_id.data or 0) != int(donation_id):
+        flash('Donation status update request did not match record id.', 'error')
+        return redirect(url_for('main.donations_list'))
+
+    new_status = str(form.new_status.data or '').strip().lower()
+    if not new_status:
+        flash('Please choose a valid status.', 'error')
+        return redirect(url_for('main.donations_list'))
+
+    svc = DonationService()
+    try:
+        donation = svc.update_status(donation_id, org.id, new_status, actor_id=getattr(current_user, 'id', None))
+        if new_status == 'receipted':
+            _issue_receipt_for_donation(donation, recipient_email=donation.donor_email)
+        flash(f'Donation #{donation_id} updated to {new_status}.', 'success')
+    except DonationNotFound:
+        flash('Donation not found.', 'error')
+    except InvalidStatusTransition as exc:
+        flash(str(exc), 'error')
+    except DonationConcurrencyError:
+        flash('This donation changed while updating. Please retry.', 'error')
+    except ValueError as exc:
+        flash(str(exc), 'error')
+
+    next_url = str(form.next_url.data or '').strip()
+    if next_url.startswith('/'):
+        return redirect(next_url)
+    return redirect(url_for('main.donations_list'))
+
+
+@main_bp.route('/donations/<int:donation_id>/receipt/resend', methods=['POST'])
+@login_required
+@roles_required('admin', 'staff')
+def donation_receipt_resend(donation_id: int):
+    org = _current_org()
+    if not org:
+        flash('No organization is available.', 'error')
+        return redirect(url_for('main.donations_list'))
+
+    form = DonationRowActionForm()
+    if not form.validate_on_submit():
+        flash('Invalid receipt resend request.', 'error')
+        return redirect(url_for('main.donations_list'))
+
+    if int(form.donation_id.data or 0) != int(donation_id):
+        flash('Receipt resend request did not match record id.', 'error')
+        return redirect(url_for('main.donations_list'))
+
+    try:
+        donation = DonationService().get_donation(donation_id, org.id)
+        recipient_email = str(getattr(donation, 'donor_email', '') or '').strip() or None
+        _issue_receipt_for_donation(donation, recipient_email=recipient_email)
+        flash(f'Receipt regenerated for donation #{donation_id}.', 'success')
+    except DonationNotFound:
+        flash('Donation not found.', 'error')
+    except ValueError as exc:
+        flash(str(exc), 'error')
+
+    next_url = str(form.next_url.data or '').strip()
+    if next_url.startswith('/'):
+        return redirect(next_url)
+    return redirect(url_for('main.donations_list'))
+
+
+@main_bp.route('/donations/bulk/status', methods=['POST'])
+@login_required
+@roles_required('admin', 'staff')
+def donations_bulk_status_update():
+    org = _current_org()
+    if not org:
+        flash('No organization is available.', 'error')
+        return redirect(url_for('main.donations_list'))
+
+    form = BulkDonationActionForm()
+    if not form.validate_on_submit():
+        flash('Invalid bulk status update request.', 'error')
+        return redirect(url_for('main.donations_list'))
+
+    selected_ids = [
+        int(raw_id)
+        for raw_id in request.form.getlist('donation_ids')
+        if str(raw_id or '').strip().isdigit()
+    ]
+    if not selected_ids:
+        flash('Select at least one donation for bulk status update.', 'error')
+        return redirect(url_for('main.donations_list'))
+
+    new_status = str(form.new_status.data or '').strip().lower()
+    if not new_status:
+        flash('Choose a status to apply.', 'error')
+        return redirect(url_for('main.donations_list'))
+
+    svc = DonationService()
+    updated = 0
+    skipped = 0
+    for donation_id in selected_ids:
+        try:
+            donation = svc.update_status(donation_id, org.id, new_status, actor_id=getattr(current_user, 'id', None))
+            if new_status == 'receipted':
+                _issue_receipt_for_donation(donation, recipient_email=donation.donor_email)
+            updated += 1
+        except (DonationNotFound, InvalidStatusTransition, DonationConcurrencyError, ValueError):
+            skipped += 1
+
+    flash(f'Bulk status update complete: {updated} updated, {skipped} skipped.', 'success' if updated else 'info')
+    next_url = str(form.next_url.data or '').strip()
+    if next_url.startswith('/'):
+        return redirect(next_url)
+    return redirect(url_for('main.donations_list'))
+
+
+@main_bp.route('/donations/bulk/receipt/resend', methods=['POST'])
+@login_required
+@roles_required('admin', 'staff')
+def donations_bulk_receipt_resend():
+    org = _current_org()
+    if not org:
+        flash('No organization is available.', 'error')
+        return redirect(url_for('main.donations_list'))
+
+    form = BulkDonationActionForm()
+    if not form.validate_on_submit():
+        flash('Invalid bulk receipt resend request.', 'error')
+        return redirect(url_for('main.donations_list'))
+
+    selected_ids = [
+        int(raw_id)
+        for raw_id in request.form.getlist('donation_ids')
+        if str(raw_id or '').strip().isdigit()
+    ]
+    if not selected_ids:
+        flash('Select at least one donation to resend receipts.', 'error')
+        return redirect(url_for('main.donations_list'))
+
+    resent = 0
+    skipped = 0
+    for donation_id in selected_ids:
+        try:
+            donation = DonationService().get_donation(donation_id, org.id)
+            recipient_email = str(getattr(donation, 'donor_email', '') or '').strip() or None
+            _issue_receipt_for_donation(donation, recipient_email=recipient_email)
+            resent += 1
+        except (DonationNotFound, ValueError):
+            skipped += 1
+
+    flash(f'Bulk receipt resend complete: {resent} resent, {skipped} skipped.', 'success' if resent else 'info')
+    next_url = str(form.next_url.data or '').strip()
+    if next_url.startswith('/'):
+        return redirect(next_url)
+    return redirect(url_for('main.donations_list'))
 
 
 @main_bp.route('/donations/export/<string:file_type>')
@@ -2638,7 +3785,9 @@ def donations_export(file_type: str):
         return redirect(url_for('main.donations_list'))
 
     query = request.args.get('q', '').strip()
+    fund_id = request.args.get('fund_id', type=int)
     payment_method = request.args.get('payment_method', '').strip()
+    channel = request.args.get('channel', '').strip().lower()
     status = request.args.get('status', '').strip()
     min_amount = _parse_float(request.args.get('min_amount', ''))
     max_amount = _parse_float(request.args.get('max_amount', ''))
@@ -2651,6 +3800,13 @@ def donations_export(file_type: str):
         min_amount=min_amount,
         max_amount=max_amount,
     )
+    if channel:
+        donations = [
+            d for d in donations
+            if str(getattr(d, 'channel', '') or '').strip().lower() == channel
+        ]
+    if fund_id:
+        donations = [d for d in donations if int(getattr(d, 'fund_id', 0) or 0) == int(fund_id)]
     headers = ['ID', 'Date', 'Donor', 'Email', 'Amount', 'Currency', 'Status', 'Payment Method', 'Purpose', 'Reference']
     rows = [
         [
@@ -2731,17 +3887,23 @@ def donation_receipt(donation_id: int):
 def expenses_list():
     org = _current_org()
     query = request.args.get('q', '').strip()
+    fund_id = request.args.get('fund_id', type=int)
     min_amount = _parse_float(request.args.get('min_amount', ''))
     max_amount = _parse_float(request.args.get('max_amount', ''))
+    available_funds = []
 
     expenses = []
     if org:
+        available_funds = FundService().list_all_funds(org.id)
         expenses = ExpenseService().list_filtered_expenses(
             org.id,
             search=query or None,
             min_amount=min_amount,
             max_amount=max_amount,
         )
+
+    if fund_id:
+        expenses = [e for e in expenses if int(getattr(e, 'fund_id', 0) or 0) == int(fund_id)]
     ai_context = {
         'active_page': 'expenses',
         'organization': org.name if org else None,
@@ -2751,8 +3913,10 @@ def expenses_list():
     return render_template(
         'expenses.html',
         expenses=expenses,
+        available_funds=available_funds,
         active_page='expenses',
         filter_q=query,
+        filter_fund_id=fund_id,
         filter_min_amount=request.args.get('min_amount', ''),
         filter_max_amount=request.args.get('max_amount', ''),
         ai_context=ai_context,
@@ -2807,6 +3971,7 @@ def expenses_export(file_type: str):
         return redirect(url_for('main.expenses_list'))
 
     query = request.args.get('q', '').strip()
+    fund_id = request.args.get('fund_id', type=int)
     min_amount = _parse_float(request.args.get('min_amount', ''))
     max_amount = _parse_float(request.args.get('max_amount', ''))
 
@@ -2816,6 +3981,8 @@ def expenses_export(file_type: str):
         min_amount=min_amount,
         max_amount=max_amount,
     )
+    if fund_id:
+        expenses = [e for e in expenses if int(getattr(e, 'fund_id', 0) or 0) == int(fund_id)]
     headers = ['ID', 'Date', 'Payee', 'Amount', 'Currency', 'Project', 'Fund', 'Description']
     rows = [
         [
@@ -2974,10 +4141,271 @@ def funds_list():
     org = _current_org()
     query = request.args.get('q', '').strip()
     status = request.args.get('status', '').strip()
+    has_activity = request.args.get('has_activity', '').strip().lower()
+    trend_window = request.args.get('trend_window', '6m').strip().lower()
+    sort_by = request.args.get('sort_by', 'name').strip().lower()
+    sort_dir = request.args.get('sort_dir', 'asc').strip().lower()
+    if sort_by not in {'name', 'status', 'updated', 'in', 'out', 'net', 'donations', 'expenses'}:
+        sort_by = 'name'
+    if sort_dir not in {'asc', 'desc'}:
+        sort_dir = 'asc'
+    if trend_window not in {'30d', '90d', 'ytd', '6m'}:
+        trend_window = '6m'
+
+    per_page_options = [25, 50, 100, 250]
+    per_page = request.args.get('per_page', type=int) or 50
+    if per_page not in per_page_options:
+        per_page = 50
+    page = request.args.get('page', type=int) or 1
+    page = max(page, 1)
 
     funds = []
+    fund_metrics: dict[int, dict[str, float | int]] = {}
+    summary = {
+        'total_funds': 0,
+        'active_funds': 0,
+        'inactive_funds': 0,
+        'total_in': 0.0,
+        'total_out': 0.0,
+        'net': 0.0,
+    }
     if org:
         funds = FundService().list_all_funds(org.id, search=query or None, status=status or None)
+        fund_ids = [int(f.id) for f in funds]
+        summary['total_funds'] = len(funds)
+        summary['active_funds'] = sum(1 for f in funds if bool(getattr(f, 'is_active', False)))
+        summary['inactive_funds'] = max(0, int(summary['total_funds']) - int(summary['active_funds']))
+
+        donations_by_fund: dict[int, dict[str, float | int]] = {}
+        expenses_by_fund: dict[int, dict[str, float | int]] = {}
+
+        if fund_ids:
+            donation_rollups = (
+                db.session.query(
+                    Donation.fund_id,
+                    func.count(Donation.id),
+                    func.coalesce(func.sum(Donation.amount), 0.0),
+                )
+                .filter(
+                    Donation.organization_id == org.id,
+                    Donation.fund_id.in_(fund_ids),
+                )
+                .group_by(Donation.fund_id)
+                .all()
+            )
+            for fund_id, count, amount in donation_rollups:
+                if fund_id is None:
+                    continue
+                donations_by_fund[int(fund_id)] = {
+                    'count': int(count or 0),
+                    'amount': float(amount or 0.0),
+                }
+
+            expense_rollups = (
+                db.session.query(
+                    Expense.fund_id,
+                    func.count(Expense.id),
+                    func.coalesce(func.sum(Expense.amount), 0.0),
+                )
+                .filter(
+                    Expense.organization_id == org.id,
+                    Expense.fund_id.in_(fund_ids),
+                )
+                .group_by(Expense.fund_id)
+                .all()
+            )
+            for fund_id, count, amount in expense_rollups:
+                if fund_id is None:
+                    continue
+                expenses_by_fund[int(fund_id)] = {
+                    'count': int(count or 0),
+                    'amount': float(amount or 0.0),
+                }
+
+            now_dt = datetime.now(timezone.utc).replace(tzinfo=None)
+            trend_labels: list[str] = []
+            trend_ranges: list[tuple[datetime, datetime]] = []
+
+            if trend_window == '30d':
+                start_dt = (now_dt - timedelta(days=29)).replace(hour=0, minute=0, second=0, microsecond=0)
+                for idx in range(6):
+                    bucket_start = start_dt + timedelta(days=idx * 5)
+                    bucket_end = bucket_start + timedelta(days=4, hours=23, minutes=59, seconds=59)
+                    trend_labels.append(bucket_start.strftime('%m/%d'))
+                    trend_ranges.append((bucket_start, bucket_end))
+            elif trend_window == '90d':
+                start_dt = (now_dt - timedelta(days=89)).replace(hour=0, minute=0, second=0, microsecond=0)
+                for idx in range(6):
+                    bucket_start = start_dt + timedelta(days=idx * 15)
+                    bucket_end = bucket_start + timedelta(days=14, hours=23, minutes=59, seconds=59)
+                    trend_labels.append(bucket_start.strftime('%m/%d'))
+                    trend_ranges.append((bucket_start, bucket_end))
+            elif trend_window == 'ytd':
+                for month in range(1, now_dt.month + 1):
+                    bucket_start = datetime(now_dt.year, month, 1)
+                    if month == 12:
+                        next_month = datetime(now_dt.year + 1, 1, 1)
+                    else:
+                        next_month = datetime(now_dt.year, month + 1, 1)
+                    bucket_end = next_month - timedelta(seconds=1)
+                    trend_labels.append(bucket_start.strftime('%b'))
+                    trend_ranges.append((bucket_start, bucket_end))
+            else:
+                month_anchor = now_dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                offsets: list[tuple[int, int]] = []
+                year = month_anchor.year
+                month = month_anchor.month
+                for _ in range(6):
+                    offsets.append((year, month))
+                    month -= 1
+                    if month <= 0:
+                        month = 12
+                        year -= 1
+                offsets.reverse()
+                for year, month in offsets:
+                    bucket_start = datetime(year, month, 1)
+                    if month == 12:
+                        next_month = datetime(year + 1, 1, 1)
+                    else:
+                        next_month = datetime(year, month + 1, 1)
+                    bucket_end = next_month - timedelta(seconds=1)
+                    trend_labels.append(bucket_start.strftime('%b'))
+                    trend_ranges.append((bucket_start, bucket_end))
+
+            trend_map: dict[int, dict[str, float]] = {fid: {label: 0.0 for label in trend_labels} for fid in fund_ids}
+            earliest_dt = trend_ranges[0][0] if trend_ranges else now_dt
+
+            donation_trend_rows = (
+                db.session.query(Donation.fund_id, Donation.donation_date, Donation.amount)
+                .filter(
+                    Donation.organization_id == org.id,
+                    Donation.fund_id.in_(fund_ids),
+                    Donation.donation_date >= earliest_dt,
+                )
+                .all()
+            )
+            for d_fund_id, donation_date, amount in donation_trend_rows:
+                if d_fund_id is None or donation_date is None:
+                    continue
+                fund_trend = trend_map.get(int(d_fund_id), {})
+                for idx, (bucket_start, bucket_end) in enumerate(trend_ranges):
+                    if bucket_start <= donation_date <= bucket_end:
+                        label = trend_labels[idx]
+                        if label in fund_trend:
+                            fund_trend[label] += float(amount or 0.0)
+                        break
+
+            expense_trend_rows = (
+                db.session.query(Expense.fund_id, Expense.paid_at, Expense.amount)
+                .filter(
+                    Expense.organization_id == org.id,
+                    Expense.fund_id.in_(fund_ids),
+                    Expense.paid_at >= earliest_dt,
+                )
+                .all()
+            )
+            for e_fund_id, paid_at, amount in expense_trend_rows:
+                if e_fund_id is None or paid_at is None:
+                    continue
+                fund_trend = trend_map.get(int(e_fund_id), {})
+                for idx, (bucket_start, bucket_end) in enumerate(trend_ranges):
+                    if bucket_start <= paid_at <= bucket_end:
+                        label = trend_labels[idx]
+                        if label in fund_trend:
+                            fund_trend[label] -= float(amount or 0.0)
+                        break
+
+            def _sparkline_points(values: list[float]) -> str:
+                if not values:
+                    return ''
+                min_v = min(values)
+                max_v = max(values)
+                width = 72.0
+                height = 22.0
+                if max_v == min_v:
+                    return ' '.join(f"{(idx * (width / max(1, len(values) - 1))):.2f},{height / 2:.2f}" for idx in range(len(values)))
+                points: list[str] = []
+                x_step = width / max(1, len(values) - 1)
+                for idx, val in enumerate(values):
+                    x = idx * x_step
+                    y = height - ((val - min_v) / (max_v - min_v) * height)
+                    points.append(f"{x:.2f},{y:.2f}")
+                return ' '.join(points)
+
+        total_in = 0.0
+        total_out = 0.0
+        for fund in funds:
+            f_id = int(fund.id)
+            donation_info = donations_by_fund.get(f_id, {'count': 0, 'amount': 0.0})
+            expense_info = expenses_by_fund.get(f_id, {'count': 0, 'amount': 0.0})
+            amount_in = float(donation_info['amount'])
+            amount_out = float(expense_info['amount'])
+            total_in += amount_in
+            total_out += amount_out
+            fund_metrics[f_id] = {
+                'donation_count': int(donation_info['count']),
+                'expense_count': int(expense_info['count']),
+                'amount_in': round(amount_in, 2),
+                'amount_out': round(amount_out, 2),
+                'net': round(amount_in - amount_out, 2),
+                'trend_labels': trend_labels,
+                'trend_values': [round(trend_map.get(f_id, {}).get(label, 0.0), 2) for label in trend_labels],
+                'sparkline_points': _sparkline_points([trend_map.get(f_id, {}).get(label, 0.0) for label in trend_labels]),
+            }
+
+        summary['total_in'] = round(total_in, 2)
+        summary['total_out'] = round(total_out, 2)
+        summary['net'] = round(total_in - total_out, 2)
+
+        if has_activity in {'with', 'without'}:
+            filtered_funds: list[Fund] = []
+            for fund in funds:
+                metrics = fund_metrics.get(int(fund.id), {})
+                has_rows = int(metrics.get('donation_count', 0)) > 0 or int(metrics.get('expense_count', 0)) > 0
+                if has_activity == 'with' and has_rows:
+                    filtered_funds.append(fund)
+                if has_activity == 'without' and not has_rows:
+                    filtered_funds.append(fund)
+            funds = filtered_funds
+
+        def _fund_sort_key(item: Fund):
+            metrics = fund_metrics.get(int(item.id), {})
+            if sort_by == 'status':
+                return 'active' if bool(getattr(item, 'is_active', False)) else 'inactive'
+            if sort_by == 'updated':
+                return getattr(item, 'updated_at', datetime.min)
+            if sort_by == 'in':
+                return float(metrics.get('amount_in', 0.0) or 0.0)
+            if sort_by == 'out':
+                return float(metrics.get('amount_out', 0.0) or 0.0)
+            if sort_by == 'net':
+                return float(metrics.get('net', 0.0) or 0.0)
+            if sort_by == 'donations':
+                return int(metrics.get('donation_count', 0) or 0)
+            if sort_by == 'expenses':
+                return int(metrics.get('expense_count', 0) or 0)
+            return str(getattr(item, 'name', '') or '').strip().lower()
+
+        funds.sort(key=_fund_sort_key, reverse=(sort_dir == 'desc'))
+
+        filtered_total = len(funds)
+        active_filtered_count = sum(1 for f in funds if bool(getattr(f, 'is_active', False)))
+        total_pages = max(1, (filtered_total + per_page - 1) // per_page)
+        if page > total_pages:
+            page = total_pages
+        start_idx = (page - 1) * per_page
+        end_idx = start_idx + per_page
+        funds = funds[start_idx:end_idx]
+
+        summary['total_funds'] = filtered_total
+        summary['active_funds'] = active_filtered_count
+        summary['inactive_funds'] = max(0, int(filtered_total) - int(active_filtered_count))
+    else:
+        total_pages = 1
+
+    status_action_form = FundStatusActionForm()
+    bulk_action_form = BulkFundActionForm()
+
     ai_context = {
         'active_page': 'funds',
         'organization': org.name if org else None,
@@ -2986,11 +4414,117 @@ def funds_list():
     return render_template(
         'funds.html',
         funds=funds,
+        fund_metrics=fund_metrics,
+        summary=summary,
+        status_action_form=status_action_form,
+        bulk_action_form=bulk_action_form,
         active_page='funds',
         filter_q=query,
         filter_status=status,
+        filter_has_activity=has_activity,
+        filter_trend_window=trend_window,
+        filter_sort_by=sort_by,
+        filter_sort_dir=sort_dir,
+        page=page,
+        total_pages=total_pages,
+        per_page=per_page,
+        per_page_options=per_page_options,
         ai_context=ai_context,
     )
+
+
+@main_bp.route('/funds/<int:fund_id>/status', methods=['POST'])
+@login_required
+@roles_required('admin', 'staff')
+def fund_status_update(fund_id: int):
+    org = _current_org()
+    if not org:
+        flash('No organization is available.', 'error')
+        return redirect(url_for('main.funds_list'))
+
+    form = FundStatusActionForm()
+    if not form.validate_on_submit():
+        flash('Invalid fund status request.', 'error')
+        return redirect(url_for('main.funds_list'))
+
+    if int(form.fund_id.data or 0) != int(fund_id):
+        flash('Fund status request did not match record id.', 'error')
+        return redirect(url_for('main.funds_list'))
+
+    set_status = str(form.set_status.data or '').strip().lower()
+    if set_status not in {'active', 'inactive'}:
+        flash('Choose a valid fund status.', 'error')
+        return redirect(url_for('main.funds_list'))
+
+    try:
+        FundService().update_fund(
+            fund_id,
+            org.id,
+            actor_id=getattr(current_user, 'id', None),
+            is_active=(set_status == 'active'),
+        )
+        flash(f'Fund status updated to {set_status}.', 'success')
+    except FundNotFound:
+        flash('Fund not found.', 'error')
+    except ValueError as exc:
+        flash(str(exc), 'error')
+    except FundConcurrencyError:
+        flash('This fund changed while updating. Please retry.', 'error')
+
+    next_url = str(form.next_url.data or '').strip()
+    if next_url.startswith('/'):
+        return redirect(next_url)
+    return redirect(url_for('main.funds_list'))
+
+
+@main_bp.route('/funds/bulk/status', methods=['POST'])
+@login_required
+@roles_required('admin', 'staff')
+def funds_bulk_status_update():
+    org = _current_org()
+    if not org:
+        flash('No organization is available.', 'error')
+        return redirect(url_for('main.funds_list'))
+
+    form = BulkFundActionForm()
+    if not form.validate_on_submit():
+        flash('Invalid bulk fund status request.', 'error')
+        return redirect(url_for('main.funds_list'))
+
+    selected_ids = [
+        int(raw_id)
+        for raw_id in request.form.getlist('fund_ids')
+        if str(raw_id or '').strip().isdigit()
+    ]
+    if not selected_ids:
+        flash('Select at least one fund for bulk status update.', 'error')
+        return redirect(url_for('main.funds_list'))
+
+    set_status = str(form.set_status.data or '').strip().lower()
+    if set_status not in {'active', 'inactive'}:
+        flash('Choose a valid status to apply.', 'error')
+        return redirect(url_for('main.funds_list'))
+
+    updated = 0
+    skipped = 0
+    svc = FundService()
+    for fund_id in selected_ids:
+        try:
+            svc.update_fund(
+                fund_id,
+                org.id,
+                actor_id=getattr(current_user, 'id', None),
+                is_active=(set_status == 'active'),
+            )
+            updated += 1
+        except (FundNotFound, FundConcurrencyError, ValueError):
+            skipped += 1
+
+    flash(f'Bulk fund status update complete: {updated} updated, {skipped} skipped.', 'success' if updated else 'info')
+    next_url = str(form.next_url.data or '').strip()
+    if next_url.startswith('/'):
+        return redirect(next_url)
+    return redirect(url_for('main.funds_list'))
 
 
 @main_bp.route('/funds/export/<string:file_type>')
@@ -3132,6 +4666,9 @@ def reports_page():
 @login_required
 def campaign_email_workbench_page():
     org = _current_org()
+    actor_role = str(getattr(current_user, 'role', '') or '').strip().lower()
+    can_authorize_external_comms = bool(getattr(current_user, 'can_authorize_external_comms', False))
+    can_send_campaign_email = actor_role == 'admin' or can_authorize_external_comms
     overview = {
         'total_donations': 0.0,
         'total_expenses': 0.0,
@@ -3144,8 +4681,19 @@ def campaign_email_workbench_page():
             'totals': {'donations': 0.0, 'expenses': 0.0, 'net': 0.0},
         },
     }
+    campaign_summary = {
+        'total_campaigns': 0,
+        'active_campaigns': 0,
+    }
     if org:
         overview = ReportingService().financial_overview(org.id)
+        campaigns = list(
+            db.session.scalars(
+                select(Campaign).where(Campaign.organization_id == org.id)
+            )
+        )
+        campaign_summary['total_campaigns'] = len(campaigns)
+        campaign_summary['active_campaigns'] = sum(1 for c in campaigns if str(getattr(c, 'status', '') or '') == 'active')
 
     return render_template(
         'campaigns/email_workbench.html',
@@ -3153,6 +4701,10 @@ def campaign_email_workbench_page():
         total_expenses=overview['total_expenses'],
         net_total=overview['net_total'],
         chart_data=overview['chart_data'],
+        campaign_summary=campaign_summary,
+        can_send_campaign_email=can_send_campaign_email,
+        can_authorize_external_comms=can_authorize_external_comms,
+        actor_role=actor_role,
         email_workbench_only=True,
         active_page='campaign_email_workbench',
         ai_context={

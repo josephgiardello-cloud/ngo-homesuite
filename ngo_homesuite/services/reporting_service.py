@@ -13,6 +13,13 @@ from ngo_homesuite.models.core import Beneficiary, Donation, Donor, Expense, Fun
 
 
 class ReportingService:
+    @staticmethod
+    def _safe_amount(value: Any) -> float:
+        try:
+            return float(value or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
     def generate_report(
         self,
         report_type: str,
@@ -836,11 +843,11 @@ class ReportingService:
         for donation in donations:
             if donation.donation_date:
                 key = donation.donation_date.strftime("%Y-%m")
-                monthly_donations[key] += float(donation.amount or 0)
+                monthly_donations[key] += self._safe_amount(donation.amount)
         for expense in expenses:
             if expense.paid_at:
                 key = expense.paid_at.strftime("%Y-%m")
-                monthly_expenses[key] += float(expense.amount or 0)
+                monthly_expenses[key] += self._safe_amount(expense.amount)
 
         labels = sorted(set(list(monthly_donations.keys()) + list(monthly_expenses.keys())))
         chart_data: dict[str, Any] = {
@@ -869,7 +876,7 @@ class ReportingService:
         totals: dict[str, float] = defaultdict(float)
         for donation in donations:
             if donation.purpose:
-                totals[str(donation.purpose)] += float(donation.amount or 0.0)
+                totals[str(donation.purpose)] += self._safe_amount(donation.amount)
         return sorted([(purpose, round(total, 2)) for purpose, total in totals.items()], key=lambda x: x[0])
 
     def foundation_donor_totals(self, organization_id: int) -> list[tuple[str, float]]:
@@ -897,7 +904,7 @@ class ReportingService:
             donor_name = donor_names.get(donor_id)
             if donor_name is None:
                 continue
-            totals[donor_name] += float(donation.amount or 0.0)
+            totals[donor_name] += self._safe_amount(donation.amount)
         return sorted([(name, round(total, 2)) for name, total in totals.items()], key=lambda x: x[0])
 
     def project_donation_counts(self, organization_id: int) -> dict[int, int]:

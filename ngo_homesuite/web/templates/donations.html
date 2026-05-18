@@ -3,106 +3,297 @@
 {% block title %}Donations - NGO HomeSuite{% endblock %}
 
 {% block content %}
-<h1>Donations</h1>
-<p class="text-muted">Track all donation transactions with practical search and exports.</p>
+<style>
+    .donations-shell { display:grid; gap:1rem; }
+    .donations-hero {
+        border:1px solid rgba(20,118,212,0.16);
+        border-radius:20px;
+        padding:1rem 1.1rem;
+        background:
+            radial-gradient(circle at 10% -10%, rgba(20,118,212,0.12), rgba(20,118,212,0) 50%),
+            radial-gradient(circle at 95% 20%, rgba(180,110,52,0.14), rgba(180,110,52,0) 52%),
+            linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,252,0.96));
+        box-shadow: 0 14px 30px rgba(15,23,42,0.06);
+    }
+    .kpi-grid {
+        display:grid;
+        grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+        gap:0.7rem;
+    }
+    .kpi-card {
+        border:1px solid rgba(20,118,212,0.12);
+        border-radius:14px;
+        padding:0.8rem;
+        background:rgba(255,255,255,0.92);
+    }
+    .kpi-label { font-size:0.78rem; color:#667085; text-transform:uppercase; letter-spacing:0.05em; }
+    .kpi-value { font-size:1.2rem; font-weight:650; margin-top:0.22rem; }
+    .filters-card {
+        border:1px solid rgba(20,118,212,0.12);
+        border-radius:16px;
+        padding:0.95rem;
+        background:linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,252,0.95));
+    }
+    .row-actions { display:flex; flex-wrap:wrap; gap:0.35rem; align-items:center; }
+    .status-pill {
+        display:inline-flex;
+        padding:0.2rem 0.58rem;
+        border-radius:999px;
+        border:1px solid rgba(20,118,212,0.12);
+        background:rgba(255,255,255,0.86);
+        font-size:0.84rem;
+    }
+    .pager { display:flex; gap:0.6rem; justify-content:flex-end; align-items:center; }
+</style>
 
-<div class="card" style="margin-bottom: 1rem; border-left:4px solid var(--primary);">
-    <strong>Operator Tip:</strong> filter by payment and status, export the current slice, then attach receipt PDFs during reconciliations.
-</div>
-
-<div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); margin-bottom: 1rem;">
-    <div class="card">
-        <div class="card-text">Visible Donations</div>
-        <div class="card-value">{{ donations|length }}</div>
-    </div>
-    <div class="card">
-        <div class="card-text">Total Visible Amount</div>
-        <div class="card-value">
-            ${{ '%.2f'|format(donations | map(attribute='amount') | sum) }}
+<div class="donations-shell">
+    <section class="donations-hero">
+        <div class="actions-row" style="justify-content:space-between; align-items:flex-start; gap:0.8rem; margin-bottom:0.8rem;">
+            <div>
+                <h1 style="margin:0;">Donations</h1>
+                <p class="text-muted" style="margin:0.35rem 0 0;">Production operations view with filters, exports, status workflows, and receipt actions.</p>
+            </div>
+            <div class="actions-row">
+                <a href="{{ url_for('main.donation_create') }}" class="btn btn-primary">Add Donation</a>
+                <a href="{{ url_for('main.recurring_donations') }}" class="btn btn-secondary">Recurring Plans</a>
+            </div>
         </div>
-    </div>
-    <div class="card">
-        <div class="card-text">Active Filters</div>
-        <div class="card-value" style="font-size: 0.95rem;">
-            {{ [filter_payment_method or 'any payment', filter_status or 'any status'] | join(' | ') }}
+        <div class="kpi-grid">
+            <div class="kpi-card"><div class="kpi-label">Filtered Rows</div><div class="kpi-value">{{ total_filtered }}</div></div>
+            <div class="kpi-card"><div class="kpi-label">Total Amount</div><div class="kpi-value">${{ '%.2f'|format(ai_context.total_donations or 0) }}</div></div>
+            <div class="kpi-card"><div class="kpi-label">Average Gift</div><div class="kpi-value">${{ '%.2f'|format(ai_context.average_donation or 0) }}</div></div>
+            <div class="kpi-card"><div class="kpi-label">Receipted</div><div class="kpi-value">{{ status_counts.receipted }}</div></div>
+            <div class="kpi-card"><div class="kpi-label">Processed</div><div class="kpi-value">{{ status_counts.processed }}</div></div>
+            <div class="kpi-card"><div class="kpi-label">Needs Review</div><div class="kpi-value">{{ status_counts.failed + status_counts.refunded }}</div></div>
         </div>
-    </div>
-</div>
+    </section>
 
-<div class="mb-3 mt-2 actions-row">
-    <a href="{{ url_for('main.donation_create') }}" class="btn btn-primary">Add Donation</a>
-    <a href="{{ url_for('main.recurring_donations') }}" class="btn btn-secondary">Recurring Plans</a>
-    <a href="{{ url_for('main.donations_export', file_type='csv', q=filter_q, payment_method=filter_payment_method, status=filter_status, min_amount=filter_min_amount, max_amount=filter_max_amount) }}" class="btn btn-secondary">Export CSV</a>
-    <a href="{{ url_for('main.donations_export', file_type='xlsx', q=filter_q, payment_method=filter_payment_method, status=filter_status, min_amount=filter_min_amount, max_amount=filter_max_amount) }}" class="btn btn-secondary">Export Excel</a>
-    <a href="{{ url_for('main.donations_export', file_type='iif', q=filter_q, payment_method=filter_payment_method, status=filter_status, min_amount=filter_min_amount, max_amount=filter_max_amount) }}" class="btn btn-secondary">Export QuickBooks IIF</a>
-</div>
+    <div class="actions-row">
+        <a href="{{ url_for('main.donations_export', file_type='csv', q=filter_q, fund_id=filter_fund_id, payment_method=filter_payment_method, status=filter_status, channel=filter_channel, currency=filter_currency, donor_type=filter_donor_type, start_date=filter_start_date, end_date=filter_end_date, sort_by=filter_sort_by, sort_dir=filter_sort_dir, min_amount=filter_min_amount, max_amount=filter_max_amount) }}" class="btn btn-secondary">Export CSV</a>
+        <a href="{{ url_for('main.donations_export', file_type='xlsx', q=filter_q, fund_id=filter_fund_id, payment_method=filter_payment_method, status=filter_status, channel=filter_channel, currency=filter_currency, donor_type=filter_donor_type, start_date=filter_start_date, end_date=filter_end_date, sort_by=filter_sort_by, sort_dir=filter_sort_dir, min_amount=filter_min_amount, max_amount=filter_max_amount) }}" class="btn btn-secondary">Export Excel</a>
+        <a href="{{ url_for('main.donations_export', file_type='iif', q=filter_q, fund_id=filter_fund_id, payment_method=filter_payment_method, status=filter_status, channel=filter_channel, currency=filter_currency, donor_type=filter_donor_type, start_date=filter_start_date, end_date=filter_end_date, sort_by=filter_sort_by, sort_dir=filter_sort_dir, min_amount=filter_min_amount, max_amount=filter_max_amount) }}" class="btn btn-secondary">Export QuickBooks IIF</a>
+    </div>
 
-<form method="get" class="mb-3" style="display:grid; gap:0.75rem; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); align-items:end;">
-    <div class="form-group" style="margin:0;">
-        <label for="q">Search</label>
-        <input type="text" id="q" name="q" value="{{ filter_q }}" placeholder="Donor, email, reference, purpose" />
-    </div>
-    <div class="form-group" style="margin:0;">
-        <label for="payment_method">Payment</label>
-        <select id="payment_method" name="payment_method">
-            <option value="" {{ 'selected' if not filter_payment_method else '' }}>All</option>
-            <option value="cash" {{ 'selected' if filter_payment_method == 'cash' else '' }}>Cash</option>
-            <option value="bank_transfer" {{ 'selected' if filter_payment_method == 'bank_transfer' else '' }}>Bank Transfer</option>
-            <option value="credit_card" {{ 'selected' if filter_payment_method == 'credit_card' else '' }}>Credit Card</option>
-        </select>
-    </div>
-    <div class="form-group" style="margin:0;">
-        <label for="status">Status</label>
-        <select id="status" name="status">
-            <option value="" {{ 'selected' if not filter_status else '' }}>All</option>
-            <option value="received" {{ 'selected' if filter_status == 'received' else '' }}>Received</option>
-            <option value="processed" {{ 'selected' if filter_status == 'processed' else '' }}>Processed</option>
-            <option value="receipted" {{ 'selected' if filter_status == 'receipted' else '' }}>Receipted</option>
-        </select>
-    </div>
-    <div class="form-group" style="margin:0;">
-        <label for="min_amount">Min</label>
-        <input type="number" step="0.01" id="min_amount" name="min_amount" value="{{ filter_min_amount }}" />
-    </div>
-    <div class="form-group" style="margin:0;">
-        <label for="max_amount">Max</label>
-        <input type="number" step="0.01" id="max_amount" name="max_amount" value="{{ filter_max_amount }}" />
-    </div>
-    <button type="submit" class="btn btn-primary">Apply</button>
-</form>
+    <form method="get" class="filters-card" style="display:grid; gap:0.75rem; grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)); align-items:end;">
+        <div class="form-group" style="margin:0;">
+            <label for="q">Search</label>
+            <input type="text" id="q" name="q" value="{{ filter_q }}" placeholder="Donor, email, reference, purpose" />
+        </div>
+        <div class="form-group" style="margin:0;">
+            <label for="status">Status</label>
+            <select id="status" name="status">
+                <option value="" {{ 'selected' if not filter_status else '' }}>All</option>
+                {% for opt in ['pending', 'received', 'processed', 'receipted', 'failed', 'refunded'] %}
+                <option value="{{ opt }}" {{ 'selected' if filter_status == opt else '' }}>{{ opt|capitalize }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group" style="margin:0;">
+            <label for="start_date">Start Date</label>
+            <input type="date" id="start_date" name="start_date" value="{{ filter_start_date }}" />
+        </div>
+        <div class="form-group" style="margin:0;">
+            <label for="end_date">End Date</label>
+            <input type="date" id="end_date" name="end_date" value="{{ filter_end_date }}" />
+        </div>
+        <div class="form-group" style="margin:0;">
+            <label for="min_amount">Min Amount</label>
+            <input type="number" step="0.01" id="min_amount" name="min_amount" value="{{ filter_min_amount }}" />
+        </div>
+        <div class="form-group" style="margin:0;">
+            <label for="max_amount">Max Amount</label>
+            <input type="number" step="0.01" id="max_amount" name="max_amount" value="{{ filter_max_amount }}" />
+        </div>
 
-{% if donations %}
-<div class="table-wrap">
-<table>
-    <thead>
-        <tr>
-            <th>Date</th>
-            <th>Donor</th>
-            <th>Amount</th>
-            <th>Status</th>
-            <th>Payment</th>
-            <th>Purpose</th>
-            <th>Receipt</th>
-        </tr>
-    </thead>
-    <tbody>
-    {% for donation in donations %}
-        <tr>
-            <td>{{ donation.donation_date.strftime('%Y-%m-%d') if donation.donation_date else '-' }}</td>
-            <td>{{ donation.donor_name }}</td>
-            <td>{{ donation.currency }} {{ '%.2f'|format(donation.amount) }}</td>
-            <td><span style="padding: 0.2rem 0.6rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-soft);">{{ donation.status }}</span></td>
-            <td>{{ donation.payment_method or '-' }}</td>
-            <td>{{ donation.purpose or '-' }}</td>
-            <td><a href="{{ url_for('main.donation_receipt', donation_id=donation.id) }}" class="btn btn-secondary">PDF</a></td>
-        </tr>
-    {% endfor %}
-    </tbody>
-</table>
+        <details style="grid-column:1/-1; border:1px dashed rgba(20,118,212,0.2); border-radius:12px; padding:0.6rem 0.7rem; background:rgba(255,255,255,0.72);" {{ 'open' if filter_payment_method or filter_fund_id or filter_channel or filter_currency or filter_donor_type or filter_sort_by != 'date' or filter_sort_dir != 'desc' or per_page != 50 else '' }}>
+            <summary style="cursor:pointer; font-weight:600;">Advanced Filters & View Settings</summary>
+            <div style="display:grid; margin-top:0.7rem; gap:0.75rem; grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)); align-items:end;">
+                <div class="form-group" style="margin:0;">
+                    <label for="payment_method">Payment</label>
+                    <select id="payment_method" name="payment_method">
+                        <option value="" {{ 'selected' if not filter_payment_method else '' }}>All</option>
+                        <option value="cash" {{ 'selected' if filter_payment_method == 'cash' else '' }}>Cash</option>
+                        <option value="bank_transfer" {{ 'selected' if filter_payment_method == 'bank_transfer' else '' }}>Bank Transfer</option>
+                        <option value="credit_card" {{ 'selected' if filter_payment_method == 'credit_card' else '' }}>Credit Card</option>
+                    </select>
+                </div>
+                <div class="form-group" style="margin:0;">
+                    <label for="fund_id">Fund</label>
+                    <select id="fund_id" name="fund_id">
+                        <option value="" {{ 'selected' if not filter_fund_id else '' }}>All</option>
+                        {% for fund in available_funds %}
+                        <option value="{{ fund.id }}" {{ 'selected' if filter_fund_id == fund.id else '' }}>{{ fund.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group" style="margin:0;">
+                    <label for="currency">Currency</label>
+                    <select id="currency" name="currency">
+                        <option value="" {{ 'selected' if not filter_currency else '' }}>All</option>
+                        {% for c in available_currencies %}
+                        <option value="{{ c }}" {{ 'selected' if filter_currency == c else '' }}>{{ c }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group" style="margin:0;">
+                    <label for="channel">Channel</label>
+                    <select id="channel" name="channel">
+                        <option value="" {{ 'selected' if not filter_channel else '' }}>All</option>
+                        {% for ch in available_channels %}
+                        <option value="{{ ch }}" {{ 'selected' if filter_channel == ch else '' }}>{{ ch|replace('_', ' ')|title }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group" style="margin:0;">
+                    <label for="donor_type">Donor Type</label>
+                    <select id="donor_type" name="donor_type">
+                        <option value="" {{ 'selected' if not filter_donor_type else '' }}>All</option>
+                        {% for dt in donor_type_options %}
+                        <option value="{{ dt }}" {{ 'selected' if filter_donor_type == dt else '' }}>{{ dt|capitalize }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group" style="margin:0;">
+                    <label for="sort_by">Sort By</label>
+                    <select id="sort_by" name="sort_by">
+                        <option value="date" {{ 'selected' if filter_sort_by == 'date' else '' }}>Date</option>
+                        <option value="amount" {{ 'selected' if filter_sort_by == 'amount' else '' }}>Amount</option>
+                        <option value="donor" {{ 'selected' if filter_sort_by == 'donor' else '' }}>Donor</option>
+                        <option value="status" {{ 'selected' if filter_sort_by == 'status' else '' }}>Status</option>
+                    </select>
+                </div>
+                <div class="form-group" style="margin:0;">
+                    <label for="sort_dir">Sort Direction</label>
+                    <select id="sort_dir" name="sort_dir">
+                        <option value="desc" {{ 'selected' if filter_sort_dir == 'desc' else '' }}>Desc</option>
+                        <option value="asc" {{ 'selected' if filter_sort_dir == 'asc' else '' }}>Asc</option>
+                    </select>
+                </div>
+                <div class="form-group" style="margin:0;">
+                    <label for="per_page">Rows / Page</label>
+                    <select id="per_page" name="per_page">
+                        {% for opt in per_page_options %}
+                        <option value="{{ opt }}" {{ 'selected' if per_page == opt else '' }}>{{ opt }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+        </details>
+
+        <input type="hidden" name="page" value="1" />
+        <button type="submit" class="btn btn-primary">Apply Filters</button>
+        <a class="btn btn-secondary" href="{{ url_for('main.donations_list') }}">Reset</a>
+    </form>
+
+    {% if donations %}
+    <form method="post" action="{{ url_for('main.donations_bulk_status_update') }}" class="filters-card" style="display:grid; gap:0.7rem; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); align-items:end;">
+        {{ bulk_action_form.csrf_token }}
+        <input type="hidden" name="next_url" value="{{ request.full_path }}" />
+        <div class="form-group" style="margin:0;">
+            <label for="bulk-status">Bulk Status</label>
+            <select id="bulk-status" name="new_status">
+                <option value="">Select status</option>
+                <option value="received">Received</option>
+                <option value="processed">Processed</option>
+                <option value="receipted">Receipted</option>
+                <option value="failed">Failed</option>
+                <option value="refunded">Refunded</option>
+            </select>
+        </div>
+        <button type="submit" class="btn btn-secondary">Apply To Selected</button>
+        <button type="submit" formaction="{{ url_for('main.donations_bulk_receipt_resend') }}" class="btn btn-secondary">Resend Receipts (Selected)</button>
+        <div class="text-muted" style="font-size:0.85rem;">Select rows below, then run bulk actions.</div>
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th><input type="checkbox" id="select-all-donations" aria-label="Select all donations" /></th>
+                <th>Date</th>
+                <th>Donor</th>
+                <th>Amount</th>
+                <th>Status</th>
+                <th>Payment</th>
+                <th>Channel</th>
+                <th>Purpose</th>
+                <th>Reference</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for donation in donations %}
+            <tr>
+                <td><input type="checkbox" name="donation_ids" value="{{ donation.id }}" class="donation-select-row" aria-label="Select donation {{ donation.id }}" /></td>
+                <td>{{ donation.donation_date.strftime('%Y-%m-%d') if donation.donation_date else '-' }}</td>
+                <td>
+                    <strong>{{ donation.donor_name or '-' }}</strong>
+                    <div class="text-muted" style="font-size:0.82rem;">{{ donation.donor_email or 'No email' }}</div>
+                </td>
+                <td>{{ donation.currency or 'USD' }} {{ '%.2f'|format(donation.amount if donation.amount is number else 0) }}</td>
+                <td><span class="status-pill">{{ donation.status|capitalize }}</span></td>
+                <td>{{ donation.payment_method or '-' }}</td>
+                <td>{{ donation.channel|replace('_', ' ')|title if donation.channel else '-' }}</td>
+                <td>{{ donation.purpose or '-' }}</td>
+                <td>{{ donation.reference_number or '-' }}</td>
+                <td>
+                    <div class="row-actions">
+                        <a href="{{ url_for('main.donation_receipt', donation_id=donation.id) }}" class="btn btn-secondary">PDF</a>
+
+                        {% if donation_next_statuses.get(donation.id) %}
+                        <form method="post" action="{{ url_for('main.donation_status_update', donation_id=donation.id) }}" style="display:inline-flex;">
+                            {{ row_action_form.csrf_token }}
+                            <input type="hidden" name="donation_id" value="{{ donation.id }}" />
+                            <input type="hidden" name="next_url" value="{{ request.full_path }}" />
+                            <select name="new_status" aria-label="Choose next status for donation {{ donation.id }}" style="min-width:130px;">
+                                {% for candidate_status in donation_next_statuses.get(donation.id, []) %}
+                                <option value="{{ candidate_status }}">{{ candidate_status|capitalize }}</option>
+                                {% endfor %}
+                            </select>
+                            <button type="submit" class="btn btn-secondary">Update Status</button>
+                        </form>
+                        {% endif %}
+
+                        {% if donation.status in ['processed', 'receipted'] %}
+                        <form method="post" action="{{ url_for('main.donation_receipt_resend', donation_id=donation.id) }}" style="display:inline-flex;">
+                            {{ row_action_form.csrf_token }}
+                            <input type="hidden" name="donation_id" value="{{ donation.id }}" />
+                            <input type="hidden" name="next_url" value="{{ request.full_path }}" />
+                            <button type="submit" class="btn btn-secondary">Resend Receipt</button>
+                        </form>
+                        {% endif %}
+                    </div>
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    </form>
+
+    <div class="pager">
+        {% if page > 1 %}
+        <a class="btn btn-secondary" href="{{ url_for('main.donations_list', q=filter_q, fund_id=filter_fund_id, payment_method=filter_payment_method, status=filter_status, channel=filter_channel, currency=filter_currency, donor_type=filter_donor_type, start_date=filter_start_date, end_date=filter_end_date, sort_by=filter_sort_by, sort_dir=filter_sort_dir, min_amount=filter_min_amount, max_amount=filter_max_amount, per_page=per_page, page=page-1) }}">Previous</a>
+        {% endif %}
+        <span class="text-muted">Page {{ page }} of {{ total_pages }}</span>
+        {% if page < total_pages %}
+        <a class="btn btn-secondary" href="{{ url_for('main.donations_list', q=filter_q, fund_id=filter_fund_id, payment_method=filter_payment_method, status=filter_status, channel=filter_channel, currency=filter_currency, donor_type=filter_donor_type, start_date=filter_start_date, end_date=filter_end_date, sort_by=filter_sort_by, sort_dir=filter_sort_dir, min_amount=filter_min_amount, max_amount=filter_max_amount, per_page=per_page, page=page+1) }}">Next</a>
+        {% endif %}
+    </div>
+    {% else %}
+    <div class="card">
+        <p>No donations matched your filters. Try broadening date, status, or amount settings.</p>
+    </div>
+    {% endif %}
 </div>
-{% else %}
-<div class="card">
-    <p>No donations matched your filters.</p>
-</div>
-{% endif %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const selectAll = document.getElementById('select-all-donations');
+    const rowChecks = Array.from(document.querySelectorAll('.donation-select-row'));
+    if (!selectAll || !rowChecks.length) {
+        return;
+    }
+    selectAll.addEventListener('change', function() {
+        rowChecks.forEach(function(cb) { cb.checked = selectAll.checked; });
+    });
+});
+</script>
 {% endblock %}

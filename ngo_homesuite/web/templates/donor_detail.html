@@ -3,166 +3,836 @@
 {% block title %}Donor Profile - NGO HomeSuite{% endblock %}
 
 {% block content %}
-<div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:1rem;margin-bottom:1rem;">
-    <div>
-        <h1 style="margin-bottom:0.35rem;">{{ donor.name }}</h1>
-        <p class="text-muted">Donor profile and contribution history.</p>
-    </div>
-    <div style="padding:0.75rem 1rem;border:1px solid var(--border);border-radius:14px;background:linear-gradient(135deg, rgba(20,118,212,0.08), rgba(20,118,212,0.02));">
-        <div class="card-text">Lifetime Giving</div>
-        <div class="card-value">{{ '%.2f'|format(donation_total) }}</div>
-    </div>
-</div>
+<style>
+    .donor-page {
+        position: relative;
+        isolation: isolate;
+    }
+    .donor-page::before,
+    .donor-page::after {
+        content: '';
+        position: absolute;
+        pointer-events: none;
+        z-index: -1;
+        border-radius: 999px;
+        filter: blur(8px);
+        opacity: 0.9;
+    }
+    .donor-page::before {
+        inset: 1.25rem auto auto -3rem;
+        width: 14rem;
+        height: 14rem;
+        background: radial-gradient(circle, rgba(180, 110, 52, 0.16), rgba(180, 110, 52, 0));
+    }
+    .donor-page::after {
+        inset: auto -3rem 10rem auto;
+        width: 18rem;
+        height: 18rem;
+        background: radial-gradient(circle, rgba(20, 118, 212, 0.14), rgba(20, 118, 212, 0));
+    }
+    .donor-shell {
+        display: grid;
+        gap: 1.15rem;
+        position: relative;
+    }
+    .donor-hero {
+        position: relative;
+        overflow: hidden;
+        border: 1px solid rgba(20, 118, 212, 0.16);
+        border-radius: 22px;
+        padding: 1.35rem;
+        background:
+            radial-gradient(circle at top right, rgba(255,255,255,0.9), rgba(255,255,255,0.6) 38%, rgba(245,247,250,0.96) 72%),
+            linear-gradient(135deg, rgba(20,118,212,0.12), rgba(180,110,52,0.06));
+        box-shadow: 0 18px 45px rgba(14, 28, 43, 0.08);
+    }
+    .donor-hero::after {
+        content: '';
+        position: absolute;
+        inset: auto -8% -38% auto;
+        width: 320px;
+        height: 320px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(20,118,212,0.18), rgba(20,118,212,0));
+        pointer-events: none;
+    }
+    .donor-hero-grid {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        grid-template-columns: minmax(0, 1.6fr) minmax(260px, 0.8fr);
+        gap: 1rem;
+        align-items: start;
+    }
+    .donor-title-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        align-items: center;
+        margin-bottom: 0.5rem;
+    }
+    .donor-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+        margin: 0.6rem 0 0;
+    }
+    .donor-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        border-radius: 999px;
+        padding: 0.35rem 0.7rem;
+        border: 1px solid rgba(20, 118, 212, 0.14);
+        background: rgba(255, 255, 255, 0.75);
+        font-size: 0.88rem;
+        box-shadow: 0 8px 18px rgba(15, 23, 42, 0.04);
+    }
+    .donor-rail {
+        display: grid;
+        gap: 1rem;
+    }
+    .donation-panel {
+        border: 1px solid rgba(20, 118, 212, 0.12);
+        border-radius: 18px;
+        background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,252,0.96));
+        padding: 1rem;
+        box-shadow: 0 14px 32px rgba(15, 23, 42, 0.06);
+    }
+    .payment-section {
+        border: 1px dashed rgba(20, 118, 212, 0.2);
+        border-radius: 16px;
+        padding: 0.9rem;
+        margin-top: 0.9rem;
+        background: linear-gradient(180deg, rgba(243,247,252,0.98), rgba(255,255,255,0.92));
+    }
+    .payment-section[hidden] {
+        display: none !important;
+    }
+    .payment-section h4 {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: 0.45rem;
+    }
+    .payment-section h4::before {
+        content: '';
+        width: 0.6rem;
+        height: 0.6rem;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #1476d4, #b66e34);
+        box-shadow: 0 0 0 4px rgba(20, 118, 212, 0.08);
+    }
+    .muted-note {
+        font-size: 0.88rem;
+        color: var(--text-muted, #5f6b7a);
+        line-height: 1.45;
+    }
+    .kpi-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 1rem;
+    }
+    .detail-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 1rem;
+    }
+    .field-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 0.7rem;
+    }
+    .field-pill {
+        border: 1px solid rgba(20, 118, 212, 0.12);
+        border-radius: 14px;
+        padding: 0.75rem 0.85rem;
+        background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(248,250,252,0.95));
+    }
+    .field-pill .label {
+        display: block;
+        font-size: 0.76rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: #6b7280;
+        margin-bottom: 0.25rem;
+    }
+    .field-pill .value {
+        font-size: 0.96rem;
+        line-height: 1.35;
+    }
+    .detail-grid .card,
+    .kpi-grid .card,
+    .actions-row .btn {
+        box-shadow: 0 12px 28px rgba(15, 23, 42, 0.05);
+    }
+    .detail-grid .card {
+        border-radius: 18px;
+        border-color: rgba(20, 118, 212, 0.08);
+        background: rgba(255,255,255,0.94);
+    }
+    .kpi-grid .card {
+        border-radius: 18px;
+        background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,252,0.96));
+    }
+    .card h3 {
+        margin-top: 0;
+        margin-bottom: 0.75rem;
+        letter-spacing: -0.02em;
+    }
+    .text-muted {
+        color: #5f6b7a;
+    }
+    .actions-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.6rem;
+        align-items: center;
+    }
+    .btn-primary {
+        box-shadow: 0 10px 22px rgba(20, 118, 212, 0.18);
+    }
+    .visibility-controls {
+        border: 1px solid rgba(20, 118, 212, 0.14);
+        border-radius: 16px;
+        background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,252,0.96));
+        padding: 0.95rem;
+    }
+    .visibility-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 0.65rem;
+        margin-top: 0.6rem;
+    }
+    .visibility-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        border: 1px solid rgba(20, 118, 212, 0.12);
+        border-radius: 12px;
+        padding: 0.45rem 0.55rem;
+        background: rgba(255, 255, 255, 0.86);
+    }
+    .feature-hidden {
+        display: none !important;
+    }
+</style>
 
-<div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); margin-bottom: 1rem;">
-    <div class="card">
-        <div class="card-text">Donations</div>
-        <div class="card-value">{{ donation_count }}</div>
-    </div>
-    <div class="card">
-        <div class="card-text">Total Giving</div>
-        <div class="card-value">{{ '%.2f'|format(donation_total) }}</div>
-    </div>
-    <div class="card">
-        <div class="card-text">Donor Type</div>
-        <div class="card-value" style="font-size: 1rem; text-transform: capitalize;">{{ donor.donor_type }}</div>
-    </div>
-    <div class="card">
-        <div class="card-text">Recurring Plans</div>
-        <div class="card-value">{{ active_recurring_plans }}</div>
-    </div>
-</div>
+<div class="donor-page">
+<div class="donor-shell">
+    <section class="donor-hero">
+        <div class="donor-hero-grid">
+            <div>
+                <div class="donor-title-row">
+                    <h1 style="margin:0;">{{ donor.name }}</h1>
+                    <span class="donor-chip">{{ donor.donor_type|capitalize }}</span>
+                    {% if donor.email %}<span class="donor-chip">{{ donor.email }}</span>{% endif %}
+                </div>
+                <p class="text-muted" style="margin:0;max-width:64ch;">Donor profile, contribution history, activity timeline, and a fast-entry gift form for bank transfers, cards, and cash awards.</p>
+                <div class="donor-chips">
+                    <span class="donor-chip"><strong>{{ donation_count }}</strong>&nbsp;gifts</span>
+                    <span class="donor-chip"><strong>{{ '%.2f'|format(donation_total) }}</strong>&nbsp;lifetime giving</span>
+                    <span class="donor-chip"><strong>{{ active_recurring_plans }}</strong>&nbsp;active recurring</span>
+                    <span class="donor-chip">First gift: {{ first_gift_date or '-' }}</span>
+                    <span class="donor-chip">Last gift: {{ last_gift_date or '-' }}</span>
+                </div>
+            </div>
+            <div class="card" style="margin:0;background:rgba(255,255,255,0.86);">
+                <div class="card-text">Lifetime Giving</div>
+                <div class="card-value">{{ '%.2f'|format(donation_total) }}</div>
+                <p class="muted-note" style="margin-top:0.6rem;">Use the quick-add panel below to record a new gift without leaving the donor profile.</p>
+                <div class="actions-row" style="margin-top:0.85rem;">
+                    <a href="#quick-donation" class="btn btn-primary">Record Donation</a>
+                    <a href="#quick-stewardship-task" class="btn btn-secondary">Create Task</a>
+                    <a href="{{ url_for('main.donor_edit', donor_id=donor.id) }}" class="btn btn-secondary">Edit Donor</a>
+                    <a href="{{ url_for('main.donations_list', donor_id=donor.id) }}" class="btn btn-secondary">Filter Donations</a>
+                </div>
+            </div>
+        </div>
+    </section>
 
-<div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; margin-bottom: 1rem;">
-    <div class="card">
-        <h3>Contact</h3>
-        <p><strong>Email:</strong> {{ donor.email or '-' }}</p>
-        <p><strong>Phone:</strong> {{ donor.phone or '-' }}</p>
-        <p><strong>Created:</strong> {{ donor.created_at.strftime('%Y-%m-%d') if donor.created_at else '-' }}</p>
-        <p><strong>First Gift:</strong> {{ first_gift_date or '-' }}</p>
-        <p><strong>Last Gift:</strong> {{ last_gift_date or '-' }}</p>
-        <a href="{{ url_for('main.donor_edit', donor_id=donor.id) }}" class="btn btn-primary">Edit Donor</a>
-        <a href="{{ url_for('main.donations_list', donor_id=donor.id) }}" class="btn btn-secondary">Filter Donations</a>
+    <div class="kpi-grid">
+        <div class="card">
+            <div class="card-text">Donations</div>
+            <div class="card-value">{{ donation_count }}</div>
+        </div>
+        <div class="card">
+            <div class="card-text">Total Giving</div>
+            <div class="card-value">{{ '%.2f'|format(donation_total) }}</div>
+        </div>
+        <div class="card">
+            <div class="card-text">Donor Type</div>
+            <div class="card-value" style="font-size:1rem;text-transform:capitalize;">{{ donor.donor_type }}</div>
+        </div>
+        <div class="card">
+            <div class="card-text">Recurring Plans</div>
+            <div class="card-value">{{ active_recurring_plans }}</div>
+        </div>
     </div>
 
-    <div class="card">
-        <h3>Notes</h3>
-        {% if donor.notes %}
-        <pre style="white-space: pre-wrap; margin: 0; font-family: inherit;">{{ donor.notes }}</pre>
+    <div class="visibility-controls">
+        <h3 style="margin:0;">Section Visibility</h3>
+        <p class="muted-note" style="margin:0.35rem 0 0;">Turn donor CRM sections on or off. Preferences are saved in this browser.</p>
+        <div class="visibility-grid">
+            <label class="visibility-toggle"><input type="checkbox" data-visibility-toggle="household_relationships" checked> Household & Relationships</label>
+            <label class="visibility-toggle"><input type="checkbox" data-visibility-toggle="segments_tags_custom_fields" checked> Segments, Tags & Custom Fields</label>
+            <label class="visibility-toggle"><input type="checkbox" data-visibility-toggle="stewardship_tasks" checked> Stewardship Tasks</label>
+            <label class="visibility-toggle"><input type="checkbox" data-visibility-toggle="communication_history" checked> Communication History</label>
+        </div>
+    </div>
+
+    <div class="detail-grid">
+        <div class="card">
+            <h3>Contact</h3>
+            <div class="field-grid">
+                <div class="field-pill"><span class="label">Email</span><span class="value">{{ donor.email or '-' }}</span></div>
+                <div class="field-pill"><span class="label">Phone</span><span class="value">{{ donor.phone or '-' }}</span></div>
+                <div class="field-pill"><span class="label">Preferred Contact</span><span class="value">{{ donor.preferred_contact_method|default('email')|capitalize }}</span></div>
+                <div class="field-pill"><span class="label">Communication</span><span class="value">{{ 'Opted In' if donor.communication_opt_in else 'Do Not Contact' }}</span></div>
+            </div>
+            <div class="field-grid" style="margin-top:0.85rem;">
+                <div class="field-pill"><span class="label">Created</span><span class="value">{{ donor.created_at.strftime('%Y-%m-%d') if donor.created_at else '-' }}</span></div>
+                <div class="field-pill"><span class="label">First Gift</span><span class="value">{{ first_gift_date or '-' }}</span></div>
+                <div class="field-pill"><span class="label">Last Gift</span><span class="value">{{ last_gift_date or '-' }}</span></div>
+                <div class="field-pill"><span class="label">Status</span><span class="value">{{ donor.status|capitalize if donor.status else 'Active' }}</span></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>CRM Snapshot</h3>
+            <div class="field-grid">
+                <div class="field-pill"><span class="label">Salutation</span><span class="value">{{ donor.salutation or '-' }}</span></div>
+                <div class="field-pill"><span class="label">Preferred Name</span><span class="value">{{ donor.preferred_name or '-' }}</span></div>
+                <div class="field-pill"><span class="label">Employer</span><span class="value">{{ donor.employer or '-' }}</span></div>
+                <div class="field-pill"><span class="label">Lead Source</span><span class="value">{{ donor.source or '-' }}</span></div>
+            </div>
+            <div class="field-grid" style="margin-top:0.85rem;">
+                <div class="field-pill"><span class="label">Address</span><span class="value">{{ donor.address or '-' }}</span></div>
+                <div class="field-pill"><span class="label">City</span><span class="value">{{ donor.city or '-' }}</span></div>
+                <div class="field-pill"><span class="label">Country</span><span class="value">{{ donor.country or '-' }}</span></div>
+                <div class="field-pill"><span class="label">Postal Code</span><span class="value">{{ donor.postal_code or '-' }}</span></div>
+            </div>
+        </div>
+
+        <div class="card" id="quick-donation">
+            <h3>Quick Donation Entry</h3>
+            <p class="muted-note">Collect method-specific details here. Full card numbers and CVV are intentionally not captured; use processor tokens or the last 4 digits only.</p>
+            <form method="post" class="mt-2" novalidate>
+                {{ quick_donation_form.hidden_tag() }}
+
+                <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.85rem;">
+                    <div class="form-group {% if quick_donation_form.amount.errors %}error{% endif %}">
+                        {{ quick_donation_form.amount.label }}
+                        {{ quick_donation_form.amount(step='0.01', min='0.01', inputmode='decimal') }}
+                        {% for error in quick_donation_form.amount.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                    </div>
+                    <div class="form-group {% if quick_donation_form.currency.errors %}error{% endif %}">
+                        {{ quick_donation_form.currency.label }}
+                        {{ quick_donation_form.currency() }}
+                        {% for error in quick_donation_form.currency.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                    </div>
+                    <div class="form-group {% if quick_donation_form.payment_method.errors %}error{% endif %}">
+                        {{ quick_donation_form.payment_method.label }}
+                        {{ quick_donation_form.payment_method(id='quickDonationMethod') }}
+                        {% for error in quick_donation_form.payment_method.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                    </div>
+                    <div class="form-group {% if quick_donation_form.project_id.errors %}error{% endif %}">
+                        {{ quick_donation_form.project_id.label }}
+                        {{ quick_donation_form.project_id() }}
+                        {% for error in quick_donation_form.project_id.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                    </div>
+                    <div class="form-group {% if quick_donation_form.fund_id.errors %}error{% endif %}">
+                        {{ quick_donation_form.fund_id.label }}
+                        {{ quick_donation_form.fund_id() }}
+                        {% for error in quick_donation_form.fund_id.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                    </div>
+                    <div class="form-group {% if quick_donation_form.purpose.errors %}error{% endif %}">
+                        {{ quick_donation_form.purpose.label }}
+                        {{ quick_donation_form.purpose(placeholder='General support, emergency aid, scholarship, etc.') }}
+                        {% for error in quick_donation_form.purpose.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                    </div>
+                    <div class="form-group {% if quick_donation_form.reference_number.errors %}error{% endif %}">
+                        {{ quick_donation_form.reference_number.label }}
+                        {{ quick_donation_form.reference_number(placeholder='Receipt, transfer, or processor reference') }}
+                        {% for error in quick_donation_form.reference_number.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                    </div>
+                </div>
+
+                <div class="payment-section" data-payment-section="bank_transfer" hidden>
+                    <h4 style="margin-top:0;">Bank Transfer Details</h4>
+                    <p class="muted-note">Use routing and account number fields for incoming bank transfers. For safety, only masked values are included in the saved note.</p>
+                    <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.85rem;">
+                        <div class="form-group {% if quick_donation_form.bank_routing_number.errors %}error{% endif %}">
+                            {{ quick_donation_form.bank_routing_number.label }}
+                            {{ quick_donation_form.bank_routing_number(inputmode='numeric', autocomplete='off', placeholder='Routing number') }}
+                            {% for error in quick_donation_form.bank_routing_number.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                        </div>
+                        <div class="form-group {% if quick_donation_form.bank_account_number.errors %}error{% endif %}">
+                            {{ quick_donation_form.bank_account_number.label }}
+                            {{ quick_donation_form.bank_account_number(inputmode='numeric', autocomplete='off', placeholder='Account number') }}
+                            {% for error in quick_donation_form.bank_account_number.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="payment-section" data-payment-section="credit_card" hidden>
+                    <h4 style="margin-top:0;">Credit Card Details</h4>
+                    <p class="muted-note">Capture tokenized or masked card metadata only. Do not store the full card number or CVV in the CRM.</p>
+                    <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.85rem;">
+                        <div class="form-group {% if quick_donation_form.card_holder_name.errors %}error{% endif %}">
+                            {{ quick_donation_form.card_holder_name.label }}
+                            {{ quick_donation_form.card_holder_name(autocomplete='cc-name', placeholder='Name on card') }}
+                            {% for error in quick_donation_form.card_holder_name.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                        </div>
+                        <div class="form-group {% if quick_donation_form.card_brand.errors %}error{% endif %}">
+                            {{ quick_donation_form.card_brand.label }}
+                            {{ quick_donation_form.card_brand() }}
+                            {% for error in quick_donation_form.card_brand.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                        </div>
+                        <div class="form-group {% if quick_donation_form.card_last4.errors %}error{% endif %}">
+                            {{ quick_donation_form.card_last4.label }}
+                            {{ quick_donation_form.card_last4(inputmode='numeric', autocomplete='off', placeholder='1234') }}
+                            {% for error in quick_donation_form.card_last4.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                        </div>
+                        <div class="form-group {% if quick_donation_form.card_exp_month.errors %}error{% endif %}">
+                            {{ quick_donation_form.card_exp_month.label }}
+                            {{ quick_donation_form.card_exp_month(inputmode='numeric', placeholder='MM') }}
+                            {% for error in quick_donation_form.card_exp_month.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                        </div>
+                        <div class="form-group {% if quick_donation_form.card_exp_year.errors %}error{% endif %}">
+                            {{ quick_donation_form.card_exp_year.label }}
+                            {{ quick_donation_form.card_exp_year(inputmode='numeric', placeholder='YY or YYYY') }}
+                            {% for error in quick_donation_form.card_exp_year.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="payment-section" data-payment-section="cash" hidden>
+                    <h4 style="margin-top:0;">Cash Award Details</h4>
+                    <p class="muted-note">For direct cash awards, capture the award or receipt reference so the gift can be reconciled later.</p>
+                    <div class="form-group {% if quick_donation_form.cash_award_reference.errors %}error{% endif %}">
+                        {{ quick_donation_form.cash_award_reference.label }}
+                        {{ quick_donation_form.cash_award_reference(placeholder='Award, packet, or receipt reference') }}
+                        {% for error in quick_donation_form.cash_award_reference.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                    </div>
+                </div>
+
+                <div class="form-group {% if quick_donation_form.notes.errors %}error{% endif %}" style="margin-top:0.9rem;">
+                    {{ quick_donation_form.notes.label }}
+                    {{ quick_donation_form.notes(rows=4, placeholder='Internal notes or follow-up reminders') }}
+                    {% for error in quick_donation_form.notes.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                </div>
+
+                <div class="actions-row">
+                    {{ quick_donation_form.submit(class_='btn btn-primary') }}
+                    <a href="{{ url_for('main.donation_create') }}?donor_id={{ donor.id }}" class="btn btn-secondary">Open Full Donation Form</a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="detail-grid">
+        <div class="card" data-feature-section="household_relationships">
+            <h3>Household & Relationships</h3>
+            <div class="field-grid">
+                <div class="field-pill"><span class="label">Household</span><span class="value">{{ household_name or 'Not set' }}</span></div>
+                <div class="field-pill"><span class="label">Relationship Count</span><span class="value">{{ donor_relationships|length }}</span></div>
+            </div>
+            {% if donor_relationships %}
+            <div class="table-wrap" style="margin-top:0.8rem;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Related Donor</th>
+                            <th>Relationship</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for rel in donor_relationships %}
+                        <tr>
+                            <td>
+                                {% if rel.related_donor_id %}
+                                <a href="{{ url_for('main.donor_detail', donor_id=rel.related_donor_id) }}">{{ rel.related_donor_name or ('Donor #' ~ rel.related_donor_id) }}</a>
+                                {% else %}
+                                {{ rel.related_donor_name or '-' }}
+                                {% endif %}
+                            </td>
+                            <td>{{ rel.relationship_type or '-' }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted" style="margin:0.75rem 0 0;">No household relationships captured yet.</p>
+            {% endif %}
+        </div>
+
+        <div class="card" data-feature-section="segments_tags_custom_fields">
+            <h3>Segments, Tags & Custom Fields</h3>
+            <div class="field-grid">
+                <div class="field-pill"><span class="label">Engagement Score</span><span class="value">{{ '%.1f'|format(engagement_score.score) if engagement_score else '-' }}</span></div>
+                <div class="field-pill"><span class="label">Current Segment</span><span class="value">{{ engagement_score.segment|replace('_', ' ')|title if engagement_score and engagement_score.segment else 'Unassigned' }}</span></div>
+                <div class="field-pill"><span class="label">Cultivation Priority</span><span class="value">{{ engagement_score.cultivation_priority|capitalize if engagement_score else '-' }}</span></div>
+            </div>
+            <div style="margin-top:0.8rem;">
+                <div class="label" style="font-size:0.78rem;color:#6b7280;text-transform:uppercase;letter-spacing:0.06em;">Generated Tags</div>
+                {% if generated_tags %}
+                <div class="donor-chips" style="margin-top:0.45rem;">
+                    {% for tag in generated_tags %}
+                    <span class="donor-chip">{{ tag }}</span>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p class="text-muted" style="margin:0.4rem 0 0;">No tags available yet.</p>
+                {% endif %}
+            </div>
+            <div style="margin-top:0.85rem;">
+                <div class="label" style="font-size:0.78rem;color:#6b7280;text-transform:uppercase;letter-spacing:0.06em;">Configured Custom Fields</div>
+                {% if custom_field_schema %}
+                <div class="table-wrap" style="margin-top:0.5rem;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Field</th>
+                                <th>Type</th>
+                                <th>Required</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for field in custom_field_schema %}
+                            <tr>
+                                <td>{{ field.label or field.key or '-' }}</td>
+                                <td>{{ field.type or 'text' }}</td>
+                                <td>{{ 'Yes' if field.required else 'No' }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-muted" style="margin:0.4rem 0 0;">No donor custom fields are configured in admin settings.</p>
+                {% endif %}
+            </div>
+            <div style="margin-top:0.85rem;">
+                <div class="label" style="font-size:0.78rem;color:#6b7280;text-transform:uppercase;letter-spacing:0.06em;">Custom Field Values</div>
+                {% if donor_custom_field_values %}
+                <div class="table-wrap" style="margin-top:0.5rem;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Field</th>
+                                <th>Value</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in donor_custom_field_values %}
+                            <tr>
+                                <td>{{ item.label }}</td>
+                                <td>{{ item.value if item.is_available else 'No value captured yet' }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-muted" style="margin:0.4rem 0 0;">No donor custom field values are currently available.</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="card" data-feature-section="stewardship_tasks">
+            <h3>Stewardship Tasks</h3>
+            {% if stewardship_tasks %}
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Task</th>
+                            <th>Type</th>
+                            <th>Priority</th>
+                            <th>Status</th>
+                            <th>Due</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for task in stewardship_tasks %}
+                        <tr>
+                            <td>{{ task.title }}</td>
+                            <td>{{ task.task_type|replace('_', ' ')|title if task.task_type else '-' }}</td>
+                            <td>{{ task.priority|capitalize if task.priority else '-' }}</td>
+                            <td>{{ task.status|replace('_', ' ')|title if task.status else '-' }}</td>
+                            <td>{{ task.due_date.strftime('%Y-%m-%d') if task.due_date else '-' }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted">No stewardship tasks exist for this donor.</p>
+            {% endif %}
+            <div class="actions-row" style="margin-top:0.8rem;">
+                <a class="btn btn-secondary" href="{{ url_for('main.task_board') }}">Open Task Board</a>
+            </div>
+
+            <form id="quick-stewardship-task" method="post" style="margin-top:0.9rem; padding-top:0.8rem; border-top:1px dashed rgba(20, 118, 212, 0.22);">
+                {{ quick_task_form.hidden_tag() }}
+                <h4 style="margin:0 0 0.6rem 0;">Quick Stewardship Task</h4>
+                <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.8rem;">
+                    <div class="form-group {% if quick_task_form.title.errors %}error{% endif %}">
+                        {{ quick_task_form.title.label }}
+                        {{ quick_task_form.title(placeholder='Follow up on campaign update') }}
+                        {% for error in quick_task_form.title.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                    </div>
+                    <div class="form-group {% if quick_task_form.task_type.errors %}error{% endif %}">
+                        {{ quick_task_form.task_type.label }}
+                        {{ quick_task_form.task_type() }}
+                        {% for error in quick_task_form.task_type.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                    </div>
+                    <div class="form-group {% if quick_task_form.priority.errors %}error{% endif %}">
+                        {{ quick_task_form.priority.label }}
+                        {{ quick_task_form.priority() }}
+                        {% for error in quick_task_form.priority.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                    </div>
+                    <div class="form-group {% if quick_task_form.due_date.errors %}error{% endif %}">
+                        {{ quick_task_form.due_date.label }}
+                        {{ quick_task_form.due_date() }}
+                        {% for error in quick_task_form.due_date.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                    </div>
+                </div>
+                <div class="form-group {% if quick_task_form.notes.errors %}error{% endif %}" style="margin-top:0.7rem;">
+                    {{ quick_task_form.notes.label }}
+                    {{ quick_task_form.notes(rows=3, placeholder='Context for call/email/meeting') }}
+                    {% for error in quick_task_form.notes.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="actions-row" style="margin-top:0.65rem;">
+                    {{ quick_task_form.submit(class_='btn btn-primary') }}
+                </div>
+            </form>
+        </div>
+
+        <div class="card" data-feature-section="communication_history">
+            <h3>Communication History</h3>
+            {% if communication_history %}
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Campaign</th>
+                            <th>Email</th>
+                            <th>Status</th>
+                            <th>Opens / Clicks</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for comm in communication_history %}
+                        <tr>
+                            <td>{{ comm.sent_at.strftime('%Y-%m-%d %H:%M') if comm.sent_at else (comm.created_at.strftime('%Y-%m-%d %H:%M') if comm.created_at else '-') }}</td>
+                            <td>{{ comm.campaign.name if comm.campaign else '-' }}</td>
+                            <td>{{ comm.recipient_email or '-' }}</td>
+                            <td>{{ comm.delivery_status|replace('_', ' ')|title if comm.delivery_status else '-' }}</td>
+                            <td>{{ comm.open_count or 0 }} / {{ comm.click_count or 0 }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted">No communication history found for this donor yet.</p>
+            {% endif %}
+        </div>
+
+        <div class="card">
+            <h3>Notes</h3>
+            {% if donor.notes %}
+            <pre style="white-space:pre-wrap;margin:0;font-family:inherit;">{{ donor.notes }}</pre>
+            {% else %}
+            <p class="text-muted">No notes yet.</p>
+            {% endif %}
+        </div>
+
+        <div class="card">
+            <h3>AI Donor Insights</h3>
+            {% if donor_ai_insights %}
+            <p style="margin-bottom:0.75rem;">{{ donor_ai_insights.summary }}</p>
+            <p><strong>Next Best Action:</strong> {{ donor_ai_insights.next_best_action }}</p>
+            {% if donor_ai_insights.risk_flags %}
+            <p style="margin-top:0.75rem;"><strong>Risk Flags</strong></p>
+            <ul style="margin-top:0.35rem;">
+                {% for risk_flag in donor_ai_insights.risk_flags %}
+                <li>{{ risk_flag }}</li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+            {% if donor_ai_insights.recommended_actions %}
+            <p style="margin-top:0.75rem;"><strong>Suggested Actions</strong></p>
+            <ul style="margin-top:0.35rem;">
+                {% for action in donor_ai_insights.recommended_actions %}
+                <li>{{ action }}</li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+            {% else %}
+            <p class="text-muted">AI insights are currently unavailable for this donor.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card" style="margin-bottom:1rem;">
+        <h3 style="margin-bottom:0.75rem;">Search Activity Timeline</h3>
+        <form method="get" style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+            <input
+                type="search"
+                name="activity_q"
+                value="{{ activity_query or '' }}"
+                placeholder="Search notes, channel, task, status..."
+                style="flex:1; min-width: 220px;"
+            >
+            <button type="submit" class="btn btn-secondary">Filter</button>
+            {% if activity_query %}
+            <a href="{{ url_for('main.donor_detail', donor_id=donor.id) }}" class="btn btn-secondary">Clear</a>
+            {% endif %}
+        </form>
+    </div>
+
+    {% include '_activity_timeline.html' with context %}
+
+    <div class="card" style="margin-bottom:1rem;">
+        <h3>Recent Donations</h3>
+        {% if recent_donations %}
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Amount</th>
+                        <th>Method</th>
+                        <th>Purpose</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for donation in recent_donations %}
+                    <tr>
+                        <td>{{ donation.donation_date.strftime('%Y-%m-%d') if donation.donation_date else '-' }}</td>
+                        <td>{{ donation.amount }} {{ donation.currency }}</td>
+                        <td>{{ donation.payment_method or '-' }}</td>
+                        <td>{{ donation.purpose or '-' }}</td>
+                        <td><span style="padding:0.2rem 0.6rem;border-radius:999px;border:1px solid var(--border);background:var(--surface-soft);">{{ donation.status }}</span></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
         {% else %}
-        <p class="text-muted">No notes yet.</p>
+        <p class="text-muted">No donations recorded for this donor yet.</p>
         {% endif %}
     </div>
-</div>
 
-<div class="card" style="margin-bottom: 1rem;">
-    <h3>AI Donor Insights</h3>
-    {% if donor_ai_insights %}
-    <p style="margin-bottom: 0.75rem;">{{ donor_ai_insights.summary }}</p>
-    <p><strong>Next Best Action:</strong> {{ donor_ai_insights.next_best_action }}</p>
-    {% if donor_ai_insights.risk_flags %}
-    <p style="margin-top: 0.75rem;"><strong>Risk Flags</strong></p>
-    <ul style="margin-top: 0.35rem;">
-        {% for risk_flag in donor_ai_insights.risk_flags %}
-        <li>{{ risk_flag }}</li>
-        {% endfor %}
-    </ul>
-    {% endif %}
-    {% if donor_ai_insights.recommended_actions %}
-    <p style="margin-top: 0.75rem;"><strong>Suggested Actions</strong></p>
-    <ul style="margin-top: 0.35rem;">
-        {% for action in donor_ai_insights.recommended_actions %}
-        <li>{{ action }}</li>
-        {% endfor %}
-    </ul>
-    {% endif %}
-    {% else %}
-    <p class="text-muted">AI insights are currently unavailable for this donor.</p>
-    {% endif %}
-</div>
-
-<div class="card" style="margin-bottom: 1rem;">
-    <h3 style="margin-bottom: 0.75rem;">Search Activity Timeline</h3>
-    <form method="get" style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
-        <input
-            type="search"
-            name="activity_q"
-            value="{{ activity_query or '' }}"
-            placeholder="Search notes, channel, task, status..."
-            style="flex:1; min-width: 220px;"
-        >
-        <button type="submit" class="btn btn-secondary">Filter</button>
-        {% if activity_query %}
-        <a href="{{ url_for('main.donor_detail', donor_id=donor.id) }}" class="btn btn-secondary">Clear</a>
+    <div class="card" style="margin-bottom:1rem;">
+        <h3>Recurring Plans</h3>
+        {% if recurring_plans %}
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Frequency</th>
+                        <th>Amount</th>
+                        <th>Payment Method</th>
+                        <th>Next Charge</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for plan in recurring_plans %}
+                    <tr>
+                        <td>{{ plan.frequency }}</td>
+                        <td>{{ plan.amount }} {{ plan.currency }}</td>
+                        <td>{{ plan.payment_method or '-' }}</td>
+                        <td>{{ plan.next_charge_date.strftime('%Y-%m-%d') if plan.next_charge_date else '-' }}</td>
+                        <td>{{ plan.status }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-muted">No recurring plans set for this donor.</p>
         {% endif %}
-    </form>
-</div>
-
-{% include '_activity_timeline.html' with context %}
-
-<div class="card" style="margin-bottom: 1rem;">
-    <h3>Recent Donations</h3>
-    {% if recent_donations %}
-    <div class="table-wrap">
-        <table>
-            <thead>
-                <tr>
-                    <th>Date</th>
-                    <th>Amount</th>
-                    <th>Method</th>
-                    <th>Purpose</th>
-                    <th>Status</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for donation in recent_donations %}
-                <tr>
-                    <td>{{ donation.donation_date.strftime('%Y-%m-%d') if donation.donation_date else '-' }}</td>
-                    <td>{{ donation.amount }} {{ donation.currency }}</td>
-                    <td>{{ donation.payment_method or '-' }}</td>
-                    <td>{{ donation.purpose or '-' }}</td>
-                    <td><span style="padding:0.2rem 0.6rem;border-radius:999px;border:1px solid var(--border);background:var(--surface-soft);">{{ donation.status }}</span></td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
     </div>
-    {% else %}
-    <p class="text-muted">No donations recorded for this donor yet.</p>
-    {% endif %}
-</div>
 
-<div class="card" style="margin-bottom: 1rem;">
-    <h3>Recurring Plans</h3>
-    {% if recurring_plans %}
-    <div class="table-wrap">
-        <table>
-            <thead>
-                <tr>
-                    <th>Frequency</th>
-                    <th>Amount</th>
-                    <th>Payment Method</th>
-                    <th>Next Charge</th>
-                    <th>Status</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for plan in recurring_plans %}
-                <tr>
-                    <td>{{ plan.frequency }}</td>
-                    <td>{{ plan.amount }} {{ plan.currency }}</td>
-                    <td>{{ plan.payment_method or '-' }}</td>
-                    <td>{{ plan.next_charge_date.strftime('%Y-%m-%d') if plan.next_charge_date else '-' }}</td>
-                    <td>{{ plan.status }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+    <div class="actions-row">
+        <a href="{{ url_for('main.donors_list') }}" class="btn btn-secondary">Back to Donors</a>
+        <a href="#top" class="btn btn-secondary">Back to Top</a>
     </div>
-    {% else %}
-    <p class="text-muted">No recurring plans set for this donor.</p>
-    {% endif %}
+</div>
 </div>
 
-<a href="{{ url_for('main.donors_list') }}" class="btn btn-secondary">Back to Donors</a>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const methodField = document.getElementById('quickDonationMethod');
+    const panels = Array.from(document.querySelectorAll('[data-payment-section]'));
+    const visibilityKey = 'donor-detail-visibility-v1:user-{{ current_user.id if current_user and current_user.is_authenticated else "anon" }}:donor-{{ donor.id }}';
+    const toggles = Array.from(document.querySelectorAll('[data-visibility-toggle]'));
+
+    function syncPanels() {
+        const value = (methodField && methodField.value) ? methodField.value : 'cash';
+        panels.forEach(function(panel) {
+            panel.hidden = panel.getAttribute('data-payment-section') !== value;
+        });
+    }
+
+    function readVisibilityPrefs() {
+        try {
+            const raw = window.localStorage.getItem(visibilityKey);
+            if (!raw) {
+                return {};
+            }
+            const parsed = JSON.parse(raw);
+            return parsed && typeof parsed === 'object' ? parsed : {};
+        } catch (err) {
+            return {};
+        }
+    }
+
+    function writeVisibilityPrefs(prefs) {
+        try {
+            window.localStorage.setItem(visibilityKey, JSON.stringify(prefs));
+        } catch (err) {
+            // Ignore localStorage write errors.
+        }
+    }
+
+    function syncVisibilityFromPrefs() {
+        const prefs = readVisibilityPrefs();
+        toggles.forEach(function(toggle) {
+            const key = toggle.getAttribute('data-visibility-toggle');
+            const isVisible = prefs[key] !== false;
+            toggle.checked = isVisible;
+            const section = document.querySelector('[data-feature-section="' + key + '"]');
+            if (section) {
+                section.classList.toggle('feature-hidden', !isVisible);
+            }
+        });
+    }
+
+    if (methodField) {
+        methodField.addEventListener('change', syncPanels);
+        syncPanels();
+    }
+
+    toggles.forEach(function(toggle) {
+        toggle.addEventListener('change', function() {
+            const key = toggle.getAttribute('data-visibility-toggle');
+            const prefs = readVisibilityPrefs();
+            prefs[key] = Boolean(toggle.checked);
+            writeVisibilityPrefs(prefs);
+            syncVisibilityFromPrefs();
+        });
+    });
+
+    syncVisibilityFromPrefs();
+});
+</script>
 {% endblock %}

@@ -361,6 +361,7 @@ class Donation(db.Model):
     
     # Payment info
     payment_method = db.Column(db.String(50), nullable=True)  # e.g., 'credit_card', 'bank_transfer', 'cash'
+    channel = db.Column(db.String(50), nullable=True)  # web, event, mail, phone, p2p, grant_portal
     reference_number = db.Column(db.String(100), nullable=True, unique=True)
     
     # Status
@@ -368,6 +369,12 @@ class Donation(db.Model):
     
     # Purpose
     purpose = db.Column(db.String(200), nullable=True)  # e.g., 'General Fund', 'Emergency Relief', 'Specific Project'
+    is_anonymous = db.Column(db.Boolean, default=False, nullable=False)
+    public_display_name = db.Column(db.String(200), nullable=True)
+    tribute_type = db.Column(db.String(50), nullable=True)  # in_honor_of, in_memory_of
+    tribute_honoree_name = db.Column(db.String(200), nullable=True)
+    tribute_honoree_contact = db.Column(db.String(255), nullable=True)
+    soft_credit_name = db.Column(db.String(200), nullable=True)
     notes = db.Column(db.Text, nullable=True)
     
     # Timestamps
@@ -443,8 +450,19 @@ class Donor(db.Model):
     name = db.Column(db.String(200), nullable=False, index=True)
     email = db.Column(db.String(120), nullable=True, index=True)
     phone = db.Column(db.String(20), nullable=True)
+    salutation = db.Column(db.String(50), nullable=True)
+    preferred_name = db.Column(db.String(200), nullable=True)
     donor_type = db.Column(db.String(50), default='individual', nullable=False)
+    status = db.Column(db.String(50), default='active', nullable=False)
     photo_path = db.Column(db.String(300), nullable=True)
+    address = db.Column(db.String(300), nullable=True)
+    city = db.Column(db.String(100), nullable=True)
+    country = db.Column(db.String(100), nullable=True)
+    postal_code = db.Column(db.String(20), nullable=True)
+    preferred_contact_method = db.Column(db.String(20), default='email', nullable=False)
+    communication_opt_in = db.Column(db.Boolean, default=True, nullable=False)
+    employer = db.Column(db.String(200), nullable=True)
+    source = db.Column(db.String(120), nullable=True)
     notes = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
     updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
@@ -1128,6 +1146,7 @@ class CampaignEmailBatch(db.Model):
     failed_count = db.Column(db.Integer, nullable=False, default=0)
     created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
     sent_at = db.Column(db.DateTime, nullable=True)
+    scheduled_at = db.Column(db.DateTime, nullable=True)
 
     campaign = db.relationship('Campaign', backref='email_batches')
     created_by = db.relationship('User', backref='campaign_email_batches')
@@ -1167,6 +1186,25 @@ class CampaignEmailDelivery(db.Model):
 
     def __repr__(self):
         return f'<CampaignEmailDelivery batch={self.batch_id} {self.delivery_status}>'
+
+
+class CampaignEmailOptOut(db.Model):
+    """Donor email opt-out (unsubscribe) record for campaign emails."""
+
+    __tablename__ = 'campaign_email_opt_outs'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    donor_id = db.Column(db.Integer, db.ForeignKey('donors.id'), nullable=True, index=True)
+    email = db.Column(db.String(255), nullable=False, index=True)
+    token = db.Column(db.String(64), nullable=False, unique=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaigns.id'), nullable=True, index=True)
+    unsubscribed_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+
+    donor = db.relationship('Donor', backref='email_opt_outs')
+
+    def __repr__(self):
+        return f'<CampaignEmailOptOut email={self.email}>'
 
 
 class EventDiscountCode(db.Model):
@@ -1241,6 +1279,11 @@ class P2PPage(db.Model):
     title = db.Column(db.String(300), nullable=False)
     story = db.Column(db.Text, nullable=True)
     goal_amount = db.Column(db.Float, nullable=False, default=0.0)
+    match_ratio = db.Column(db.Float, nullable=False, default=0.0)  # e.g. 1.0 = 1:1 match
+    match_cap_amount = db.Column(db.Float, nullable=False, default=0.0)
+    challenge_goal_amount = db.Column(db.Float, nullable=False, default=0.0)
+    challenge_end_date = db.Column(db.Date, nullable=True)
+    automation_contact_email = db.Column(db.String(255), nullable=True)
     currency = db.Column(db.String(3), default='USD', nullable=False)
     status = db.Column(db.String(20), default='active', nullable=False, index=True)  # draft, active, closed
     public_slug = db.Column(db.String(80), unique=True, nullable=False, index=True)
