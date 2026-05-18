@@ -61,7 +61,7 @@ dependencies = [
   "python-dateutil==2.9.0.post0",
   "reportlab==4.2.2",
   "boto3==1.42.18",
-  "botocore==1.42.18",
+  "botocore==1.43.9",
   "azure-identity==1.25.1",
   "azure-keyvault-keys==4.11.0",
   "stripe>=8.0.0",
