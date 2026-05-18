@@ -5,6 +5,23 @@
 **Timeline:** 5 sprints (May–June 2026)  
 **Baseline:** 668 passing tests, 12 skipped (main @ 9011c9c)
 
+## Reality Check Snapshot (Verified 2026-05-18)
+
+This snapshot reconciles backlog planning assumptions with current code state.
+
+- **Milestone A (Security + Compliance):** Partially delivered.
+	- Implemented: TOTP enrollment/setup APIs, backup-code generation/consumption, role-based 2FA enforcement hook, step-up OTP endpoint.
+	- Remaining gaps: no clear encryption-at-rest path for TOTP secret field, limited endpoint-level adoption of `@require_step_up_auth`, and no in-repo evidence of an external formal security review.
+- **Milestone B (Grants Budget Accounting):** Mostly delivered at data-model and service layers.
+	- Implemented: budget lines, budget transactions, reconciliation fields, variance calculations/alerts in services.
+	- Remaining gaps: operational workflows/report UX still uneven; state/funder-specific operational automation remains partial.
+- **Milestone C (Bulk Donor Email Engine):** Partially delivered.
+	- Implemented: campaign batch/delivery models, unsubscribe flow, suppression handling, open/click tracking counters.
+	- Remaining gaps: advanced segment query builder and explicit `EmailCampaignQueue`-style architecture from this backlog are still not complete as originally scoped.
+- **Milestone D/E (Reporting + Competitive Polish):** Largely planned/in progress; many items remain backlog candidates.
+
+Documentation drift note: some items listed as unchecked below are partially or fully implemented under evolved file names and structures. Keep this backlog as planning intent, not source-of-truth implementation evidence.
+
 ---
 
 ## Milestone A: Security + Compliance (Sprint 1 – 2 weeks)
@@ -420,12 +437,34 @@ Each milestone has a rollback branch (e.g., `rollback/milestone-A`) tagged at th
 
 ## Next Steps
 
-1. **Week 1:** A-1 (TOTP enrollment) + A-2 (enforcement) in parallel.
-2. **Week 2:** A-3 (step-up) + B-1 (budget model) prep.
-3. **Ongoing:** Daily standup on PR reviews + test health; weekly backlog refinement.
+### Priority Queue (Actionable)
+
+1. **P0: Security assurance and closure evidence**
+	- Produce a release-candidate security evidence bundle: DAST artifact, security lane output, manual pentest notes, and risk sign-off.
+	- Complete external review path (or explicit risk acceptance) and link evidence in `docs/production_checklist.md`.
+2. **P0: MFA hardening follow-through**
+	- Enforce encryption-at-rest for TOTP secret storage and document key management/rotation.
+	- Expand endpoint-level adoption of step-up authentication for sensitive actions.
+3. **P0: Campaign maturity gaps**
+	- Implement advanced donor segmentation/query-builder scope from Milestone C-1.
+	- Close queue orchestration/retry model deltas that remain from C-2/C-3 planning assumptions.
+4. **P1: Grants operationalization**
+	- Add complete operational UX/reporting around budget variance/reconciliation.
+	- Prioritize state/funder-specific automation pathways and closeout/compliance packaging.
+5. **P1: Test and release confidence hardening**
+	- Replace skipped legacy integration-journey coverage with active end-to-end paths.
+	- Eliminate or explicitly gate remaining RBAC/test skips before release decisions.
+6. **P2: Repository hygiene and fallback reduction**
+	- Relocate root-level debug/probe scripts to a tooling sandbox and keep out release workflows.
+	- Continue reducing legacy fallback dependency surfaces, keeping emergency toggles audited and off by default.
+
+### Immediate Evidence Baseline
+
+- Targeted release-gate lane (security/tenant/campaign/grants contracts) executed on 2026-05-18: **112 passed, 2 skipped, 0 failed**.
+- Skips were both in `ngo_homesuite/web/test_rbac_audit_matrix.py` and tied to runtime/feature availability, not assertion failures.
 
 ---
 
 **Owner:** [Your team]  
-**Last Updated:** 2026-05-17  
-**Status:** Ready for sprint planning
+**Last Updated:** 2026-05-18  
+**Status:** Active; partially completed with documentation reconciliation in progress
