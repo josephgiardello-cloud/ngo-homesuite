@@ -183,8 +183,33 @@ def update_user_role_route(user_id: int):
     if user is None:
         return jsonify({"error": "not found"}), 404
 
+    previous_role = str(user.role or "").strip().lower()
     user.role = new_role
     db.session.commit()
+
+    # Best-effort security audit: role changes are sensitive admin operations.
+    try:
+        from ngo_homesuite.audit.security_events import SecurityAuditService, SecurityEventType
+
+        SecurityAuditService.log_event(
+            event_type=SecurityEventType.ROLE_ASSIGNED,
+            action=f"user_role_changed_{previous_role}_to_{new_role}",
+            result="success",
+            resource_type="user",
+            resource_id=user.id,
+            resource_org_id=user.organization_id,
+            payload={
+                "target_user_id": user.id,
+                "target_username": user.username,
+                "previous_role": previous_role,
+                "new_role": new_role,
+                "changed_by_user_id": current_user.id,
+            },
+        )
+    except Exception:
+        # Do not fail the role-change operation if audit persistence is unavailable.
+        pass
+
     return jsonify({"id": user.id, "username": user.username, "role": user.role})
 
 
