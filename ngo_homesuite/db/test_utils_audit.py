@@ -92,6 +92,34 @@ def test_audit_handles_non_serializable_details(monkeypatch):
     assert envelope["payload"]["serialization_error"] is True
 
 
+def test_show_db_health_reports_basic_status(monkeypatch, capsys):
+    class _FakeCursor:
+        def __init__(self) -> None:
+            self._step = 0
+
+        def execute(self, query: str) -> None:
+            self._step += 1
+
+        def fetchone(self):
+            return (1,)
+
+        def fetchall(self):
+            return [("audit_log",), ("users",)]
+
+    def _fake_run_db(op, **_kwargs):
+        return op(object(), _FakeCursor())
+
+    monkeypatch.setattr(db_utils, "run_db", _fake_run_db)
+    monkeypatch.delenv("DB_ENCRYPTION_KEY", raising=False)
+
+    db_utils.show_db_health()
+
+    out = capsys.readouterr().out
+    assert "DB Health" in out
+    assert "Connectivity: OK" in out
+    assert "Tables: audit_log, users" in out
+
+
 def test_audit_ignores_invalid_action(monkeypatch):
     called = False
 
