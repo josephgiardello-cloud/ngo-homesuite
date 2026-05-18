@@ -6,7 +6,7 @@ from flask import Blueprint, jsonify, request
 from flask_login import current_user, login_required
 
 from ngo_homesuite.grants.facade import GrantsFacade
-from ngo_homesuite.grants.exceptions import GrantNotFound, InvalidGrantTransition
+from ngo_homesuite.grants.exceptions import GrantApprovalError, GrantNotFound, InvalidGrantTransition
 from ngo_homesuite.web.rbac import roles_required
 
 
@@ -69,16 +69,40 @@ def advance_grant_route(grant_id: int):
     if not new_status:
         return jsonify({"error": "new_status is required"}), 400
 
+    transition_fields = {
+        key: value
+        for key, value in data.items()
+        if key not in {"new_status", "approval_request_id"}
+    }
+
     try:
-        grant = _grants().advance_grant_status(
-            grant_id,
-            _org_id(),
-            new_status=new_status,
-            **{k: v for k, v in data.items() if k != "new_status"},
-        )
+        if new_status == "closed":
+            approval_request_id = data.get("approval_request_id")
+            if approval_request_id is None:
+                return jsonify({"error": "approval_request_id is required for closeout transitions"}), 400
+            try:
+                approval_request_id = int(approval_request_id)
+            except (TypeError, ValueError):
+                return jsonify({"error": "approval_request_id must be an integer"}), 400
+
+            grant = _grants().close_grant_with_approval(
+                grant_id,
+                _org_id(),
+                approval_request_id=approval_request_id,
+                executed_by_user_id=int(current_user.id),
+            )
+        else:
+            grant = _grants().advance_grant_status(
+                grant_id,
+                _org_id(),
+                new_status=new_status,
+                **transition_fields,
+            )
     except GrantNotFound as exc:
         return jsonify({"error": str(exc)}), 404
     except InvalidGrantTransition as exc:
+        return jsonify({"error": str(exc)}), 422
+    except GrantApprovalError as exc:
         return jsonify({"error": str(exc)}), 422
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400

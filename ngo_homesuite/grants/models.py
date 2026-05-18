@@ -83,7 +83,7 @@ class GrantDisbursement(db.Model):
 
 
 class GrantBudgetLine(db.Model):
-    """Line-item budget allocation within a grant award."""
+    """Line-item budget allocation within a grant award with commitment tracking."""
 
     __tablename__ = "grant_budget_lines"
 
@@ -93,12 +93,16 @@ class GrantBudgetLine(db.Model):
     category = db.Column(db.String(80), nullable=False, index=True)
     line_name = db.Column(db.String(200), nullable=False)
     allocated_amount = db.Column(db.Float, nullable=False)
+    committed_amount = db.Column(db.Float, nullable=False, default=0.0)  # Pledged but not yet spent
+    reconciled_amount = db.Column(db.Float, nullable=False, default=0.0)  # Confirmed spent
+    status = db.Column(db.String(20), default="pending", nullable=False)  # pending, active, closed
     notes = db.Column(db.Text, nullable=True)
     version_id = db.Column(db.Integer, nullable=False, default=0)
     created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
     updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
 
     allocations = db.relationship("GrantExpenseAllocation", backref="budget_line", cascade="all, delete-orphan")
+    transactions = db.relationship("GrantBudgetTransaction", backref="budget_line", cascade="all, delete-orphan")
 
     __table_args__ = (
         db.UniqueConstraint("grant_id", "category", name="uq_grant_budget_line_grant_category"),
@@ -109,7 +113,7 @@ class GrantBudgetLine(db.Model):
     }
 
     def __repr__(self):
-        return f"<GrantBudgetLine grant={self.grant_id} category={self.category}>"
+        return f"<GrantBudgetLine grant={self.grant_id} category={self.category} status={self.status}>"
 
 
 class GrantExpenseAllocation(db.Model):
@@ -136,6 +140,27 @@ class GrantExpenseAllocation(db.Model):
 
     def __repr__(self):
         return f"<GrantExpenseAllocation grant={self.grant_id} expense={self.expense_id} amount={self.amount}>"
+
+
+class GrantBudgetTransaction(db.Model):
+    """Transaction record for budget line commitments and reconciliations."""
+
+    __tablename__ = "grant_budget_transactions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    budget_line_id = db.Column(db.Integer, db.ForeignKey("grant_budget_lines.id"), nullable=False, index=True)
+    grant_id = db.Column(db.Integer, db.ForeignKey("grants.id"), nullable=False, index=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False, index=True)
+    transaction_type = db.Column(db.String(20), nullable=False)  # commit, reconcile, reverse, adjust
+    amount = db.Column(db.Float, nullable=False)
+    description = db.Column(db.String(255), nullable=True)
+    reference_type = db.Column(db.String(50), nullable=True)  # expense, invoice, manual
+    reference_id = db.Column(db.Integer, nullable=True)  # expense_id or similar
+    created_by_user_id = db.Column(db.Integer, nullable=True)  # Optional, no FK to avoid model conflicts
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+
+    def __repr__(self):
+        return f"<GrantBudgetTransaction budget_line={self.budget_line_id} type={self.transaction_type} amount={self.amount}>"
 
 
 class GrantOpportunity(db.Model):

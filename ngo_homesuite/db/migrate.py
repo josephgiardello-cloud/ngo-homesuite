@@ -7,11 +7,23 @@ import os
 import sqlite3
 import shutil
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ngo_homesuite.config import DB_ENCRYPTION_KEY_ENV, get_runtime_settings
+DB_ENCRYPTION_KEY_ENV = "NGO_HOMESUITE_DB_KEY"
+
+
+def _load_runtime_settings() -> Any | None:
+    try:
+        from ngo_homesuite.config import get_runtime_settings
+    except Exception:
+        return None
+
+    try:
+        return get_runtime_settings()
+    except Exception:
+        return None
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -29,7 +41,9 @@ def _env_float(name: str, default: float) -> float:
 
 
 def _runtime_setting(name: str, default: Any) -> Any:
-    settings = get_runtime_settings()
+    settings = _load_runtime_settings()
+    if settings is None:
+        return default
     return getattr(settings, name, default)
 
 
@@ -92,7 +106,7 @@ class MigrationPlan:
 def _emit_migration_event(step: str, status: str, message: str, **details: Any) -> None:
     payload = {
         "event_id": f"migration.{step}.{status}",
-        "at_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "step": step,
         "status": status,
         "message": message,
@@ -324,7 +338,7 @@ def auto_migrate(db_path: str | None = None) -> None:
                         ).fetchall()
                     }
                     if existing_tables != required_tables:
-                        now_utc = datetime.now(UTC).isoformat().replace('+00:00', 'Z')
+                        now_utc = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
                         _insert_schema_version_row(conn, version=version, hash_value=hash_val, applied_at_utc=now_utc)
                         try:
                             conn.execute(
@@ -347,7 +361,7 @@ def auto_migrate(db_path: str | None = None) -> None:
             except Exception as exc:
                 raise MigrationApplyError(f"Failed applying migration v{version} ({mf.name})") from exc
 
-            now_utc = datetime.now(UTC).isoformat().replace('+00:00', 'Z')
+            now_utc = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
             _insert_schema_version_row(conn, version=version, hash_value=hash_val, applied_at_utc=now_utc)
             # Also update schema_hash table for versioned migrations
             try:

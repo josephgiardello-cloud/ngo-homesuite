@@ -1,7 +1,12 @@
 from __future__ import annotations
 
-import pytest
+from datetime import date
 
+import pytest
+from sqlalchemy import select
+
+from ngo_homesuite.grants.models import Grant
+from ngo_homesuite.grants.services import lifecycle as grant_service
 from ngo_homesuite.models.core import Donation, Donor, MembershipTier, Organization, ProgramCase, Task, db
 
 
@@ -24,7 +29,7 @@ def _login_admin(client):
     assert rv.status_code in (302, 303)
 
 
-def test_v2_grant_advance_and_disbursement_contract(client):
+def test_v2_grant_advance_and_disbursement_contract(client, app):
     _login_admin(client)
 
     created = client.post(
@@ -70,6 +75,48 @@ def test_v2_grant_advance_and_disbursement_contract(client):
     payload = disbursed.get_json()
     assert payload["amount"] == 500.0
     assert payload["received_date"] == "2026-05-15"
+
+    close_without_approval = client.post(
+        f"/api/v2/grants/{grant_id}/advance",
+        json={"new_status": "closed"},
+    )
+    assert close_without_approval.status_code == 400
+    assert "approval_request_id is required" in close_without_approval.get_json()["error"]
+
+    with app.app_context():
+        grant = db.session.scalar(select(Grant).where(Grant.id == grant_id))
+        assert grant is not None
+        grant_service.add_disbursement(grant_id, grant.organization_id, 500.0, date(2026, 5, 16))
+
+        close_req = grant_service.create_approval_request(
+            grant.organization_id,
+            action_type="grant_closeout",
+            resource_type="grant",
+            resource_id=grant_id,
+            requested_by_user_id=101,
+            requested_by_role="staff",
+        )
+        grant_service.decide_approval_request(
+            close_req.id,
+            grant.organization_id,
+            decided_by_user_id=202,
+            decided_by_role="org_admin",
+            decision="approved",
+        )
+        grant_service.decide_approval_request(
+            close_req.id,
+            grant.organization_id,
+            decided_by_user_id=203,
+            decided_by_role="controller",
+            decision="approved",
+        )
+
+    closed = client.post(
+        f"/api/v2/grants/{grant_id}/advance",
+        json={"new_status": "closed", "approval_request_id": close_req.id},
+    )
+    assert closed.status_code == 200
+    assert closed.get_json()["status"] == "closed"
 
     calendar = client.get("/api/v2/grants/calendar?within_days=30000")
     assert calendar.status_code == 200
