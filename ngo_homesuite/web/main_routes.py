@@ -14,13 +14,13 @@ from flask_login import login_required, current_user
 from flask_wtf import FlaskForm
 from werkzeug.exceptions import NotFound
 from werkzeug.utils import secure_filename
-from wtforms import BooleanField, DateField, FloatField, SelectField, StringField, SubmitField, TextAreaField
-from wtforms.validators import DataRequired, Optional as WTOptional, NumberRange, Email
+from wtforms import BooleanField, DateField, FloatField, HiddenField, SelectField, StringField, SubmitField, TextAreaField
+from wtforms.validators import DataRequired, Optional as WTOptional, NumberRange, Email, Length, Regexp
 from io import BytesIO
 from openpyxl import Workbook, load_workbook
 
 from ngo_homesuite.models.core import (
-    Organization, Beneficiary, Project, Donation, Donor, Fund, Expense, DonationReceipt, P2PPage, Volunteer, Campaign, EventDiscountCode, db
+    Organization, Beneficiary, Project, Donation, Donor, Fund, Expense, DonationReceipt, P2PPage, Volunteer, Campaign, EventDiscountCode, Task, CampaignEmailDelivery, DonorEngagementScore, db
 )
 from ngo_homesuite.services.beneficiary_service import create_beneficiary, get_beneficiary, list_beneficiaries, update_beneficiary
 from ngo_homesuite.services.program_impact_service import list_cases
@@ -325,6 +325,8 @@ def health_ready() -> Response:
 
 class DonorForm(FlaskForm):
     name = StringField('Name', validators=[DataRequired()])
+    salutation = StringField('Salutation', validators=[WTOptional(), Length(max=50)])
+    preferred_name = StringField('Preferred Name', validators=[WTOptional(), Length(max=200)])
     email = StringField('Email', validators=[WTOptional(), Email()])
     phone = StringField('Phone', validators=[WTOptional()])
     donor_type = SelectField(
@@ -337,6 +339,28 @@ class DonorForm(FlaskForm):
         ],
         validators=[DataRequired()],
     )
+    status = SelectField(
+        'Status',
+        choices=[
+            ('active', 'Active'),
+            ('prospect', 'Prospect'),
+            ('lapsed', 'Lapsed'),
+            ('archived', 'Archived'),
+        ],
+        validators=[WTOptional()],
+    )
+    preferred_contact_method = SelectField(
+        'Preferred Contact Method',
+        choices=[('email', 'Email'), ('phone', 'Phone'), ('mail', 'Mail'), ('none', 'Do Not Contact')],
+        validators=[WTOptional()],
+    )
+    communication_opt_in = BooleanField('Can Contact This Donor', default=True)
+    address = StringField('Address', validators=[WTOptional(), Length(max=300)])
+    city = StringField('City', validators=[WTOptional(), Length(max=100)])
+    country = StringField('Country', validators=[WTOptional(), Length(max=100)])
+    postal_code = StringField('Postal Code', validators=[WTOptional(), Length(max=20)])
+    employer = StringField('Employer / Organization', validators=[WTOptional(), Length(max=200)])
+    source = StringField('Lead Source', validators=[WTOptional(), Length(max=120)])
     notes = TextAreaField('Notes', validators=[WTOptional()])
     submit = SubmitField('Save Donor')
 
@@ -354,8 +378,71 @@ class DonationForm(FlaskForm):
     )
     purpose = StringField('Purpose', validators=[WTOptional()])
     reference_number = StringField('Reference Number', validators=[WTOptional()])
+    bank_routing_number = StringField('Bank Routing Number', validators=[WTOptional(), Length(max=20)])
+    bank_account_number = StringField('Bank Account Number', validators=[WTOptional(), Length(max=32)])
+    card_holder_name = StringField('Cardholder Name', validators=[WTOptional(), Length(max=120)])
+    card_brand = SelectField(
+        'Card Brand',
+        choices=[('', 'Select brand'), ('visa', 'Visa'), ('mastercard', 'Mastercard'), ('amex', 'American Express'), ('discover', 'Discover')],
+        validators=[WTOptional()],
+    )
+    card_last4 = StringField('Card Last 4', validators=[WTOptional(), Length(min=4, max=4), Regexp(r'^\d{4}$', message='Card last 4 must be 4 digits')])
+    card_exp_month = StringField('Expiry Month', validators=[WTOptional(), Length(min=2, max=2), Regexp(r'^\d{2}$', message='Use MM format')])
+    card_exp_year = StringField('Expiry Year', validators=[WTOptional(), Length(min=2, max=4), Regexp(r'^\d{2,4}$', message='Use YY or YYYY format')])
+    cash_award_reference = StringField('Cash Award Reference', validators=[WTOptional(), Length(max=100)])
     notes = TextAreaField('Notes', validators=[WTOptional()])
     submit = SubmitField('Record Donation')
+
+
+class DonorQuickDonationForm(FlaskForm):
+    amount = FloatField('Amount', validators=[DataRequired(), NumberRange(min=0.01)])
+    currency = SelectField('Currency', choices=[('USD', 'USD'), ('EUR', 'EUR'), ('GBP', 'GBP')], validators=[DataRequired()])
+    payment_method = SelectField(
+        'Payment Method',
+        choices=[('cash', 'Cash'), ('bank_transfer', 'Bank Transfer'), ('credit_card', 'Credit Card')],
+        validators=[DataRequired()],
+    )
+    project_id = SelectField('Project', coerce=int, validators=[WTOptional()])
+    fund_id = SelectField('Fund', coerce=int, validators=[WTOptional()])
+    purpose = StringField('Purpose', validators=[WTOptional()])
+    reference_number = StringField('Reference / Receipt Number', validators=[WTOptional(), Length(max=100)])
+    notes = TextAreaField('Notes', validators=[WTOptional()])
+    bank_routing_number = StringField('Bank Routing Number', validators=[WTOptional(), Length(max=20)])
+    bank_account_number = StringField('Bank Account Number', validators=[WTOptional(), Length(max=32)])
+    card_holder_name = StringField('Cardholder Name', validators=[WTOptional(), Length(max=120)])
+    card_brand = SelectField(
+        'Card Brand',
+        choices=[('', 'Select brand'), ('visa', 'Visa'), ('mastercard', 'Mastercard'), ('amex', 'American Express'), ('discover', 'Discover')],
+        validators=[WTOptional()],
+    )
+    card_last4 = StringField('Card Last 4', validators=[WTOptional(), Length(min=4, max=4), Regexp(r'^\d{4}$', message='Card last 4 must be 4 digits')])
+    card_exp_month = StringField('Expiry Month', validators=[WTOptional(), Length(min=2, max=2), Regexp(r'^\d{2}$', message='Use MM format')])
+    card_exp_year = StringField('Expiry Year', validators=[WTOptional(), Length(min=2, max=4), Regexp(r'^\d{2,4}$', message='Use YY or YYYY format')])
+    cash_award_reference = StringField('Cash Award Reference', validators=[WTOptional(), Length(max=100)])
+    submit = SubmitField('Record Donation')
+
+
+class DonorQuickTaskForm(FlaskForm):
+    title = StringField('Task Title', validators=[DataRequired(), Length(max=300)])
+    task_type = SelectField(
+        'Task Type',
+        choices=[
+            ('follow_up', 'Follow Up'),
+            ('call', 'Call'),
+            ('email', 'Email'),
+            ('meeting', 'Meeting'),
+            ('general', 'General'),
+        ],
+        validators=[DataRequired()],
+    )
+    priority = SelectField(
+        'Priority',
+        choices=[('low', 'Low'), ('medium', 'Medium'), ('high', 'High'), ('urgent', 'Urgent')],
+        validators=[DataRequired()],
+    )
+    due_date = DateField('Due Date', validators=[WTOptional()])
+    notes = TextAreaField('Task Notes', validators=[WTOptional(), Length(max=2000)])
+    submit = SubmitField('Create Task')
 
 
 class ExpenseForm(FlaskForm):
@@ -444,6 +531,67 @@ class RecurringDonationForm(FlaskForm):
         validators=[DataRequired()],
     )
     submit = SubmitField('Create Recurring Plan')
+
+
+def _mask_tail(value: str | None, *, keep: int = 4) -> str | None:
+    text = str(value or '').strip()
+    if not text:
+        return None
+    if len(text) <= keep:
+        return text
+    return f"****{text[-keep:]}"
+
+
+def _build_quick_donation_notes(form: FlaskForm) -> str | None:
+    parts: list[str] = []
+    notes = str(getattr(form, 'notes', None).data or '').strip() if hasattr(form, 'notes') else ''
+    if notes:
+        parts.append(notes)
+
+    method = str(getattr(form, 'payment_method', None).data or '').strip().lower()
+    if method == 'bank_transfer':
+        routing = _mask_tail(getattr(form, 'bank_routing_number', None).data)
+        account = _mask_tail(getattr(form, 'bank_account_number', None).data)
+        details = ['Method: Bank Transfer']
+        if routing:
+            details.append(f'Routing: {routing}')
+        if account:
+            details.append(f'Account: {account}')
+        parts.append(' | '.join(details))
+    elif method == 'credit_card':
+        holder = str(getattr(form, 'card_holder_name', None).data or '').strip()
+        brand = str(getattr(form, 'card_brand', None).data or '').strip()
+        last4 = _mask_tail(getattr(form, 'card_last4', None).data)
+        exp_month = str(getattr(form, 'card_exp_month', None).data or '').strip()
+        exp_year = str(getattr(form, 'card_exp_year', None).data or '').strip()
+        details = ['Method: Credit Card']
+        if holder:
+            details.append(f'Cardholder: {holder}')
+        if brand:
+            details.append(f'Brand: {brand}')
+        if last4:
+            details.append(f'Last4: {last4}')
+        if exp_month or exp_year:
+            details.append(f'Expiry: {exp_month}/{exp_year}'.rstrip('/'))
+        parts.append(' | '.join(details))
+    elif method == 'cash':
+        award_ref = str(getattr(form, 'cash_award_reference', None).data or '').strip()
+        details = ['Method: Cash']
+        if award_ref:
+            details.append(f'Award Ref: {award_ref}')
+        parts.append(' | '.join(details))
+
+    if not parts:
+        return None
+    return '\n'.join(parts)
+
+
+def _build_quick_donation_reference(form: FlaskForm) -> str | None:
+    reference = str(getattr(form, 'reference_number', None).data or '').strip() if hasattr(form, 'reference_number') else ''
+    if reference:
+        return reference
+    method = str(getattr(form, 'payment_method', None).data or '').strip().upper() or 'DONATION'
+    return f"{method}-{uuid.uuid4().hex[:10].upper()}"
 
 
 class BeneficiaryIntakeForm(FlaskForm):
@@ -552,6 +700,12 @@ def _normalize_phone(value: str) -> str:
     return ''.join(ch for ch in (value or '') if ch.isdigit())
 
 
+def _normalize_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or '').strip().lower() in {'1', 'true', 'yes', 'on', 'y'}
+
+
 def _donor_import_cache_dir() -> Path:
     cache_dir = Path(current_app.instance_path) / 'donor_import_cache'
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -651,13 +805,41 @@ def _parse_donor_import_file(path: Path) -> tuple[list[str], list[dict[str, str]
 def _guess_donor_import_mapping(headers: list[str]) -> dict[str, str]:
     aliases = {
         'name': {'name', 'full name', 'donor', 'donor name'},
+        'salutation': {'salutation', 'title', 'prefix'},
+        'preferred_name': {'preferred name', 'preferred_name', 'nickname', 'preferred'},
         'email': {'email', 'email address', 'e-mail'},
         'phone': {'phone', 'phone number', 'mobile', 'telephone'},
         'donor_type': {'type', 'donor type', 'category'},
+        'status': {'status', 'crm status', 'donor status'},
+        'preferred_contact_method': {'preferred contact method', 'contact preference', 'contact method'},
+        'communication_opt_in': {'can contact this donor', 'opt in', 'communication opt in', 'contact ok'},
+        'address': {'address', 'street', 'mailing address'},
+        'city': {'city', 'town'},
+        'country': {'country', 'nation'},
+        'postal_code': {'postal code', 'zip', 'zip code', 'postcode'},
+        'employer': {'employer', 'organization', 'company'},
+        'source': {'source', 'lead source', 'donor source'},
         'notes': {'notes', 'note', 'comments', 'comment'},
     }
 
-    mapping: dict[str, str] = {'name': '', 'email': '', 'phone': '', 'donor_type': '', 'notes': ''}
+    mapping: dict[str, str] = {
+        'name': '',
+        'salutation': '',
+        'preferred_name': '',
+        'email': '',
+        'phone': '',
+        'donor_type': '',
+        'status': '',
+        'preferred_contact_method': '',
+        'communication_opt_in': '',
+        'address': '',
+        'city': '',
+        'country': '',
+        'postal_code': '',
+        'employer': '',
+        'source': '',
+        'notes': '',
+    }
     normalized = {h: _normalize_text(h) for h in headers}
     for target, candidates in aliases.items():
         for header, normalized_header in normalized.items():
@@ -671,9 +853,20 @@ def _guess_donor_import_mapping(headers: list[str]) -> dict[str, str]:
 def _extract_donor_import_mapping(form_data) -> dict[str, str]:
     mapping = {
         'name': (form_data.get('map_name') or '').strip(),
+        'salutation': (form_data.get('map_salutation') or '').strip(),
+        'preferred_name': (form_data.get('map_preferred_name') or '').strip(),
         'email': (form_data.get('map_email') or '').strip(),
         'phone': (form_data.get('map_phone') or '').strip(),
         'donor_type': (form_data.get('map_donor_type') or '').strip(),
+        'status': (form_data.get('map_status') or '').strip(),
+        'preferred_contact_method': (form_data.get('map_preferred_contact_method') or '').strip(),
+        'communication_opt_in': (form_data.get('map_communication_opt_in') or '').strip(),
+        'address': (form_data.get('map_address') or '').strip(),
+        'city': (form_data.get('map_city') or '').strip(),
+        'country': (form_data.get('map_country') or '').strip(),
+        'postal_code': (form_data.get('map_postal_code') or '').strip(),
+        'employer': (form_data.get('map_employer') or '').strip(),
+        'source': (form_data.get('map_source') or '').strip(),
         'notes': (form_data.get('map_notes') or '').strip(),
     }
     return mapping
@@ -698,9 +891,20 @@ def _build_donor_import_preview(org_id: int, rows: list[dict[str, str]], mapping
 
     for idx, row in enumerate(rows, start=1):
         mapped_name = str(row.get(mapping['name'], '') if mapping.get('name') else '').strip()
+        mapped_salutation = str(row.get(mapping['salutation'], '') if mapping.get('salutation') else '').strip()
+        mapped_preferred_name = str(row.get(mapping['preferred_name'], '') if mapping.get('preferred_name') else '').strip()
         mapped_email = str(row.get(mapping['email'], '') if mapping.get('email') else '').strip().lower()
         mapped_phone = str(row.get(mapping['phone'], '') if mapping.get('phone') else '').strip()
         mapped_type = str(row.get(mapping['donor_type'], '') if mapping.get('donor_type') else '').strip().lower() or 'individual'
+        mapped_status = str(row.get(mapping['status'], '') if mapping.get('status') else '').strip().lower() or 'active'
+        mapped_contact_method = str(row.get(mapping['preferred_contact_method'], '') if mapping.get('preferred_contact_method') else '').strip().lower() or 'email'
+        mapped_opt_in = _normalize_bool(row.get(mapping['communication_opt_in'], '') if mapping.get('communication_opt_in') else True)
+        mapped_address = str(row.get(mapping['address'], '') if mapping.get('address') else '').strip()
+        mapped_city = str(row.get(mapping['city'], '') if mapping.get('city') else '').strip()
+        mapped_country = str(row.get(mapping['country'], '') if mapping.get('country') else '').strip()
+        mapped_postal_code = str(row.get(mapping['postal_code'], '') if mapping.get('postal_code') else '').strip()
+        mapped_employer = str(row.get(mapping['employer'], '') if mapping.get('employer') else '').strip()
+        mapped_source = str(row.get(mapping['source'], '') if mapping.get('source') else '').strip()
         mapped_notes = str(row.get(mapping['notes'], '') if mapping.get('notes') else '').strip()
 
         errors: list[str] = []
@@ -711,6 +915,12 @@ def _build_donor_import_preview(org_id: int, rows: list[dict[str, str]], mapping
         if mapped_type not in _DONOR_IMPORT_VALID_TYPES:
             warnings.append(f"Unknown donor type '{mapped_type}' -> default to individual")
             mapped_type = 'individual'
+        if mapped_status not in {'active', 'prospect', 'lapsed', 'archived'}:
+            warnings.append(f"Unknown status '{mapped_status}' -> default to active")
+            mapped_status = 'active'
+        if mapped_contact_method not in {'email', 'phone', 'mail', 'none'}:
+            warnings.append(f"Unknown preferred contact method '{mapped_contact_method}' -> default to email")
+            mapped_contact_method = 'email'
 
         duplicate_match = None
         if mapped_email:
@@ -732,11 +942,22 @@ def _build_donor_import_preview(org_id: int, rows: list[dict[str, str]], mapping
             {
                 'row_number': idx,
                 'name': mapped_name,
+                'salutation': mapped_salutation,
+                'preferred_name': mapped_preferred_name,
                 'email': mapped_email,
                 'phone': mapped_phone,
                 'donor_type': mapped_type,
+                'crm_status': mapped_status,
+                'preferred_contact_method': mapped_contact_method,
+                'communication_opt_in': mapped_opt_in,
+                'address': mapped_address,
+                'city': mapped_city,
+                'country': mapped_country,
+                'postal_code': mapped_postal_code,
+                'employer': mapped_employer,
+                'source': mapped_source,
                 'notes': mapped_notes,
-                'status': status,
+                'import_status': status,
                 'errors': errors,
                 'warnings': warnings,
                 'duplicate_match': duplicate_match,
@@ -770,9 +991,20 @@ def _apply_donor_import(org_id: int, preview_rows: list[dict[str, object]]) -> d
         DonorService().create_donor(
             org_id,
             str(item.get('name') or '').strip(),
+            salutation=(str(item.get('salutation') or '').strip() or None),
+            preferred_name=(str(item.get('preferred_name') or '').strip() or None),
             email=(str(item.get('email') or '').strip() or None),
             phone=(str(item.get('phone') or '').strip() or None),
             donor_type=str(item.get('donor_type') or 'individual').strip() or 'individual',
+            status=str(item.get('crm_status') or 'active').strip() or 'active',
+            preferred_contact_method=str(item.get('preferred_contact_method') or 'email').strip() or 'email',
+            communication_opt_in=_normalize_bool(item.get('communication_opt_in', True)),
+            address=(str(item.get('address') or '').strip() or None),
+            city=(str(item.get('city') or '').strip() or None),
+            country=(str(item.get('country') or '').strip() or None),
+            postal_code=(str(item.get('postal_code') or '').strip() or None),
+            employer=(str(item.get('employer') or '').strip() or None),
+            source=(str(item.get('source') or '').strip() or None),
             notes=(str(item.get('notes') or '').strip() or None),
         )
         created += 1
@@ -2044,14 +2276,88 @@ def donors_list():
     return render_template('donors.html', **ctx)
 
 
-@main_bp.route('/donors/<int:donor_id>')
+@main_bp.route('/donors/<int:donor_id>', methods=['GET', 'POST'])
 @login_required
+@roles_required('admin', 'staff', 'viewer')
 def donor_detail(donor_id: int):
     from ngo_homesuite.services.activity_timeline_service import ActivityTimelineService
 
     org = _current_org()
     donor_summary = ReportingService().donor_profile_summary(org.id, donor_id, recent_limit=10)
     donor = donor_summary['donor']
+    donation_service = DonationService()
+
+    quick_donation_form = DonorQuickDonationForm()
+    quick_task_form = DonorQuickTaskForm(prefix='task')
+    quick_donation_form.project_id.choices = [(0, 'General / None')] + [(p.id, p.name) for p in ProjectService().list_all_projects(org.id)]
+    quick_donation_form.fund_id.choices = [(0, 'General / None')] + [
+        (f.id, f.name)
+        for f in FundService().list_funds(org.id, active_only=True, page=1, per_page=500)['items']
+    ]
+
+    if request.method == 'POST' and quick_task_form.submit.name in request.form:
+        if quick_task_form.validate_on_submit():
+            task = Task(
+                organization_id=int(org.id),
+                donor_id=int(donor.id),
+                assigned_to_id=getattr(current_user, 'id', None),
+                title=(quick_task_form.title.data or '').strip(),
+                description=(quick_task_form.notes.data or '').strip() or None,
+                task_type=str(quick_task_form.task_type.data or 'follow_up'),
+                priority=str(quick_task_form.priority.data or 'medium'),
+                status='open',
+                due_date=quick_task_form.due_date.data,
+            )
+            db.session.add(task)
+            db.session.commit()
+            flash('Stewardship task created from donor profile.', 'success')
+            return redirect(url_for('main.donor_detail', donor_id=donor.id))
+        flash('Please fix task form errors and try again.', 'error')
+
+    if request.method == 'POST' and quick_donation_form.submit.name in request.form and quick_donation_form.validate_on_submit():
+        payment_method = str(quick_donation_form.payment_method.data or '').strip().lower()
+        validation_errors: list[str] = []
+        if payment_method == 'bank_transfer':
+            if not str(quick_donation_form.bank_routing_number.data or '').strip():
+                validation_errors.append('Bank routing number is required for bank transfers.')
+            if not str(quick_donation_form.bank_account_number.data or '').strip():
+                validation_errors.append('Bank account number is required for bank transfers.')
+        elif payment_method == 'credit_card':
+            if not str(quick_donation_form.card_holder_name.data or '').strip():
+                validation_errors.append('Cardholder name is required for credit card donations.')
+            if not str(quick_donation_form.card_last4.data or '').strip():
+                validation_errors.append('Card last 4 digits are required for credit card donations.')
+
+        if validation_errors:
+            for message in validation_errors:
+                flash(message, 'error')
+        else:
+            try:
+                donation = donation_service.create_donation(
+                    org_id=org.id,
+                    donor_name=donor.name,
+                    amount=float(quick_donation_form.amount.data),
+                    currency=quick_donation_form.currency.data,
+                    donor_email=donor.email,
+                    donor_phone=donor.phone,
+                    donor_id=donor.id,
+                    project_id=quick_donation_form.project_id.data or None,
+                    fund_id=quick_donation_form.fund_id.data or None,
+                    payment_method=payment_method,
+                    reference_number=_build_quick_donation_reference(quick_donation_form),
+                    purpose=(quick_donation_form.purpose.data or '').strip() or None,
+                    notes=_build_quick_donation_notes(quick_donation_form),
+                    status='received',
+                )
+                donation_service.update_status(donation.id, org.id, 'processed', actor_id=getattr(current_user, 'id', None))
+                if donor.email:
+                    _issue_receipt_for_donation(donation, recipient_email=donor.email)
+                flash('Donation recorded from donor profile.', 'success')
+                return redirect(url_for('main.donor_detail', donor_id=donor.id))
+            except ValueError as exc:
+                flash(str(exc), 'error')
+            except DonationConcurrencyError:
+                flash('This donation was updated by another user. Please reload and try again.', 'error')
 
     ai_context = {
         'active_page': 'donors',
@@ -2078,6 +2384,131 @@ def donor_detail(donor_id: int):
         donor_ai_insights = None
 
     activity_query = (request.args.get('activity_q') or '').strip()
+
+    engagement_score = db.session.scalars(
+        select(DonorEngagementScore).where(
+            DonorEngagementScore.organization_id == int(org.id),
+            DonorEngagementScore.donor_id == int(donor.id),
+        ).limit(1)
+    ).first()
+
+    generated_tags: list[str] = []
+    if donor.donor_type:
+        generated_tags.append(f"type:{str(donor.donor_type).strip().lower()}")
+    if getattr(donor, 'status', None):
+        generated_tags.append(f"status:{str(donor.status).strip().lower()}")
+    if getattr(donor, 'preferred_contact_method', None):
+        generated_tags.append(f"contact:{str(donor.preferred_contact_method).strip().lower()}")
+    if getattr(donor, 'source', None):
+        generated_tags.append(f"source:{str(donor.source).strip().lower()}")
+    if engagement_score and engagement_score.segment:
+        generated_tags.append(f"segment:{str(engagement_score.segment).strip().lower()}")
+
+    custom_field_schema = []
+    org_metadata = org.metadata_json if isinstance(getattr(org, 'metadata_json', None), dict) else {}
+    schema = org_metadata.get('custom_fields_schema', {}) if isinstance(org_metadata, dict) else {}
+    if isinstance(schema, dict):
+        donor_schema = schema.get('donor', [])
+        if isinstance(donor_schema, list):
+            custom_field_schema = [field for field in donor_schema if isinstance(field, dict)]
+
+    donor_custom_metadata = getattr(donor, 'metadata_json', None)
+    donor_custom_metadata = donor_custom_metadata if isinstance(donor_custom_metadata, dict) else {}
+    donor_custom_field_values: list[dict[str, str]] = []
+    for field in custom_field_schema:
+        key = str(field.get('key') or '').strip()
+        if not key:
+            continue
+        display_name = str(field.get('label') or key)
+        value = donor_custom_metadata.get(key)
+        if value is None and hasattr(donor, key):
+            value = getattr(donor, key)
+        if isinstance(value, (list, dict)):
+            value_text = json.dumps(value, ensure_ascii=True)
+        else:
+            value_text = '' if value is None else str(value)
+        donor_custom_field_values.append(
+            {
+                'key': key,
+                'label': display_name,
+                'value': value_text,
+                'is_available': bool(value_text.strip()),
+            }
+        )
+
+    household_name = None
+    donor_relationships: list[dict[str, object]] = []
+    try:
+        conn = db.session.connection()
+        household_row = conn.exec_driver_sql(
+            """
+            SELECT h.name
+            FROM donors d
+            LEFT JOIN households h ON h.id = d.household_id
+            WHERE d.id = :donor_id AND d.organization_id = :org_id
+            LIMIT 1
+            """,
+            {'donor_id': int(donor.id), 'org_id': int(org.id)},
+        ).first()
+        household_name = household_row[0] if household_row and household_row[0] else None
+
+        relationship_rows = conn.exec_driver_sql(
+            """
+            SELECT
+                dr.relationship_type,
+                d2.id AS related_donor_id,
+                d2.name AS related_donor_name
+            FROM donor_relationships dr
+            JOIN donors d1 ON d1.id = dr.from_donor_id
+            JOIN donors d2 ON d2.id = dr.to_donor_id
+            WHERE d1.id = :donor_id
+              AND d1.organization_id = :org_id
+            ORDER BY d2.name ASC
+            """,
+            {'donor_id': int(donor.id), 'org_id': int(org.id)},
+        ).fetchall()
+        donor_relationships = [
+            {
+                'relationship_type': row[0],
+                'related_donor_id': row[1],
+                'related_donor_name': row[2],
+            }
+            for row in relationship_rows
+        ]
+    except Exception as exc:
+        current_app.logger.warning(
+            'donor_detail_household_relationship_lookup_failed org_id=%s donor_id=%s error=%s',
+            int(org.id),
+            int(donor.id),
+            exc,
+            exc_info=True,
+        )
+        household_name = None
+        donor_relationships = []
+
+    stewardship_tasks = list(
+        db.session.scalars(
+            select(Task)
+            .where(
+                Task.organization_id == int(org.id),
+                Task.donor_id == int(donor.id),
+            )
+            .order_by(Task.due_date.desc(), Task.created_at.desc())
+            .limit(10)
+        )
+    )
+
+    communication_history = list(
+        db.session.scalars(
+            select(CampaignEmailDelivery)
+            .where(
+                CampaignEmailDelivery.organization_id == int(org.id),
+                CampaignEmailDelivery.donor_id == int(donor.id),
+            )
+            .order_by(CampaignEmailDelivery.sent_at.desc(), CampaignEmailDelivery.created_at.desc())
+            .limit(10)
+        )
+    )
 
     # Fetch unified activity timeline
     timeline_items = []
@@ -2107,6 +2538,16 @@ def donor_detail(donor_id: int):
         active_page='donors',
         ai_context=ai_context,
         donor_ai_insights=donor_ai_insights,
+        quick_donation_form=quick_donation_form,
+        quick_task_form=quick_task_form,
+        household_name=household_name,
+        donor_relationships=donor_relationships,
+        engagement_score=engagement_score,
+        generated_tags=generated_tags,
+        custom_field_schema=custom_field_schema,
+        donor_custom_field_values=donor_custom_field_values,
+        stewardship_tasks=stewardship_tasks,
+        communication_history=communication_history,
     )
 
 
@@ -2152,13 +2593,30 @@ def donor_create():
         return redirect(url_for('main.dashboard'))
 
     form = DonorForm()
+    if request.method == 'GET':
+        form.status.data = 'active'
+        form.preferred_contact_method.data = 'email'
+        form.communication_opt_in.data = True
     if form.validate_on_submit():
+        donor_status = form.status.data or 'active'
+        preferred_contact_method = form.preferred_contact_method.data or 'email'
         donor = DonorService().create_donor(
             org.id,
             form.name.data,
+            salutation=form.salutation.data,
+            preferred_name=form.preferred_name.data,
             email=form.email.data,
             phone=form.phone.data,
             donor_type=form.donor_type.data,
+            status=donor_status,
+            preferred_contact_method=preferred_contact_method,
+            communication_opt_in=bool(form.communication_opt_in.data),
+            address=form.address.data,
+            city=form.city.data,
+            country=form.country.data,
+            postal_code=form.postal_code.data,
+            employer=form.employer.data,
+            source=form.source.data,
             notes=form.notes.data,
         )
 
@@ -2186,13 +2644,26 @@ def donor_edit(donor_id: int):
     form = DonorForm(obj=donor)
 
     if form.validate_on_submit():
+        donor_status = form.status.data or 'active'
+        preferred_contact_method = form.preferred_contact_method.data or 'email'
         donor = DonorService().update_donor(
             donor.id,
             org.id,
             name=form.name.data,
+            salutation=form.salutation.data,
+            preferred_name=form.preferred_name.data,
             email=form.email.data,
             phone=form.phone.data,
             donor_type=form.donor_type.data,
+            status=donor_status,
+            preferred_contact_method=preferred_contact_method,
+            communication_opt_in=bool(form.communication_opt_in.data),
+            address=form.address.data,
+            city=form.city.data,
+            country=form.country.data,
+            postal_code=form.postal_code.data,
+            employer=form.employer.data,
+            source=form.source.data,
             notes=form.notes.data,
         )
 
@@ -2478,6 +2949,10 @@ def donation_create():
     form.project_id.choices = project_options
     form.fund_id.choices = fund_options
 
+    donor_id_query = request.args.get('donor_id', type=int)
+    if donor_id_query:
+        form.donor_id.data = donor_id_query
+
     if form.validate_on_submit():
         try:
             donor = donor_service.get_donor(form.donor_id.data, org.id)
@@ -2499,9 +2974,9 @@ def donation_create():
                 project_id=form.project_id.data or None,
                 fund_id=form.fund_id.data or None,
                 payment_method=form.payment_method.data,
-                reference_number=form.reference_number.data or None,
+                reference_number=_build_quick_donation_reference(form),
                 purpose=form.purpose.data,
-                notes=form.notes.data,
+                notes=_build_quick_donation_notes(form),
                 status='received',
             )
             donation_service.update_status(donation.id, org.id, 'processed', actor_id=getattr(current_user, 'id', None))

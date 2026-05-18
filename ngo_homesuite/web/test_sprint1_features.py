@@ -17,6 +17,7 @@ from ngo_homesuite.models.core import (
     P2PPage,
     Project,
     RecurringDonationPlan,
+    Task,
     db,
 )
 
@@ -505,6 +506,57 @@ def test_donor_detail_page_shows_profile_metrics(client, app):
     assert "Next Best Action:" in body
     assert "Recent Donations" in body
     assert "Recurring Plans" in body
+    assert "Section Visibility" in body
+    assert "Household & Relationships" in body
+    assert "Segments, Tags & Custom Fields" in body
+    assert "Stewardship Tasks" in body
+    assert "Communication History" in body
+    assert "Quick Stewardship Task" in body
+    assert "Custom Field Values" in body
+    assert "donor-detail-visibility-v1:user-" in body
+    assert ":donor-" in body
+
+
+def test_donor_detail_quick_task_create(client, app):
+    _login_admin(client)
+
+    with app.app_context():
+        org = Organization.query.filter_by(is_active=True).first()
+        org_id = org.id
+        donor = Donor(
+            organization_id=org.id,
+            name="Task Donor",
+            email="task.donor@example.org",
+            donor_type="individual",
+        )
+        db.session.add(donor)
+        db.session.commit()
+        donor_id = donor.id
+
+    rv = client.post(
+        f"/donors/{donor_id}",
+        data={
+            "task-title": "Call donor for stewardship update",
+            "task-task_type": "call",
+            "task-priority": "high",
+            "task-due_date": date.today().isoformat(),
+            "task-notes": "Discuss annual impact report.",
+            "task-submit": "Create Task",
+        },
+        follow_redirects=False,
+    )
+    assert rv.status_code in (302, 303)
+
+    with app.app_context():
+        task = (
+            Task.query.filter_by(organization_id=org_id, donor_id=donor_id)
+            .order_by(Task.id.desc())
+            .first()
+        )
+        assert task is not None
+        assert task.title == "Call donor for stewardship update"
+        assert task.task_type == "call"
+        assert task.priority == "high"
 
 
 def test_donor_create_accepts_photo_upload(client, app):
