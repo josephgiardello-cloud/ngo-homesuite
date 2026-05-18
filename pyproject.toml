@@ -59,7 +59,7 @@ dependencies = [
   "chromadb==0.5.5",
   "pypdf==5.9.0",
   "python-dateutil==2.9.0.post0",
-  "reportlab==4.2.2",
+  "reportlab==4.5.1",
   "boto3==1.42.18",
   "botocore==1.43.9",
   "azure-identity==1.25.1",
