@@ -585,6 +585,57 @@ def test_donor_create_accepts_photo_upload(client, app):
         assert file_path.exists()
 
 
+def test_donations_page_handles_malformed_amount_rows(client, app):
+    _login_admin(client)
+
+    with app.app_context():
+        org = Organization.query.filter_by(is_active=True).first()
+        donor = Donor(
+            organization_id=org.id,
+            name="Null Amount Donor",
+            email="null.amount@example.org",
+            donor_type="individual",
+        )
+        db.session.add(donor)
+        db.session.flush()
+
+        # Simulate legacy SQLite drift where amount is persisted as non-numeric text.
+        conn = db.session.connection()
+        conn.exec_driver_sql(
+            """
+            INSERT INTO donations (
+                organization_id, donor_id, donor_name, donor_email,
+                amount, currency, donation_date, status, purpose,
+                payment_method, created_at, updated_at, version_id
+            )
+            VALUES (
+                :organization_id, :donor_id, :donor_name, :donor_email,
+                :amount, :currency, CURRENT_TIMESTAMP, :status, :purpose,
+                :payment_method, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, :version_id
+            )
+            """,
+            {
+                'organization_id': int(org.id),
+                'donor_id': int(donor.id),
+                'donor_name': donor.name,
+                'donor_email': donor.email,
+                'amount': 'legacy-bad-value',
+                'currency': 'USD',
+                'status': 'received',
+                'purpose': 'Legacy import',
+                'payment_method': 'bank_transfer',
+                'version_id': 0,
+            },
+        )
+        db.session.commit()
+
+    rv = client.get("/donations")
+    assert rv.status_code == 200
+    body = rv.get_data(as_text=True)
+    assert "Null Amount Donor" in body
+    assert "USD 0.00" in body
+
+
 def test_donations_export_iif_returns_payload(client, app):
     _login_admin(client)
 

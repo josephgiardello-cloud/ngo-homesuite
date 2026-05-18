@@ -18,7 +18,7 @@
     <div class="card">
         <div class="card-text">Total Visible Amount</div>
         <div class="card-value">
-            ${{ '%.2f'|format(donations | map(attribute='amount') | sum) }}
+            ${{ '%.2f'|format(ai_context.total_donations or 0) }}
         </div>
     </div>
     <div class="card">
@@ -89,8 +89,8 @@
     {% for donation in donations %}
         <tr>
             <td>{{ donation.donation_date.strftime('%Y-%m-%d') if donation.donation_date else '-' }}</td>
-            <td>{{ donation.donor_name }}</td>
-            <td>{{ donation.currency }} {{ '%.2f'|format(donation.amount) }}</td>
+            <td>{{ donation.donor_name or '-' }}</td>
+            <td>{{ donation.currency or 'USD' }} {{ '%.2f'|format(donation.amount if donation.amount is number else 0) }}</td>
             <td><span style="padding: 0.2rem 0.6rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-soft);">{{ donation.status }}</span></td>
             <td>{{ donation.payment_method or '-' }}</td>
             <td>{{ donation.purpose or '-' }}</td>

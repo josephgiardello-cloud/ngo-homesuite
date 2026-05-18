@@ -3085,11 +3085,19 @@ def donations_list():
             min_amount=min_amount,
             max_amount=max_amount,
         )
+
+    total_visible_amount = 0.0
+    for donation in donations:
+        try:
+            total_visible_amount += float(getattr(donation, 'amount', 0) or 0)
+        except (TypeError, ValueError):
+            continue
+
     ai_context = {
         'active_page': 'donations',
         'organization': org.name if org else None,
         'donation_count': len(donations),
-        'total_donations': sum(float(d.amount or 0) for d in donations),
+        'total_donations': total_visible_amount,
     }
     return render_template(
         'donations.html',
