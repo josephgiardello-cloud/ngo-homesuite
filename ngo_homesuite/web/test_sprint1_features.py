@@ -672,6 +672,103 @@ def test_donations_export_iif_returns_payload(client, app):
     assert "DEPOSIT" in body
 
 
+def test_donations_page_supports_advanced_filters_sort_and_pagination(client, app):
+    _login_admin(client)
+
+    with app.app_context():
+        org = Organization.query.filter_by(is_active=True).first()
+        donor = Donor(
+            organization_id=org.id,
+            name="Filter Sort Donor",
+            email="filter.sort@example.org",
+            donor_type="individual",
+        )
+        db.session.add(donor)
+        db.session.flush()
+
+        for idx in range(3):
+            db.session.add(
+                Donation(
+                    organization_id=org.id,
+                    donor_id=donor.id,
+                    donor_name=donor.name,
+                    donor_email=donor.email,
+                    amount=50 + idx,
+                    currency="USD",
+                    status="received",
+                    payment_method="bank_transfer",
+                    purpose=f"Filter batch {idx}",
+                )
+            )
+        db.session.commit()
+
+    rv = client.get(
+        "/donations?currency=USD&donor_type=individual&sort_by=amount&sort_dir=asc&per_page=25&page=1",
+        follow_redirects=True,
+    )
+    assert rv.status_code == 200
+    body = rv.get_data(as_text=True)
+    assert "Rows / Page" in body
+    assert "Filter Sort Donor" in body
+    assert "Mark Processed" in body
+
+
+def test_donation_row_status_update_and_receipt_resend_actions(client, app):
+    _login_admin(client)
+
+    with app.app_context():
+        org = Organization.query.filter_by(is_active=True).first()
+        donor = Donor(
+            organization_id=org.id,
+            name="Action Donor",
+            email="action.donor@example.org",
+            donor_type="individual",
+        )
+        db.session.add(donor)
+        db.session.flush()
+
+        donation = Donation(
+            organization_id=org.id,
+            donor_id=donor.id,
+            donor_name=donor.name,
+            donor_email=donor.email,
+            amount=88.0,
+            currency="USD",
+            status="received",
+            payment_method="credit_card",
+            purpose="Action flow",
+        )
+        db.session.add(donation)
+        db.session.commit()
+        donation_id = donation.id
+
+    rv = client.post(
+        f"/donations/{donation_id}/status",
+        data={
+            'donation_id': str(donation_id),
+            'new_status': 'processed',
+            'next_url': '/donations',
+        },
+        follow_redirects=False,
+    )
+    assert rv.status_code in (302, 303)
+
+    with app.app_context():
+        refreshed = db.session.get(Donation, donation_id)
+        assert refreshed is not None
+        assert refreshed.status == 'processed'
+
+    rv2 = client.post(
+        f"/donations/{donation_id}/receipt/resend",
+        data={
+            'donation_id': str(donation_id),
+            'next_url': '/donations',
+        },
+        follow_redirects=False,
+    )
+    assert rv2.status_code in (302, 303)
+
+
 def test_expenses_export_iif_returns_payload(client, app):
     _login_admin(client)
 

@@ -24,7 +24,7 @@ from ngo_homesuite.models.core import (
 )
 from ngo_homesuite.services.beneficiary_service import create_beneficiary, get_beneficiary, list_beneficiaries, update_beneficiary
 from ngo_homesuite.services.program_impact_service import list_cases
-from ngo_homesuite.services.donation_service import DonationConcurrencyError, DonationNotFound, DonationService
+from ngo_homesuite.services.donation_service import DonationConcurrencyError, DonationNotFound, DonationService, InvalidStatusTransition
 from ngo_homesuite.services.donor_service import DonorNotFound, DonorService
 from ngo_homesuite.services.expense_service import ExpenseService
 from ngo_homesuite.services.payment_service import PaymentService, StripeNotConfigured
@@ -485,6 +485,13 @@ class ConfirmDeleteForm(FlaskForm):
     submit = SubmitField('Delete')
 
 
+class DonationRowActionForm(FlaskForm):
+    donation_id = HiddenField(validators=[DataRequired()])
+    next_url = HiddenField(validators=[WTOptional()])
+    new_status = HiddenField(validators=[WTOptional()])
+    submit = SubmitField('Submit')
+
+
 class PublicDonationForm(FlaskForm):
     donor_name = StringField('Full Name', validators=[DataRequired()])
     donor_email = StringField('Email', validators=[WTOptional(), Email()])
@@ -691,6 +698,16 @@ def _parse_float(value: str):
         return None
     try:
         return float(value)
+    except ValueError:
+        return None
+
+
+def _parse_date(value: str):
+    value = (value or '').strip()
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value).date()
     except ValueError:
         return None
 
@@ -3075,6 +3092,24 @@ def donations_list():
     query = request.args.get('q', '').strip()
     payment_method = request.args.get('payment_method', '').strip()
     status = request.args.get('status', '').strip()
+    currency = request.args.get('currency', '').strip().upper()
+    donor_type = request.args.get('donor_type', '').strip().lower()
+    start_date = _parse_date(request.args.get('start_date', ''))
+    end_date = _parse_date(request.args.get('end_date', ''))
+    sort_by = request.args.get('sort_by', 'date').strip().lower()
+    sort_dir = request.args.get('sort_dir', 'desc').strip().lower()
+    if sort_by not in {'date', 'amount', 'donor', 'status'}:
+        sort_by = 'date'
+    if sort_dir not in {'asc', 'desc'}:
+        sort_dir = 'desc'
+
+    per_page_options = [25, 50, 100, 250]
+    per_page = request.args.get('per_page', type=int) or 50
+    if per_page not in per_page_options:
+        per_page = 50
+    page = request.args.get('page', type=int) or 1
+    page = max(page, 1)
+
     min_amount = _parse_float(request.args.get('min_amount', ''))
     max_amount = _parse_float(request.args.get('max_amount', ''))
 
@@ -3089,6 +3124,54 @@ def donations_list():
             max_amount=max_amount,
         )
 
+    if currency:
+        donations = [d for d in donations if str(getattr(d, 'currency', '') or '').upper() == currency]
+
+    if donor_type:
+        donations = [
+            d for d in donations
+            if str(getattr(getattr(d, 'donor', None), 'donor_type', '') or '').strip().lower() == donor_type
+        ]
+
+    if start_date or end_date:
+        filtered: list[Donation] = []
+        for d in donations:
+            donation_dt = getattr(d, 'donation_date', None)
+            donation_day = donation_dt.date() if hasattr(donation_dt, 'date') else None
+            if donation_day is None:
+                continue
+            if start_date and donation_day < start_date:
+                continue
+            if end_date and donation_day > end_date:
+                continue
+            filtered.append(d)
+        donations = filtered
+
+    def _safe_amount(item: Donation) -> float:
+        try:
+            return float(getattr(item, 'amount', 0) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _sort_key(item: Donation):
+        if sort_by == 'amount':
+            return _safe_amount(item)
+        if sort_by == 'donor':
+            return str(getattr(item, 'donor_name', '') or '').strip().lower()
+        if sort_by == 'status':
+            return str(getattr(item, 'status', '') or '').strip().lower()
+        return getattr(item, 'donation_date', datetime.min)
+
+    donations.sort(key=_sort_key, reverse=(sort_dir == 'desc'))
+
+    total_filtered = len(donations)
+    total_pages = max(1, (total_filtered + per_page - 1) // per_page)
+    if page > total_pages:
+        page = total_pages
+    start_idx = (page - 1) * per_page
+    end_idx = start_idx + per_page
+    paged_donations = donations[start_idx:end_idx]
+
     total_visible_amount = 0.0
     for donation in donations:
         try:
@@ -3096,23 +3179,154 @@ def donations_list():
         except (TypeError, ValueError):
             continue
 
+    average_visible_amount = (total_visible_amount / total_filtered) if total_filtered else 0.0
+    status_counts = {
+        'received': 0,
+        'processed': 0,
+        'receipted': 0,
+        'failed': 0,
+        'refunded': 0,
+    }
+    for d in donations:
+        status_key = str(getattr(d, 'status', '') or '').strip().lower()
+        if status_key in status_counts:
+            status_counts[status_key] += 1
+
+    row_action_form = DonationRowActionForm()
+    next_status_map = {
+        'pending': ['received', 'failed'],
+        'received': ['processed', 'refunded'],
+        'processed': ['receipted', 'refunded'],
+        'receipted': ['refunded'],
+        'failed': ['pending'],
+        'refunded': [],
+    }
+    donation_next_statuses: dict[int, list[str]] = {
+        int(d.id): next_status_map.get(str(getattr(d, 'status', '') or '').strip().lower(), [])
+        for d in paged_donations
+    }
+
+    available_currencies = sorted(
+        {
+            str(getattr(d, 'currency', '') or '').upper()
+            for d in donations
+            if str(getattr(d, 'currency', '') or '').strip()
+        }
+    )
+    donor_type_options = ['individual', 'corporate', 'foundation', 'anonymous']
+
     ai_context = {
         'active_page': 'donations',
         'organization': org.name if org else None,
-        'donation_count': len(donations),
+        'donation_count': total_filtered,
         'total_donations': total_visible_amount,
+        'average_donation': average_visible_amount,
     }
     return render_template(
         'donations.html',
-        donations=donations,
+        donations=paged_donations,
+        total_filtered=total_filtered,
+        status_counts=status_counts,
+        row_action_form=row_action_form,
+        donation_next_statuses=donation_next_statuses,
+        page=page,
+        total_pages=total_pages,
+        per_page=per_page,
+        per_page_options=per_page_options,
+        available_currencies=available_currencies,
+        donor_type_options=donor_type_options,
         active_page='donations',
         filter_q=query,
         filter_payment_method=payment_method,
         filter_status=status,
+        filter_currency=currency,
+        filter_donor_type=donor_type,
+        filter_start_date=request.args.get('start_date', ''),
+        filter_end_date=request.args.get('end_date', ''),
+        filter_sort_by=sort_by,
+        filter_sort_dir=sort_dir,
         filter_min_amount=request.args.get('min_amount', ''),
         filter_max_amount=request.args.get('max_amount', ''),
         ai_context=ai_context,
     )
+
+
+@main_bp.route('/donations/<int:donation_id>/status', methods=['POST'])
+@login_required
+@roles_required('admin', 'staff')
+def donation_status_update(donation_id: int):
+    org = _current_org()
+    if not org:
+        flash('No organization is available.', 'error')
+        return redirect(url_for('main.donations_list'))
+
+    form = DonationRowActionForm()
+    if not form.validate_on_submit():
+        flash('Invalid donation status update request.', 'error')
+        return redirect(url_for('main.donations_list'))
+
+    if int(form.donation_id.data or 0) != int(donation_id):
+        flash('Donation status update request did not match record id.', 'error')
+        return redirect(url_for('main.donations_list'))
+
+    new_status = str(form.new_status.data or '').strip().lower()
+    if not new_status:
+        flash('Please choose a valid status.', 'error')
+        return redirect(url_for('main.donations_list'))
+
+    svc = DonationService()
+    try:
+        donation = svc.update_status(donation_id, org.id, new_status, actor_id=getattr(current_user, 'id', None))
+        if new_status == 'receipted':
+            _issue_receipt_for_donation(donation, recipient_email=donation.donor_email)
+        flash(f'Donation #{donation_id} updated to {new_status}.', 'success')
+    except DonationNotFound:
+        flash('Donation not found.', 'error')
+    except InvalidStatusTransition as exc:
+        flash(str(exc), 'error')
+    except DonationConcurrencyError:
+        flash('This donation changed while updating. Please retry.', 'error')
+    except ValueError as exc:
+        flash(str(exc), 'error')
+
+    next_url = str(form.next_url.data or '').strip()
+    if next_url.startswith('/'):
+        return redirect(next_url)
+    return redirect(url_for('main.donations_list'))
+
+
+@main_bp.route('/donations/<int:donation_id>/receipt/resend', methods=['POST'])
+@login_required
+@roles_required('admin', 'staff')
+def donation_receipt_resend(donation_id: int):
+    org = _current_org()
+    if not org:
+        flash('No organization is available.', 'error')
+        return redirect(url_for('main.donations_list'))
+
+    form = DonationRowActionForm()
+    if not form.validate_on_submit():
+        flash('Invalid receipt resend request.', 'error')
+        return redirect(url_for('main.donations_list'))
+
+    if int(form.donation_id.data or 0) != int(donation_id):
+        flash('Receipt resend request did not match record id.', 'error')
+        return redirect(url_for('main.donations_list'))
+
+    try:
+        donation = DonationService().get_donation(donation_id, org.id)
+        recipient_email = str(getattr(donation, 'donor_email', '') or '').strip() or None
+        _issue_receipt_for_donation(donation, recipient_email=recipient_email)
+        flash(f'Receipt regenerated for donation #{donation_id}.', 'success')
+    except DonationNotFound:
+        flash('Donation not found.', 'error')
+    except ValueError as exc:
+        flash(str(exc), 'error')
+
+    next_url = str(form.next_url.data or '').strip()
+    if next_url.startswith('/'):
+        return redirect(next_url)
+    return redirect(url_for('main.donations_list'))
 
 
 @main_bp.route('/donations/export/<string:file_type>')
