@@ -181,6 +181,10 @@ class GrantOpportunity(db.Model):
     amount_max = db.Column(db.Float, nullable=True)
     probability = db.Column(db.Float, nullable=False, default=0.0)
     probability_weighted_amount = db.Column(db.Float, nullable=False, default=0.0)
+    external_source = db.Column(db.String(40), nullable=True, index=True)
+    external_opportunity_id = db.Column(db.String(120), nullable=True, index=True)
+    external_url = db.Column(db.String(500), nullable=True)
+    external_details_json = db.Column(JSON, nullable=True)
     status = db.Column(db.String(30), nullable=False, default="identified", index=True)
     notes = db.Column(db.Text, nullable=True)
     version_id = db.Column(db.Integer, nullable=False, default=0)
@@ -195,6 +199,64 @@ class GrantOpportunity(db.Model):
 
     def __repr__(self):
         return f"<GrantOpportunity {self.title} [{self.status}]>"
+
+
+class GrantSearchProfile(db.Model):
+    """Saved external grant search configuration per organization."""
+
+    __tablename__ = "grant_search_profiles"
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False, index=True)
+    source = db.Column(db.String(40), nullable=False, default="grants_gov", index=True)
+    name = db.Column(db.String(120), nullable=False)
+    query = db.Column(db.String(255), nullable=True)
+    applicant_profile = db.Column(db.Text, nullable=True)
+    requested_amount = db.Column(db.Float, nullable=True)
+    statuses_csv = db.Column(db.String(255), nullable=True)
+    is_active = db.Column(db.Boolean, nullable=False, default=True, index=True)
+    alert_channel = db.Column(db.String(40), nullable=False, default="in_app")
+    last_checked_at = db.Column(db.DateTime, nullable=True, index=True)
+    last_result_count = db.Column(db.Integer, nullable=False, default=0)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
+
+    alerts = db.relationship("GrantSearchAlert", backref="search_profile", cascade="all, delete-orphan")
+
+    def __repr__(self):
+        return f"<GrantSearchProfile org={self.organization_id} source={self.source} name={self.name}>"
+
+
+class GrantSearchAlert(db.Model):
+    """Recorded matched external opportunities for saved search profiles."""
+
+    __tablename__ = "grant_search_alerts"
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False, index=True)
+    profile_id = db.Column(db.Integer, db.ForeignKey("grant_search_profiles.id"), nullable=False, index=True)
+    opportunity_id = db.Column(db.Integer, db.ForeignKey("grant_opportunities.id"), nullable=True, index=True)
+    external_source = db.Column(db.String(40), nullable=False, default="grants_gov", index=True)
+    external_opportunity_id = db.Column(db.String(120), nullable=False, index=True)
+    title = db.Column(db.String(300), nullable=False)
+    status = db.Column(db.String(30), nullable=False, default="new", index=True)
+    matched_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False, index=True)
+    details_json = db.Column(JSON, nullable=True)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+
+    opportunity = db.relationship("GrantOpportunity", backref="search_alerts")
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "profile_id",
+            "external_source",
+            "external_opportunity_id",
+            name="uq_grant_search_alert_profile_source_external_id",
+        ),
+    )
+
+    def __repr__(self):
+        return f"<GrantSearchAlert profile={self.profile_id} external={self.external_opportunity_id} [{self.status}]>"
 
 
 class GrantProposal(db.Model):
@@ -419,6 +481,8 @@ __all__ = [
     "GrantBudgetLine",
     "GrantExpenseAllocation",
     "GrantOpportunity",
+    "GrantSearchProfile",
+    "GrantSearchAlert",
     "GrantProposal",
     "GrantOutcomeTemplate",
     "GrantOutcomeRecord",

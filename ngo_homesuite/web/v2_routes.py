@@ -6,15 +6,19 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from datetime import date, datetime, timezone
+from io import BytesIO
 from pathlib import Path
+import re
 import time
 from typing import Any
 import uuid
 from urllib.parse import unquote
+import warnings
 
 from flask import Blueprint, Response, current_app, jsonify, redirect, request
 from flask_login import current_user, login_required
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from werkzeug.utils import secure_filename
 
 from ngo_homesuite.grants.facade import GrantsFacade
@@ -84,6 +88,22 @@ def _grants():
     return _GRANTS_FACADE
 
 
+def _search_profile_dict(profile) -> dict[str, Any]:
+    return {
+        "id": int(profile.id),
+        "name": str(profile.name or ""),
+        "source": str(profile.source or ""),
+        "query": str(profile.query or ""),
+        "applicant_profile": str(profile.applicant_profile or ""),
+        "requested_amount": float(profile.requested_amount) if profile.requested_amount is not None else None,
+        "statuses_csv": str(profile.statuses_csv or ""),
+        "alert_channel": str(profile.alert_channel or ""),
+        "is_active": bool(profile.is_active),
+        "last_checked_at": profile.last_checked_at.isoformat() if profile.last_checked_at else None,
+        "last_result_count": int(profile.last_result_count or 0),
+    }
+
+
 def _campaign_photo_url(campaign_id: int, photo_path: str | None) -> str | None:
     if not photo_path:
         return None
@@ -114,6 +134,39 @@ def _save_campaign_photo_upload(uploaded, *, org_id: int, campaign_id: int) -> s
     target_path = target_dir / target_name
     uploaded.save(target_path)
     return str((Path('uploads') / 'campaigns' / f'org_{int(org_id)}' / target_name).as_posix())
+
+
+def _extract_grant_guideline_text(uploaded) -> tuple[str, str]:
+    if uploaded is None or not getattr(uploaded, "filename", None):
+        raise ValueError("guideline_file is required")
+
+    filename = secure_filename(str(uploaded.filename or "")) or "guideline.txt"
+    suffix = Path(filename).suffix.lower()
+    payload = uploaded.read()
+    uploaded.stream.seek(0)
+    if not payload:
+        raise ValueError("guideline file is empty")
+
+    if suffix in {".txt", ".md", ".csv"}:
+        text = payload.decode("utf-8", errors="ignore")
+    elif suffix in {".html", ".htm"}:
+        html_text = payload.decode("utf-8", errors="ignore")
+        text = re.sub(r"<[^>]+>", " ", html_text)
+    elif suffix == ".pdf":
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            from PyPDF2 import PdfReader
+
+        reader = PdfReader(BytesIO(payload))
+        pages = [page.extract_text() or "" for page in reader.pages]
+        text = "\n".join(pages)
+    else:
+        raise ValueError("unsupported guideline file type")
+
+    normalized = re.sub(r"\s+", " ", text).strip()
+    if not normalized:
+        raise ValueError("unable to extract text from guideline file")
+    return filename, normalized
 
 
 def _human_in_the_loop_metadata(data: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
@@ -285,6 +338,311 @@ def grants_calendar():
 @login_required
 def grants_restricted_funds():
     return jsonify(_grants().restricted_funding_summary(_org_id()))
+
+
+@v2_bp.route("/grants/opportunities/search", methods=["GET"])
+@login_required
+def grants_search_opportunities():
+    q = (request.args.get("q") or "").strip() or None
+    applicant_profile = (request.args.get("applicant_profile") or "").strip() or None
+    requested_amount_raw = request.args.get("requested_amount")
+    deadline_before_raw = request.args.get("deadline_before")
+    statuses_raw = request.args.get("statuses")
+    limit = request.args.get("limit", 50, type=int)
+
+    requested_amount = None
+    if requested_amount_raw not in (None, ""):
+        try:
+            requested_amount = float(requested_amount_raw)
+        except (TypeError, ValueError):
+            return jsonify({"error": "requested_amount must be numeric"}), 400
+
+    deadline_before = None
+    if deadline_before_raw:
+        try:
+            deadline_before = _parse_iso_date(str(deadline_before_raw))
+        except ValueError:
+            return jsonify({"error": "deadline_before must be ISO format YYYY-MM-DD"}), 400
+
+    statuses = None
+    if statuses_raw:
+        statuses = [part.strip() for part in str(statuses_raw).split(",") if part.strip()]
+
+    try:
+        results = _grants().search_applicable_opportunities(
+            _org_id(),
+            q=q,
+            applicant_profile=applicant_profile,
+            requested_amount=requested_amount,
+            deadline_before=deadline_before,
+            statuses=statuses,
+            limit=max(1, min(int(limit), 200)),
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify({"count": len(results), "results": results})
+
+
+@v2_bp.route("/grants/external/grants-gov/search", methods=["GET"])
+@login_required
+def grants_external_grants_gov_search():
+    q = (request.args.get("q") or "").strip() or None
+    applicant_profile = (request.args.get("applicant_profile") or "").strip() or None
+    requested_amount_raw = request.args.get("requested_amount")
+    limit = request.args.get("limit", 25, type=int)
+    sync = str(request.args.get("sync") or "false").strip().lower() in {"1", "true", "yes"}
+
+    requested_amount = None
+    if requested_amount_raw not in (None, ""):
+        try:
+            requested_amount = float(requested_amount_raw)
+        except (TypeError, ValueError):
+            return jsonify({"error": "requested_amount must be numeric"}), 400
+
+    try:
+        results = _grants().search_grants_gov_opportunities(
+            _org_id(),
+            q=q,
+            applicant_profile=applicant_profile,
+            requested_amount=requested_amount,
+            limit=max(1, min(int(limit), 100)),
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    synced_count = 0
+    if sync and results:
+        synced = _grants().sync_grants_gov_results(_org_id(), results)
+        synced_by_external = {str(item.external_opportunity_id or ""): item for item in synced}
+        for item in results:
+            local = synced_by_external.get(str(item.get("external_opportunity_id") or ""))
+            if local is not None:
+                item["opportunity_id"] = int(local.id)
+        synced_count = len(synced)
+
+    return jsonify({"count": len(results), "synced_count": synced_count, "results": results})
+
+
+@v2_bp.route("/grants/opportunities/<int:opportunity_id>/ai-context", methods=["GET"])
+@login_required
+def grants_opportunity_ai_context(opportunity_id: int):
+    try:
+        payload = _grants().get_opportunity_ai_context(opportunity_id, _org_id())
+    except LookupError:
+        return jsonify({"error": "opportunity not found"}), 404
+    return jsonify(payload)
+
+
+@v2_bp.route("/grants/search-profiles", methods=["GET"])
+@login_required
+def grants_search_profiles_list():
+    active_only = str(request.args.get("active_only") or "false").strip().lower() in {"1", "true", "yes"}
+    profiles = _grants().list_search_profiles(_org_id(), active_only=active_only)
+    return jsonify({"count": len(profiles), "results": [_search_profile_dict(profile) for profile in profiles]})
+
+
+@v2_bp.route("/grants/search-profiles", methods=["POST"])
+@login_required
+@roles_required("admin", "staff")
+def grants_search_profiles_create():
+    data = request.get_json(silent=True) or {}
+    requested_amount = data.get("requested_amount")
+    if requested_amount not in (None, ""):
+        try:
+            requested_amount = float(requested_amount)
+        except (TypeError, ValueError):
+            return jsonify({"error": "requested_amount must be numeric"}), 400
+    else:
+        requested_amount = None
+
+    try:
+        profile = _grants().create_search_profile(
+            _org_id(),
+            name=str(data.get("name") or "").strip(),
+            source=str(data.get("source") or "grants_gov").strip() or "grants_gov",
+            query=str(data.get("query") or "").strip() or None,
+            applicant_profile=str(data.get("applicant_profile") or "").strip() or None,
+            requested_amount=requested_amount,
+            statuses_csv=str(data.get("statuses_csv") or "").strip() or None,
+            alert_channel=str(data.get("alert_channel") or "in_app").strip() or "in_app",
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify(_search_profile_dict(profile)), 201
+
+
+@v2_bp.route("/grants/search-profiles/<int:profile_id>/run", methods=["POST"])
+@login_required
+@roles_required("admin", "staff")
+def grants_search_profile_run(profile_id: int):
+    try:
+        result = _grants().run_search_profile(profile_id, _org_id())
+    except LookupError:
+        return jsonify({"error": "search profile not found"}), 404
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(result)
+
+
+@v2_bp.route("/grants/search-alerts", methods=["GET"])
+@login_required
+def grants_search_alerts_list():
+    status = (request.args.get("status") or "").strip() or None
+    limit = request.args.get("limit", 50, type=int)
+    alerts = _grants().list_search_alerts(_org_id(), status=status, limit=max(1, min(int(limit), 200)))
+    return jsonify({"count": len(alerts), "results": alerts})
+
+
+@v2_bp.route("/grants/search-alerts/<int:alert_id>/acknowledge", methods=["POST"])
+@login_required
+@roles_required("admin", "staff")
+def grants_search_alert_acknowledge(alert_id: int):
+    data = request.get_json(silent=True) or {}
+    new_status = str(data.get("status") or "reviewed").strip() or "reviewed"
+    notes = str(data.get("notes") or "").strip() or None
+    try:
+        result = _grants().acknowledge_search_alert(
+            alert_id,
+            _org_id(),
+            new_status=new_status,
+            notes=notes,
+        )
+    except LookupError:
+        return jsonify({"error": "alert not found"}), 404
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(result)
+
+
+@v2_bp.route("/grants/opportunities/<int:opportunity_id>/compliance-guidance", methods=["POST"])
+@login_required
+def grants_opportunity_compliance_guidance(opportunity_id: int):
+    data = request.get_json(silent=True) or {}
+    proposal_text = str(data.get("proposal_text") or "").strip() or None
+
+    try:
+        guidance = _grants().generate_proposal_compliance_guidance(
+            opportunity_id,
+            _org_id(),
+            proposal_text=proposal_text,
+        )
+    except LookupError:
+        return jsonify({"error": "opportunity not found"}), 404
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify(guidance)
+
+
+@v2_bp.route("/grants/opportunities/<int:opportunity_id>/draft-assist", methods=["POST"])
+@login_required
+def grants_opportunity_draft_assist(opportunity_id: int):
+    data = request.get_json(silent=True) or {}
+    amount_requested = data.get("amount_requested")
+    if amount_requested not in (None, ""):
+        try:
+            amount_requested = float(amount_requested)
+        except (TypeError, ValueError):
+            return jsonify({"error": "amount_requested must be numeric"}), 400
+    else:
+        amount_requested = None
+
+    try:
+        draft = _grants().generate_proposal_draft_assist(
+            opportunity_id,
+            _org_id(),
+            organization_summary=str(data.get("organization_summary") or "").strip() or None,
+            program_summary=str(data.get("program_summary") or "").strip() or None,
+            applicant_profile=str(data.get("applicant_profile") or "").strip() or None,
+            amount_requested=amount_requested,
+            existing_draft=str(data.get("existing_draft") or "").strip() or None,
+        )
+    except LookupError:
+        return jsonify({"error": "opportunity not found"}), 404
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify(draft)
+
+
+@v2_bp.route("/grants/opportunities/<int:opportunity_id>/guidelines/ingest", methods=["POST"])
+@login_required
+def grants_opportunity_guideline_ingest(opportunity_id: int):
+    source_name = None
+    guideline_text = None
+    merge_into_notes = True
+
+    if request.content_type and request.content_type.startswith("multipart/form-data"):
+        uploaded = request.files.get("guideline_file")
+        try:
+            source_name, guideline_text = _extract_grant_guideline_text(uploaded)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        merge_into_notes = str(request.form.get("merge_into_notes") or "true").strip().lower() not in {"0", "false", "no"}
+    else:
+        data = request.get_json(silent=True) or {}
+        source_name = str(data.get("source_name") or "manual").strip() or "manual"
+        guideline_text = str(data.get("guideline_text") or "").strip() or None
+        merge_into_notes = bool(data.get("merge_into_notes", True))
+
+    try:
+        result = _grants().ingest_opportunity_guidance(
+            opportunity_id,
+            _org_id(),
+            guideline_text=str(guideline_text or ""),
+            source_name=source_name,
+            merge_into_notes=merge_into_notes,
+        )
+    except LookupError:
+        return jsonify({"error": "opportunity not found"}), 404
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify(result)
+
+
+@v2_bp.route("/grants/opportunities/<int:opportunity_id>/draft-assist/save", methods=["POST"])
+@login_required
+def grants_opportunity_draft_assist_save(opportunity_id: int):
+    data = request.get_json(silent=True) or {}
+    amount_requested = data.get("amount_requested")
+    if amount_requested not in (None, ""):
+        try:
+            amount_requested = float(amount_requested)
+        except (TypeError, ValueError):
+            return jsonify({"error": "amount_requested must be numeric"}), 400
+    else:
+        amount_requested = None
+
+    try:
+        proposal = _grants().save_draft_assist_as_proposal(
+            opportunity_id,
+            _org_id(),
+            organization_summary=str(data.get("organization_summary") or "").strip() or None,
+            program_summary=str(data.get("program_summary") or "").strip() or None,
+            applicant_profile=str(data.get("applicant_profile") or "").strip() or None,
+            amount_requested=amount_requested,
+            existing_draft=str(data.get("existing_draft") or "").strip() or None,
+            document_ref=str(data.get("document_ref") or "").strip() or None,
+        )
+    except LookupError:
+        return jsonify({"error": "opportunity not found"}), 404
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify(
+        {
+            "proposal_id": int(proposal.id),
+            "opportunity_id": int(proposal.opportunity_id),
+            "version_number": int(proposal.version_number),
+            "amount_requested": float(proposal.amount_requested) if proposal.amount_requested is not None else None,
+            "document_ref": proposal.document_ref,
+            "narrative_summary": proposal.narrative_summary,
+            "notes": proposal.notes,
+        }
+    ), 201
 
 
 def _grant_dict(g) -> dict:
@@ -1272,6 +1630,101 @@ def campaign_email_analytics_route(campaign_id: int):
     except LookupError:
         return jsonify({"error": "Campaign not found"}), 404
     return jsonify(payload), 200
+
+
+@v2_bp.get("/campaigns/email/segments")
+@login_required
+@roles_required("admin", "staff")
+def campaign_email_segments_route():
+    """List saved Smart Groups usable as campaign email segments."""
+    from ngo_homesuite.services.smart_groups_service import list_groups
+
+    groups = list_groups(_org_id())
+    items = [
+        {
+            "id": int(group.id),
+            "name": str(group.name or ""),
+            "description": str(group.description or ""),
+            "last_count": int(group.last_count or 0),
+            "last_evaluated_at": group.last_evaluated_at.isoformat() if group.last_evaluated_at else None,
+        }
+        for group in groups
+    ]
+    return jsonify(items), 200
+
+
+@v2_bp.post("/campaigns/email/segments")
+@login_required
+@roles_required("admin", "staff")
+def campaign_email_segments_create_route():
+    """Quick-create a saved campaign email segment using Smart Groups rules."""
+    from ngo_homesuite.services.smart_groups_service import create_group, evaluate_group
+
+    data = _json_or_400(required=["name", "rules"])
+    include_preview = bool(data.get("include_preview", False))
+
+    preview_limit_raw = data.get("preview_limit", 25)
+    try:
+        preview_limit = int(preview_limit_raw)
+    except (TypeError, ValueError):
+        return jsonify({"error": "preview_limit must be an integer"}), 400
+    preview_limit = max(1, min(preview_limit, 500))
+
+    try:
+        group = create_group(
+            _org_id(),
+            name=str(data.get("name") or "").strip(),
+            rules=data.get("rules"),
+            description=str(data.get("description") or "").strip() or None,
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"error": "A segment with this name already exists."}), 409
+
+    payload = {
+        "id": int(group.id),
+        "name": str(group.name or ""),
+        "description": str(group.description or ""),
+        "last_count": int(group.last_count or 0),
+        "last_evaluated_at": group.last_evaluated_at.isoformat() if group.last_evaluated_at else None,
+    }
+
+    if include_preview:
+        members = evaluate_group(int(group.id), _org_id())
+        payload["count"] = int(len(members))
+        payload["members"] = members[:preview_limit]
+
+    return jsonify(payload), 201
+
+
+@v2_bp.get("/campaigns/email/segments/<int:segment_id>/preview")
+@login_required
+@roles_required("admin", "staff")
+def campaign_email_segment_preview_route(segment_id: int):
+    """Evaluate and return a member preview for a saved campaign email segment."""
+    from werkzeug.exceptions import NotFound
+
+    from ngo_homesuite.services.smart_groups_service import evaluate_group
+
+    limit_raw = request.args.get("limit", "200")
+    try:
+        limit = int(limit_raw)
+    except (TypeError, ValueError):
+        return jsonify({"error": "limit must be an integer"}), 400
+
+    limit = max(1, min(limit, 500))
+    try:
+        members = evaluate_group(int(segment_id), _org_id())
+    except NotFound:
+        return jsonify({"error": "Segment not found"}), 404
+
+    return jsonify({
+        "segment_id": int(segment_id),
+        "count": int(len(members)),
+        "members": members[:limit],
+    }), 200
 
 
 @v2_bp.get("/campaigns/email/open-pixel")

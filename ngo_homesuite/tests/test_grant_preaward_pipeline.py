@@ -233,6 +233,59 @@ def test_convert_opportunity_to_grant_links_awarded_grant(ctx):
     assert refreshed_opp.status == "awarded"
     assert int(refreshed_opp.awarded_grant_id or 0) == int(grant.id)
 
+    def test_ingest_opportunity_guidance_appends_normalized_requirements_to_notes(ctx):
+        org = _mk_org("PreAward Org Guidance", "preaward-org-guidance")
+        opp = grant_service.create_opportunity(
+            organization_id=org.id,
+            funder_name="Funder Guidance",
+            program_name="Community Health",
+            title="Guideline Ingestion",
+            notes="Existing note",
+        )
+
+        result = grant_service.ingest_opportunity_guidance(
+            opp.id,
+            org.id,
+            guideline_text="Applicants must include evaluation metrics and shall file semiannual compliance updates.",
+            source_name="guidelines.pdf",
+            merge_into_notes=True,
+        )
+
+        refreshed_opp = db.session.get(GrantOpportunity, opp.id)
+        assert refreshed_opp is not None
+        assert result["requirement_count"] >= 1
+        assert "Guideline source: guidelines.pdf" in str(refreshed_opp.notes)
+        assert "Extracted compliance requirements" in str(refreshed_opp.notes)
+
+    def test_save_draft_assist_as_proposal_creates_versioned_proposal(ctx):
+        org = _mk_org("PreAward Org DraftSave", "preaward-org-draftsave")
+        opp = grant_service.create_opportunity(
+            organization_id=org.id,
+            funder_name="Funder DraftSave",
+            program_name="Housing Stability",
+            title="Draft Save",
+            notes="Applicants must include measurable outcomes and shall maintain quarterly reporting.",
+        )
+
+        proposal = grant_service.save_draft_assist_as_proposal(
+            opp.id,
+            org.id,
+            organization_summary="We operate housing stabilization services across the county.",
+            program_summary="The program combines case management, landlord mediation, and short-term rental support.",
+            applicant_profile="Housing stability outcomes for families",
+            amount_requested=45000,
+            existing_draft="We track outcomes and maintain a reporting calendar.",
+            document_ref="draft-save.md",
+        )
+
+        assert int(proposal.version_number) == 1
+        assert proposal.document_ref == "draft-save.md"
+        assert "Eligibility And Mission Fit" in str(proposal.narrative_summary)
+        assert "Draft assist trace" in str(proposal.notes)
+
+        refreshed = db.session.get(GrantProposal, proposal.id)
+        assert refreshed is not None
+
 
 def test_set_proposal_outcome_awarded_requires_submitted_state(ctx):
     org = _mk_org("PreAward Org M", "preaward-org-m")
@@ -386,3 +439,36 @@ def test_opportunity_and_proposal_are_tenant_scoped(ctx):
         db.select(GrantProposal).where(GrantProposal.organization_id == org_b.id)
     ).all()
     assert proposal_b == []
+
+
+def test_external_opportunity_ai_context_exposes_requirements_and_guidance(ctx):
+    org = _mk_org("PreAward Org External", "preaward-org-external")
+    opp = grant_service.create_opportunity(
+        organization_id=org.id,
+        funder_name="Grants.gov",
+        program_name="Federal Housing Stabilization",
+        title="Housing Stabilization Federal Opportunity",
+        external_source="grants_gov",
+        external_opportunity_id="GRANT-EXT-001",
+        external_url="https://www.grants.gov/search-results-detail/GRANT-EXT-001",
+        external_details_json={
+            "summary": "Federal support for housing stabilization and eviction prevention.",
+            "eligibility": ["501(c)(3) nonprofits", "Units of local government"],
+            "disqualifications": ["For-profit entities are not eligible"],
+            "application_guidance": ["Use evidence-backed housing outcomes", "Include implementation timeline"],
+            "applicable_conditions": ["Quarterly federal reporting required"],
+            "requirements": ["Submit SAM registration", "Provide logic model"],
+            "categories": ["Housing", "Federal Assistance"],
+        },
+        notes="Applicants must provide logic model and quarterly reporting plan.",
+    )
+
+    context = grant_service.get_opportunity_ai_context(opp.id, org.id)
+
+    assert int(context["opportunity_id"]) == int(opp.id)
+    assert context["external_source"] == "grants_gov"
+    assert "501(c)(3) nonprofits" in context["eligibility"]
+    assert "For-profit entities are not eligible" in context["disqualifications"]
+    assert "Use evidence-backed housing outcomes" in context["application_guidance"]
+    assert "Submit SAM registration" in context["requirements"]
+    assert isinstance(context["recommended_outline"], list)

@@ -1213,7 +1213,8 @@ _EXEMPT_2FA_ENDPOINTS: set[str] = {
 
 def _role_requires_2fa(role: str) -> bool:
     """Return True if the given role must enroll in TOTP before accessing the app."""
-    roles: list[str] = list(current_app.config.get('ROLES_REQUIRING_2FA') or ['admin'])
+    configured_roles = current_app.config.get('ROLES_REQUIRING_2FA')
+    roles: list[str] = list(configured_roles) if configured_roles is not None else ['admin']
     return str(role or '').strip().lower() in {r.strip().lower() for r in roles}
 
 
@@ -1231,17 +1232,22 @@ def _2fa_enforcement_check() -> None:
     role = str(getattr(current_user, 'role', '') or '').strip().lower()
     if _role_requires_2fa(role) and not bool(getattr(current_user, 'mfa_enabled', False)):
         from ngo_homesuite.audit.security_events import SecurityAuditService, SecurityEventType
-        SecurityAuditService.log_event(
-            event_type=SecurityEventType.PERMISSION_DENIED,
-            action='POLICY_2FA_ENFORCEMENT_TRIGGERED',
-            result='redirect_to_mfa_setup',
-            payload={'role': role, 'endpoint': endpoint, 'user_id': int(current_user.id)},
-        )
+        try:
+            SecurityAuditService.log_event(
+                event_type=SecurityEventType.PERMISSION_DENIED,
+                action='POLICY_2FA_ENFORCEMENT_TRIGGERED',
+                result='redirect_to_mfa_setup',
+                payload={'role': role, 'endpoint': endpoint, 'user_id': int(current_user.id)},
+            )
+        except Exception:
+            current_app.logger.warning(
+                '2fa_enforcement_audit_log_failed endpoint=%s user_id=%s',
+                endpoint,
+                int(getattr(current_user, 'id', 0) or 0),
+            )
         flash('Your role requires Two-Factor Authentication. Please enroll to continue.', 'warning')
         return redirect(url_for('auth.mfa_setup_page'))
 
-
-auth_bp.before_request(_2fa_enforcement_check)
 
 # ---------------------------------------------------------------------------
 # A-3: Step-up authentication

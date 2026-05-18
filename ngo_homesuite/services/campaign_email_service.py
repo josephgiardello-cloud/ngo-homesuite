@@ -17,7 +17,7 @@ from typing import Any
 from urllib.parse import quote_plus
 
 from flask import current_app, has_app_context
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select, text
 
 from ngo_homesuite.policy import enforce_error_contract
 from ngo_homesuite.models.core import (
@@ -329,11 +329,39 @@ def _resolve_recipients(
 ) -> list[Donor]:
     audience = audience or {}
 
+    smart_group_id_raw = audience.get("smart_group_id")
+    smart_group_member_ids: list[int] | None = None
+    if smart_group_id_raw is not None:
+        try:
+            smart_group_id = int(smart_group_id_raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("smart_group_id must be an integer") from exc
+        if smart_group_id <= 0:
+            raise ValueError("smart_group_id must be a positive integer")
+
+        from ngo_homesuite.services.smart_groups_service import evaluate_group
+
+        try:
+            members = evaluate_group(smart_group_id, int(organization_id))
+        except Exception as exc:
+            raise ValueError("smart_group_id not found for this organization") from exc
+
+        smart_group_member_ids = [
+            int(item.get("donor_id"))
+            for item in members
+            if str(item.get("donor_id") or "").strip().isdigit()
+        ]
+        if not smart_group_member_ids:
+            return []
+
     stmt = select(Donor).where(
         Donor.organization_id == int(organization_id),
         Donor.email.is_not(None),
         func.length(func.trim(Donor.email)) > 0,
     )
+
+    if smart_group_member_ids is not None:
+        stmt = stmt.where(Donor.id.in_(smart_group_member_ids))
 
     donor_ids = audience.get("donor_ids")
     if isinstance(donor_ids, list):
@@ -423,6 +451,25 @@ def _resolve_recipients(
     except Exception as exc:
         logger.warning(
             "Unable to apply campaign email opt-out suppression for organization_id=%s: %s",
+            int(organization_id),
+            exc,
+        )
+
+    # Exclude global suppression-list addresses (bounces, complaints, spam reports).
+    # This table is maintained by provider webhook handlers.
+    try:
+        suppressed = set(
+            str(row).strip().lower()
+            for (row,) in db.session.execute(
+                text("SELECT email FROM email_suppressions")
+            ).all()
+            if row
+        )
+        if suppressed:
+            deduped = {k: v for k, v in deduped.items() if k not in suppressed}
+    except Exception as exc:
+        logger.warning(
+            "Unable to apply global suppression list for organization_id=%s: %s",
             int(organization_id),
             exc,
         )
@@ -914,6 +961,44 @@ def campaign_email_analytics(organization_id: int, campaign_id: int) -> dict[str
         )
     )
 
+    opt_out_counts = db.session.execute(
+        select(
+            func.count(CampaignEmailOptOut.id),
+            func.coalesce(
+                func.sum(
+                    case((CampaignEmailOptOut.campaign_id == int(campaign.id), 1), else_=0)
+                ),
+                0,
+            ),
+        ).where(
+            CampaignEmailOptOut.organization_id == int(organization_id),
+        )
+    ).one()
+
+    suppression_total = 0
+    suppression_reason_breakdown: dict[str, int] = {}
+    try:
+        suppression_total_row = db.session.execute(
+            text("SELECT COUNT(*) FROM email_suppressions")
+        ).one()
+        suppression_total = int((suppression_total_row[0] if suppression_total_row else 0) or 0)
+
+        suppression_reason_rows = db.session.execute(
+            text(
+                """
+                SELECT COALESCE(NULLIF(TRIM(reason), ''), 'unknown') AS reason, COUNT(*) AS count
+                FROM email_suppressions
+                GROUP BY COALESCE(NULLIF(TRIM(reason), ''), 'unknown')
+                """
+            )
+        ).all()
+        suppression_reason_breakdown = {
+            str(reason): int(count or 0)
+            for reason, count in suppression_reason_rows
+        }
+    except Exception as exc:
+        logger.warning("Campaign analytics suppression summary unavailable: %s", exc)
+
     return {
         "campaign_id": int(campaign.id),
         "campaign_name": campaign.name,
@@ -923,6 +1008,10 @@ def campaign_email_analytics(organization_id: int, campaign_id: int) -> dict[str
         "total_failed": int(totals[3] or 0),
         "total_opens": int(engagement_totals[0] or 0),
         "total_clicks": int(engagement_totals[1] or 0),
+        "opt_out_count": int(opt_out_counts[0] or 0),
+        "campaign_opt_out_count": int(opt_out_counts[1] or 0),
+        "suppression_count": int(suppression_total),
+        "suppression_reason_breakdown": suppression_reason_breakdown,
         "recent_batches": [
             {
                 "id": int(b.id),

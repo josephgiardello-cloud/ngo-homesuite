@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from datetime import date
+import json
 from typing import Optional
 
+from flask import current_app, has_app_context
 from sqlalchemy import func, select
 
 from ngo_homesuite.db.utils import audit
@@ -11,6 +13,7 @@ from ngo_homesuite.models.core import Grant, GrantOpportunity, GrantProposal, db
 
 _VALID_OPPORTUNITY_STATUSES = {"identified", "qualified", "in_progress", "submitted", "awarded", "declined", "archived"}
 _VALID_PROPOSAL_OUTCOMES = {"draft", "submitted", "awarded", "declined", "withdrawn"}
+_ACTIVE_OPPORTUNITY_STATUSES = {"identified", "qualified", "in_progress", "submitted"}
 
 
 def _compute_probability_weighted_amount(amount_min: Optional[float], amount_max: Optional[float], probability: float) -> float:
@@ -23,6 +26,673 @@ def _compute_probability_weighted_amount(amount_min: Optional[float], amount_max
     else:
         base = (float(amount_min) + float(amount_max)) / 2.0
     return round(base * float(probability), 2)
+
+
+def _tokenize(text: str) -> set[str]:
+    raw = "".join(ch.lower() if ch.isalnum() else " " for ch in str(text or ""))
+    return {token for token in raw.split() if len(token) >= 3}
+
+
+def _extract_requirement_items(source: str) -> list[str]:
+    lines = [str(line or "").strip(" -\t\r") for line in str(source or "").splitlines()]
+    candidates: list[str] = []
+    for line in lines:
+        if not line:
+            continue
+        lower = line.lower()
+        if any(marker in lower for marker in ("must", "shall", "required", "requirement", "include", "compliance")):
+            candidates.append(line)
+    if not candidates and source:
+        trimmed = str(source).strip()
+        if trimmed:
+            candidates = [trimmed]
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in candidates:
+        key = item.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped[:20]
+
+
+def _build_requirement_sentence(requirement: str, *, program_summary: str, organization_summary: str) -> str:
+    requirement_text = str(requirement or "").strip().rstrip(".")
+    program_text = str(program_summary or "").strip()
+    organization_text = str(organization_summary or "").strip()
+    fragments = []
+    if program_text:
+        fragments.append(program_text)
+    if organization_text:
+        fragments.append(organization_text)
+    context = " ".join(fragments).strip()
+    if context:
+        return f"{context}. This proposal addresses the requirement to {requirement_text.lower()}."
+    return f"This proposal addresses the requirement to {requirement_text.lower()}."
+
+
+def _opportunity_requirement_source(opportunity: GrantOpportunity) -> str:
+    external_details = opportunity.external_details_json or {}
+    detail_parts: list[str] = []
+    if isinstance(external_details, dict):
+        for key in (
+            "summary",
+            "description",
+            "eligibility",
+            "disqualifications",
+            "application_guidance",
+            "requirements",
+            "applicable_conditions",
+            "categories",
+        ):
+            value = external_details.get(key)
+            if isinstance(value, list):
+                detail_parts.append("\n".join(str(item or "") for item in value if str(item or "").strip()))
+            elif value is not None:
+                detail_parts.append(str(value))
+    return "\n".join(
+        [
+            str(opportunity.title or ""),
+            str(opportunity.program_name or ""),
+            str(opportunity.notes or ""),
+            str(opportunity.external_url or ""),
+            "\n".join(part for part in detail_parts if part.strip()),
+        ]
+    ).strip()
+
+
+def _append_opportunity_note(existing_notes: Optional[str], addition: str) -> str:
+    current = str(existing_notes or "").strip()
+    new_block = str(addition or "").strip()
+    if not current:
+        return new_block
+    if not new_block:
+        return current
+    return f"{current}\n\n{new_block}"
+
+
+def search_applicable_opportunities(
+    organization_id: int,
+    *,
+    q: Optional[str] = None,
+    applicant_profile: Optional[str] = None,
+    requested_amount: Optional[float] = None,
+    deadline_before: Optional[date] = None,
+    statuses: Optional[list[str]] = None,
+    limit: int = 50,
+) -> list[dict]:
+    status_values = statuses or sorted(_ACTIVE_OPPORTUNITY_STATUSES)
+    for status in status_values:
+        if status not in _VALID_OPPORTUNITY_STATUSES:
+            raise ValueError(f"invalid opportunity status '{status}'")
+
+    requested_amount_value: Optional[float] = None
+    if requested_amount is not None:
+        requested_amount_value = float(requested_amount)
+        if requested_amount_value < 0:
+            raise ValueError("requested_amount cannot be negative")
+
+    stmt = select(GrantOpportunity).where(
+        GrantOpportunity.organization_id == int(organization_id),
+        GrantOpportunity.status.in_(status_values),
+    )
+    if deadline_before is not None:
+        stmt = stmt.where(GrantOpportunity.deadline.is_not(None), GrantOpportunity.deadline <= deadline_before)
+
+    opportunities = list(
+        db.session.scalars(
+            stmt.order_by(GrantOpportunity.deadline.asc().nullslast(), GrantOpportunity.probability.desc())
+            .limit(max(1, min(int(limit), 200)))
+        )
+    )
+
+    q_tokens = _tokenize(str(q or ""))
+    profile_tokens = _tokenize(str(applicant_profile or ""))
+
+    scored: list[dict] = []
+    for opp in opportunities:
+        searchable = " ".join(
+            [
+                str(opp.title or ""),
+                str(opp.program_name or ""),
+                str(opp.funder_name or ""),
+                str(opp.notes or ""),
+                str(opp.external_url or ""),
+                json.dumps(opp.external_details_json or {}, sort_keys=True),
+            ]
+        )
+        searchable_tokens = _tokenize(searchable)
+
+        score = 0.0
+        reasons: list[str] = []
+
+        if q_tokens:
+            overlap = q_tokens & searchable_tokens
+            if not overlap:
+                continue
+            score += min(40.0, float(len(overlap) * 8))
+            reasons.append(f"Keyword overlap: {', '.join(sorted(overlap)[:6])}")
+
+        if profile_tokens:
+            profile_overlap = profile_tokens & searchable_tokens
+            if profile_overlap:
+                score += min(25.0, float(len(profile_overlap) * 5))
+                reasons.append(f"Applicant profile alignment: {', '.join(sorted(profile_overlap)[:6])}")
+
+        probability = float(opp.probability or 0.0)
+        score += probability * 20.0
+        if probability > 0:
+            reasons.append(f"Pipeline probability: {round(probability * 100, 1)}%")
+
+        if requested_amount_value is not None:
+            min_amt = float(opp.amount_min) if opp.amount_min is not None else None
+            max_amt = float(opp.amount_max) if opp.amount_max is not None else None
+            if min_amt is not None and requested_amount_value < min_amt:
+                continue
+            if max_amt is not None and requested_amount_value > max_amt:
+                continue
+            if min_amt is not None or max_amt is not None:
+                score += 20.0
+                reasons.append("Requested amount is within grant range")
+
+        scored.append(
+            {
+                "opportunity_id": int(opp.id),
+                "title": str(opp.title or ""),
+                "program_name": str(opp.program_name or ""),
+                "funder_name": str(opp.funder_name or ""),
+                "status": str(opp.status or ""),
+                "deadline": opp.deadline.isoformat() if opp.deadline else None,
+                "amount_min": float(opp.amount_min) if opp.amount_min is not None else None,
+                "amount_max": float(opp.amount_max) if opp.amount_max is not None else None,
+                "probability": float(opp.probability or 0.0),
+                "probability_weighted_amount": float(opp.probability_weighted_amount or 0.0),
+                "external_source": opp.external_source,
+                "external_opportunity_id": opp.external_opportunity_id,
+                "external_url": opp.external_url,
+                "external_details": opp.external_details_json or {},
+                "applicability_score": round(score, 2),
+                "match_reasons": reasons,
+                "selectable": True,
+            }
+        )
+
+    scored.sort(key=lambda item: (float(item["applicability_score"]), float(item["probability"])), reverse=True)
+    return scored
+
+
+def generate_proposal_compliance_guidance(
+    opportunity_id: int,
+    organization_id: int,
+    *,
+    proposal_text: Optional[str] = None,
+) -> dict:
+    opportunity = db.session.scalars(
+        select(GrantOpportunity).where(
+            GrantOpportunity.id == int(opportunity_id),
+            GrantOpportunity.organization_id == int(organization_id),
+        ).limit(1)
+    ).first()
+    if opportunity is None:
+        raise LookupError("opportunity not found for organization")
+
+    requirement_source = _opportunity_requirement_source(opportunity)
+    requirement_items = _extract_requirement_items(requirement_source)
+
+    proposal_body = str(proposal_text or "").strip()
+    proposal_tokens = _tokenize(proposal_body)
+
+    covered: list[str] = []
+    missing: list[str] = []
+    for item in requirement_items:
+        item_tokens = _tokenize(item)
+        if item_tokens and (item_tokens & proposal_tokens):
+            covered.append(item)
+        else:
+            missing.append(item)
+
+    total_items = max(1, len(requirement_items))
+    deterministic_score = round((len(covered) / total_items) * 100.0, 1)
+    risk_level = "low" if deterministic_score >= 80 else "medium" if deterministic_score >= 50 else "high"
+
+    external_details = opportunity.external_details_json or {}
+    guidance = {
+        "opportunity_id": int(opportunity.id),
+        "title": str(opportunity.title or ""),
+        "external_source": opportunity.external_source,
+        "external_opportunity_id": opportunity.external_opportunity_id,
+        "external_url": opportunity.external_url,
+        "external_details": external_details,
+        "eligibility": list(external_details.get("eligibility") or []),
+        "disqualifications": list(external_details.get("disqualifications") or []),
+        "application_guidance": list(external_details.get("application_guidance") or []),
+        "applicable_conditions": list(external_details.get("applicable_conditions") or []),
+        "compliance_terms": requirement_items,
+        "covered_terms": covered,
+        "missing_terms": missing,
+        "compliance_score": deterministic_score,
+        "risk_level": risk_level,
+        "recommended_outline": [
+            "Eligibility and mission-fit summary",
+            "Problem statement with measurable need",
+            "Program design and implementation plan",
+            "Budget narrative aligned to allowable costs",
+            "Evaluation and reporting methodology",
+            "Timeline, milestones, and staffing",
+            "Sustainability and risk mitigation",
+        ],
+        "generated_by": "deterministic",
+    }
+
+    ai_enabled = False
+    if has_app_context():
+        ai_enabled = bool(current_app.config.get("GRANT_COMPLIANCE_AI_ASSIST_ENABLED", False))
+
+    if ai_enabled:
+        try:
+            from ngo_homesuite.ai.apex_client import ApexClient
+
+            host = current_app.config.get("OLLAMA_HOST", "http://localhost:11434")
+            model = current_app.config.get("OLLAMA_MODEL", "llama3.2")
+            timeout_s = float(current_app.config.get("OLLAMA_TIMEOUT_S", 45.0))
+
+            prompt = (
+                "You are a grant compliance reviewer. Return strict JSON with keys: "
+                "compliance_score, risk_level, missing_terms, covered_terms, recommended_edits, approval_readiness_summary. "
+                f"Grant opportunity context:\n{requirement_source}\n\n"
+                f"Proposal draft:\n{proposal_body or '[empty]'}"
+            )
+            client = ApexClient(host=str(host), model=str(model), timeout_s=timeout_s)
+            raw = client.query(
+                prompt=prompt,
+                model=str(model),
+                system_prompt="You are a strict nonprofit grant-compliance copilot. Return JSON only.",
+            )
+            parsed = json.loads(raw)
+            guidance.update(
+                {
+                    "compliance_score": float(parsed.get("compliance_score", guidance["compliance_score"])),
+                    "risk_level": str(parsed.get("risk_level", guidance["risk_level"])),
+                    "missing_terms": list(parsed.get("missing_terms") or guidance["missing_terms"]),
+                    "covered_terms": list(parsed.get("covered_terms") or guidance["covered_terms"]),
+                    "recommended_edits": list(parsed.get("recommended_edits") or []),
+                    "approval_readiness_summary": str(parsed.get("approval_readiness_summary") or ""),
+                    "generated_by": "ai",
+                }
+            )
+        except Exception:
+            pass
+
+    return guidance
+
+
+def generate_proposal_draft_assist(
+    opportunity_id: int,
+    organization_id: int,
+    *,
+    organization_summary: Optional[str] = None,
+    program_summary: Optional[str] = None,
+    applicant_profile: Optional[str] = None,
+    amount_requested: Optional[float] = None,
+    existing_draft: Optional[str] = None,
+) -> dict:
+    opportunity = db.session.scalars(
+        select(GrantOpportunity).where(
+            GrantOpportunity.id == int(opportunity_id),
+            GrantOpportunity.organization_id == int(organization_id),
+        ).limit(1)
+    ).first()
+    if opportunity is None:
+        raise LookupError("opportunity not found for organization")
+
+    amount_requested_value = None
+    if amount_requested is not None:
+        amount_requested_value = float(amount_requested)
+        if amount_requested_value < 0:
+            raise ValueError("amount_requested cannot be negative")
+
+    organization_text = str(organization_summary or "").strip()
+    program_text = str(program_summary or "").strip()
+    applicant_text = str(applicant_profile or "").strip()
+    existing_text = str(existing_draft or "").strip()
+
+    guidance = generate_proposal_compliance_guidance(
+        int(opportunity.id),
+        int(organization_id),
+        proposal_text=existing_text or None,
+    )
+    compliance_terms = list(guidance.get("compliance_terms") or [])
+
+    section_text = {
+        "eligibility_and_mission_fit": (
+            f"{organization_text or 'Our organization'} is well positioned to deliver {opportunity.program_name} because "
+            f"{applicant_text or 'our mission, service history, and target population align closely with the funder priorities'}."
+        ),
+        "problem_statement": (
+            f"{program_text or 'The proposed program'} responds to a documented community need with measurable goals, a defined target population, "
+            f"and a delivery model matched to {opportunity.title}."
+        ),
+        "program_design": (
+            f"We will implement {program_text or opportunity.program_name} through clear milestones, staff ownership, service delivery checkpoints, "
+            "and a monitoring cadence that keeps performance and compliance visible throughout the grant period."
+        ),
+        "budget_and_compliance": (
+            f"The requested budget of ${amount_requested_value:,.2f} will be restricted to allowable grant activities and documented with complete backup, "
+            "internal controls, and periodic compliance review."
+            if amount_requested_value is not None
+            else "The budget narrative will tie each line item to allowable grant activities, required controls, and documentation standards."
+        ),
+        "evaluation_and_reporting": (
+            "We will track outputs, outcomes, and reporting deadlines through a formal review calendar, evidence collection process, and corrective-action workflow."
+        ),
+    }
+
+    requirement_to_draft = []
+    for index, requirement in enumerate(compliance_terms, start=1):
+        if index == 1:
+            section_key = "eligibility_and_mission_fit"
+        elif index == 2:
+            section_key = "program_design"
+        elif index == 3:
+            section_key = "budget_and_compliance"
+        else:
+            section_key = "evaluation_and_reporting"
+        drafted_sentence = _build_requirement_sentence(
+            requirement,
+            program_summary=program_text or opportunity.program_name,
+            organization_summary=organization_text or applicant_text,
+        )
+        section_text[section_key] = f"{section_text[section_key]} {drafted_sentence}".strip()
+        requirement_to_draft.append(
+            {
+                "requirement": requirement,
+                "section": section_key,
+                "draft_text": drafted_sentence,
+                "status": "covered" if requirement in set(guidance.get("covered_terms") or []) else "needs_strengthening",
+            }
+        )
+
+    missing_terms = list(guidance.get("missing_terms") or [])
+    revision_suggestions = [
+        f"Add explicit language showing how the proposal will satisfy: {term}"
+        for term in missing_terms
+    ]
+    if amount_requested_value is None:
+        revision_suggestions.append("Add the requested funding amount so the budget narrative can be tailored to the funder range.")
+    if not organization_text:
+        revision_suggestions.append("Add a concise organization capability summary to strengthen the eligibility and mission-fit section.")
+    if not program_text:
+        revision_suggestions.append("Add a program summary with measurable activities and outcomes for a stronger project design section.")
+
+    draft_assist = {
+        "opportunity_id": int(opportunity.id),
+        "title": str(opportunity.title or ""),
+        "external_source": opportunity.external_source,
+        "external_opportunity_id": opportunity.external_opportunity_id,
+        "external_url": opportunity.external_url,
+        "external_details": opportunity.external_details_json or {},
+        "eligibility": list(guidance.get("eligibility") or []),
+        "disqualifications": list(guidance.get("disqualifications") or []),
+        "application_guidance": list(guidance.get("application_guidance") or []),
+        "applicable_conditions": list(guidance.get("applicable_conditions") or []),
+        "generated_by": "deterministic",
+        "draft_sections": section_text,
+        "requirement_to_draft": requirement_to_draft,
+        "revision_suggestions": revision_suggestions,
+        "approval_readiness_summary": (
+            f"Draft generated with {len(requirement_to_draft)} mapped compliance terms. "
+            f"Current compliance score is {guidance.get('compliance_score', 0)} with {len(missing_terms)} terms still needing explicit coverage."
+        ),
+        "compliance_score": guidance.get("compliance_score", 0),
+        "risk_level": guidance.get("risk_level", "medium"),
+    }
+
+    ai_enabled = False
+    if has_app_context():
+        ai_enabled = bool(current_app.config.get("GRANT_COMPLIANCE_AI_ASSIST_ENABLED", False))
+
+    if ai_enabled:
+        try:
+            from ngo_homesuite.ai.apex_client import ApexClient
+
+            host = current_app.config.get("OLLAMA_HOST", "http://localhost:11434")
+            model = current_app.config.get("OLLAMA_MODEL", "llama3.2")
+            timeout_s = float(current_app.config.get("OLLAMA_TIMEOUT_S", 45.0))
+            prompt = (
+                "Return strict JSON with keys draft_sections, requirement_to_draft, revision_suggestions, approval_readiness_summary. "
+                f"Grant context:\n{_opportunity_requirement_source(opportunity)}\n\n"
+                f"Organization summary: {organization_text or '[missing]'}\n"
+                f"Program summary: {program_text or '[missing]'}\n"
+                f"Applicant profile: {applicant_text or '[missing]'}\n"
+                f"Requested amount: {amount_requested_value if amount_requested_value is not None else '[missing]'}\n"
+                f"Existing draft: {existing_text or '[empty]'}\n"
+                f"Compliance terms: {json.dumps(compliance_terms)}"
+            )
+            client = ApexClient(host=str(host), model=str(model), timeout_s=timeout_s)
+            raw = client.query(
+                prompt=prompt,
+                model=str(model),
+                system_prompt="You are a strict nonprofit grant-writing copilot. Return JSON only.",
+            )
+            parsed = json.loads(raw)
+            draft_assist.update(
+                {
+                    "draft_sections": dict(parsed.get("draft_sections") or draft_assist["draft_sections"]),
+                    "requirement_to_draft": list(parsed.get("requirement_to_draft") or draft_assist["requirement_to_draft"]),
+                    "revision_suggestions": list(parsed.get("revision_suggestions") or draft_assist["revision_suggestions"]),
+                    "approval_readiness_summary": str(
+                        parsed.get("approval_readiness_summary") or draft_assist["approval_readiness_summary"]
+                    ),
+                    "generated_by": "ai",
+                }
+            )
+        except Exception:
+            pass
+
+    audit(
+        "grant.proposal.draft_assist",
+        entity_type="grant_opportunity",
+        entity_id=int(opportunity.id),
+        details={
+            "organization_id": int(organization_id),
+            "generated_by": draft_assist["generated_by"],
+            "compliance_score": draft_assist["compliance_score"],
+            "risk_level": draft_assist["risk_level"],
+        },
+    )
+
+    return draft_assist
+
+
+def get_opportunity_ai_context(opportunity_id: int, organization_id: int) -> dict:
+    opportunity = db.session.scalars(
+        select(GrantOpportunity).where(
+            GrantOpportunity.id == int(opportunity_id),
+            GrantOpportunity.organization_id == int(organization_id),
+        ).limit(1)
+    ).first()
+    if opportunity is None:
+        raise LookupError("opportunity not found for organization")
+
+    external_details = opportunity.external_details_json or {}
+    compliance = generate_proposal_compliance_guidance(
+        int(opportunity.id),
+        int(organization_id),
+        proposal_text=None,
+    )
+    recent_proposals = list(
+        db.session.scalars(
+            select(GrantProposal).where(
+                GrantProposal.opportunity_id == int(opportunity.id),
+                GrantProposal.organization_id == int(organization_id),
+            ).order_by(GrantProposal.version_number.desc()).limit(5)
+        )
+    )
+    return {
+        "opportunity_id": int(opportunity.id),
+        "title": str(opportunity.title or ""),
+        "funder_name": str(opportunity.funder_name or ""),
+        "program_name": str(opportunity.program_name or ""),
+        "deadline": opportunity.deadline.isoformat() if opportunity.deadline else None,
+        "external_source": opportunity.external_source,
+        "external_opportunity_id": opportunity.external_opportunity_id,
+        "external_url": opportunity.external_url,
+        "notes": str(opportunity.notes or ""),
+        "summary": str(external_details.get("summary") or ""),
+        "eligibility": list(external_details.get("eligibility") or []),
+        "disqualifications": list(external_details.get("disqualifications") or []),
+        "application_guidance": list(external_details.get("application_guidance") or []),
+        "applicable_conditions": list(external_details.get("applicable_conditions") or []),
+        "requirements": list(external_details.get("requirements") or compliance.get("compliance_terms") or []),
+        "categories": list(external_details.get("categories") or []),
+        "agency_contact_name": str(external_details.get("agency_contact_name") or ""),
+        "agency_contact_email": str(external_details.get("agency_contact_email") or ""),
+        "compliance_terms": list(compliance.get("compliance_terms") or []),
+        "recommended_outline": list(compliance.get("recommended_outline") or []),
+        "recent_proposals": [
+            {
+                "id": int(proposal.id),
+                "version": int(proposal.version),
+                "status": proposal.status,
+                "amount_requested": float(proposal.amount_requested or 0.0),
+                "document_ref": proposal.document_ref,
+                "narrative_summary": str(proposal.narrative_summary or ""),
+            }
+            for proposal in recent_proposals
+        ],
+        "external_details": external_details,
+    }
+
+
+def ingest_opportunity_guidance(
+    opportunity_id: int,
+    organization_id: int,
+    *,
+    guideline_text: str,
+    source_name: Optional[str] = None,
+    merge_into_notes: bool = True,
+) -> dict:
+    opportunity = db.session.scalars(
+        select(GrantOpportunity).where(
+            GrantOpportunity.id == int(opportunity_id),
+            GrantOpportunity.organization_id == int(organization_id),
+        ).limit(1)
+    ).first()
+    if opportunity is None:
+        raise LookupError("opportunity not found for organization")
+
+    raw_text = str(guideline_text or "").strip()
+    if not raw_text:
+        raise ValueError("guideline_text is required")
+
+    requirement_items = _extract_requirement_items(raw_text)
+    normalized_block_lines = [
+        f"Guideline source: {str(source_name or 'manual').strip() or 'manual'}",
+        "Extracted compliance requirements:",
+    ]
+    normalized_block_lines.extend(f"- {item}" for item in requirement_items)
+    normalized_block = "\n".join(normalized_block_lines)
+
+    if merge_into_notes:
+        opportunity.notes = _append_opportunity_note(opportunity.notes, normalized_block)
+        db.session.commit()
+    else:
+        db.session.flush()
+
+    audit(
+        "grant.opportunity.guidance_ingest",
+        entity_type="grant_opportunity",
+        entity_id=int(opportunity.id),
+        details={
+            "organization_id": int(organization_id),
+            "source_name": str(source_name or "manual"),
+            "merge_into_notes": bool(merge_into_notes),
+            "requirement_count": len(requirement_items),
+        },
+    )
+
+    return {
+        "opportunity_id": int(opportunity.id),
+        "source_name": str(source_name or "manual"),
+        "merge_into_notes": bool(merge_into_notes),
+        "requirement_count": len(requirement_items),
+        "requirements": requirement_items,
+        "notes_updated": bool(merge_into_notes),
+        "notes_preview": str(opportunity.notes or "")[-1200:] if merge_into_notes else None,
+    }
+
+
+def save_draft_assist_as_proposal(
+    opportunity_id: int,
+    organization_id: int,
+    *,
+    organization_summary: Optional[str] = None,
+    program_summary: Optional[str] = None,
+    applicant_profile: Optional[str] = None,
+    amount_requested: Optional[float] = None,
+    existing_draft: Optional[str] = None,
+    document_ref: Optional[str] = None,
+) -> GrantProposal:
+    draft = generate_proposal_draft_assist(
+        opportunity_id,
+        organization_id,
+        organization_summary=organization_summary,
+        program_summary=program_summary,
+        applicant_profile=applicant_profile,
+        amount_requested=amount_requested,
+        existing_draft=existing_draft,
+    )
+    sections = dict(draft.get("draft_sections") or {})
+    section_order = [
+        "eligibility_and_mission_fit",
+        "problem_statement",
+        "program_design",
+        "budget_and_compliance",
+        "evaluation_and_reporting",
+    ]
+    narrative_parts = []
+    for section_name in section_order:
+        value = str(sections.get(section_name) or "").strip()
+        if not value:
+            continue
+        heading = section_name.replace("_", " ").title()
+        narrative_parts.append(f"{heading}\n{value}")
+    narrative_summary = "\n\n".join(narrative_parts).strip()
+    if not narrative_summary:
+        raise ValueError("draft assist did not produce proposal content")
+
+    generated_document_ref = str(document_ref or "").strip() or f"draft-assist-opportunity-{int(opportunity_id)}.md"
+    trace_payload = {
+        "requirement_to_draft": draft.get("requirement_to_draft") or [],
+        "revision_suggestions": draft.get("revision_suggestions") or [],
+        "approval_readiness_summary": draft.get("approval_readiness_summary") or "",
+        "generated_by": draft.get("generated_by") or "deterministic",
+        "compliance_score": draft.get("compliance_score") or 0,
+        "risk_level": draft.get("risk_level") or "medium",
+    }
+    proposal_notes = f"Draft assist trace\n{json.dumps(trace_payload, sort_keys=True)}"
+
+    proposal = create_proposal(
+        int(opportunity_id),
+        int(organization_id),
+        amount_requested=amount_requested,
+        narrative_summary=narrative_summary,
+        document_ref=generated_document_ref,
+        notes=proposal_notes,
+    )
+    audit(
+        "grant.proposal.draft_assist_saved",
+        entity_type="grant_proposal",
+        entity_id=int(proposal.id),
+        details={
+            "organization_id": int(organization_id),
+            "opportunity_id": int(opportunity_id),
+            "generated_by": trace_payload["generated_by"],
+            "compliance_score": trace_payload["compliance_score"],
+        },
+    )
+    return proposal
 
 
 def _validate_probability(probability: float) -> float:
@@ -44,6 +714,10 @@ def create_opportunity(
     probability: float = 0.0,
     status: str = "identified",
     notes: Optional[str] = None,
+    external_source: Optional[str] = None,
+    external_opportunity_id: Optional[str] = None,
+    external_url: Optional[str] = None,
+    external_details_json: Optional[dict] = None,
 ) -> GrantOpportunity:
     if not funder_name.strip():
         raise ValueError("funder_name is required")
@@ -73,6 +747,10 @@ def create_opportunity(
         amount_max=float(amount_max) if amount_max is not None else None,
         probability=probability_value,
         probability_weighted_amount=weighted,
+        external_source=(external_source or "").strip() or None,
+        external_opportunity_id=(external_opportunity_id or "").strip() or None,
+        external_url=(external_url or "").strip() or None,
+        external_details_json=external_details_json or None,
         status=status,
         notes=(notes or "").strip() or None,
     )
@@ -137,6 +815,13 @@ def update_opportunity(opportunity_id: int, organization_id: int, **fields) -> G
                 setattr(opportunity, key, clean)
             else:
                 setattr(opportunity, key, value)
+
+    for key in ["external_source", "external_opportunity_id", "external_url"]:
+        if key in fields:
+            setattr(opportunity, key, str(fields[key] or "").strip() or None)
+
+    if "external_details_json" in fields:
+        opportunity.external_details_json = fields["external_details_json"] or None
 
     if "amount_min" in fields:
         opportunity.amount_min = float(fields["amount_min"]) if fields["amount_min"] is not None else None

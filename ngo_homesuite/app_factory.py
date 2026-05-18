@@ -224,7 +224,7 @@ def create_app(config=None):
     # Register blueprints
     from ngo_homesuite.web.main_routes import main_bp
     from ngo_homesuite.web.auth_routes import auth_bp
-    from ngo_homesuite.web.auth_routes import _init_oauth, _oauth_provider_diagnostics
+    from ngo_homesuite.web.auth_routes import _2fa_enforcement_check, _init_oauth, _oauth_provider_diagnostics
     from ngo_homesuite.web.ai_routes import ai_bp
     from ngo_homesuite.web.grants_routes import grants_bp
     from ngo_homesuite.web.membership_routes import membership_bp
@@ -278,6 +278,7 @@ def create_app(config=None):
     app.register_blueprint(v2_bp)
     if tony_bp is not None:
         app.register_blueprint(tony_bp)
+    app.before_request(_2fa_enforcement_check)
 
     @app.get('/metrics')
     def metrics_native():
@@ -305,7 +306,21 @@ def create_app(config=None):
             start_event_reminder_scheduler(app)
         except Exception as exc:
             app.logger.warning('Event reminder scheduler did not start: %s', exc)
-    
+
+    grant_search_scheduler_enabled = str(
+        app.config.get(
+            'GRANT_SEARCH_SCHEDULER_ENABLED',
+            os.getenv('GRANT_SEARCH_SCHEDULER_ENABLED', 'false'),
+        )
+    ).strip().lower() in {'1', 'true', 'yes', 'on'}
+    if grant_search_scheduler_enabled and not bool(app.config.get('TESTING', False)):
+        try:
+            from ngo_homesuite.grants.scheduler import start_grant_search_scheduler
+
+            start_grant_search_scheduler(app)
+        except Exception as exc:
+            app.logger.warning('Grant search scheduler did not start: %s', exc)
+
     # Setup logging
     setup_logging(app)
     if bool(app.config.get('STRUCTURED_LOGS_JSON', False)):

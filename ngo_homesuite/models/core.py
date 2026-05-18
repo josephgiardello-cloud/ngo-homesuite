@@ -591,6 +591,8 @@ from ngo_homesuite.grants.models import GrantOutcomeRecord
 from ngo_homesuite.grants.models import GrantOutcomeTemplate
 from ngo_homesuite.grants.models import GrantProposal
 from ngo_homesuite.grants.models import GrantScore
+from ngo_homesuite.grants.models import GrantSearchAlert
+from ngo_homesuite.grants.models import GrantSearchProfile
 
 
 class MembershipTier(db.Model):
@@ -1569,6 +1571,8 @@ __all__ = [
     'GrantExpenseAllocation',
     'GrantOpportunity',
     'GrantProposal',
+    'GrantSearchProfile',
+    'GrantSearchAlert',
     'GrantOutcomeTemplate',
     'GrantOutcomeRecord',
     'GrantApprovalRequest',

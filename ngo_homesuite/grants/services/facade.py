@@ -7,6 +7,7 @@ from typing import Optional
 
 from ngo_homesuite.grants.services.accounting import AccountingService
 from ngo_homesuite.grants.services.approval import ApprovalService
+from ngo_homesuite.grants.services import grants_gov as _grants_gov
 from ngo_homesuite.grants.services import lifecycle as _grant_lifecycle
 from ngo_homesuite.grants.services.outcomes import OutcomesService
 from ngo_homesuite.grants.services.preaward import PreawardService
@@ -46,6 +47,20 @@ class GrantsFacade:
     set_proposal_outcome = staticmethod(PreawardService.set_proposal_outcome)
     convert_opportunity_to_grant = staticmethod(_grant_lifecycle.convert_opportunity_to_grant)
     opportunity_forecast_summary = staticmethod(PreawardService.opportunity_forecast_summary)
+    search_applicable_opportunities = staticmethod(PreawardService.search_applicable_opportunities)
+    generate_proposal_compliance_guidance = staticmethod(PreawardService.generate_proposal_compliance_guidance)
+    generate_proposal_draft_assist = staticmethod(PreawardService.generate_proposal_draft_assist)
+    get_opportunity_ai_context = staticmethod(PreawardService.get_opportunity_ai_context)
+    ingest_opportunity_guidance = staticmethod(PreawardService.ingest_opportunity_guidance)
+    save_draft_assist_as_proposal = staticmethod(PreawardService.save_draft_assist_as_proposal)
+    search_grants_gov_opportunities = staticmethod(_grants_gov.search_grants_gov_opportunities)
+    sync_grants_gov_results = staticmethod(_grants_gov.sync_grants_gov_results)
+    create_search_profile = staticmethod(_grants_gov.create_search_profile)
+    list_search_profiles = staticmethod(_grants_gov.list_search_profiles)
+    run_search_profile = staticmethod(_grants_gov.run_search_profile)
+    list_search_alerts = staticmethod(_grants_gov.list_search_alerts)
+    run_active_saved_search_alerts = staticmethod(_grants_gov.run_active_saved_search_alerts)
+    acknowledge_search_alert = staticmethod(_grants_gov.acknowledge_search_alert)
 
     # Approval façade methods
     create_approval_request = staticmethod(ApprovalService.create_approval_request)
