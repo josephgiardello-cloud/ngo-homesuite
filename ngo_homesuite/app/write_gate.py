@@ -23,7 +23,12 @@ class WriteGate:
 
     def execute(self, command: Any) -> Result:
         with self.uow.transaction() as tx:
-            token = enter_write_gate()
+            token = enter_write_gate(
+                command_id=getattr(command, "instance_id", None) or getattr(command, "command_id", None),
+                actor_id=getattr(command, "actor_id", None),
+                org_id=getattr(command, "org_id", None),
+                metadata={"action": getattr(command, "action", None)},
+            )
             try:
                 result = self.domain_handler.handle(command, uow=tx)
                 self.event_store.append_batch(result.events, tx=tx)
@@ -99,7 +104,7 @@ class WorkflowWriteHandler:
                 "workflow_type": command.workflow_type,
                 "initial_step": definition.initial_step,
             },
-            version=1,
+            version=int(saved.version or 1),
         )
         return Result(value=saved, events=[event])
 
@@ -141,4 +146,18 @@ class WorkflowWriteHandler:
             event_emitter=collector,
         )
         saved = self.workflow_repository.save(next_instance, uow=uow)
-        return Result(value=(saved, False), events=collector.drain())
+        events = [
+            AuditEvent(
+                event_id=event.event_id,
+                org_id=event.org_id,
+                event_type=event.event_type,
+                aggregate_type=event.aggregate_type,
+                aggregate_id=event.aggregate_id,
+                actor_id=event.actor_id,
+                payload=event.payload,
+                version=int(saved.version or 1),
+                occurred_at=event.occurred_at,
+            )
+            for event in collector.drain()
+        ]
+        return Result(value=(saved, False), events=events)

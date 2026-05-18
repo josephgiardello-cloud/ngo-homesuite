@@ -1,0 +1,25 @@
+# VCS and editor state
+.git
+.gitignore
+.vscode
+
+# Python cache/build artifacts
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+.ruff_cache
+coverage.xml
+
+# Local runtime data
+.venv
+data
+logs
+backups
+instance
+
+# Local debug artifacts
+_debug_*.py
+scripts/debug_*.py

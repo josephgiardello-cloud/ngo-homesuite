@@ -6,6 +6,7 @@ import pyotp
 import unittest.mock as mock
 
 from ngo_homesuite.app_factory import create_app
+from ngo_homesuite.auth.identity import NormalizedIdentity
 from ngo_homesuite.flask_config import TestingConfig
 from ngo_homesuite.models.core import User, db
 
@@ -458,6 +459,50 @@ def test_oauth_google_links_existing_email_account(oauth_client, oauth_app):
         assert user.oauth_provider_id == 'google-uid-link'
         # Password should remain intact (it was an existing password account)
         assert user.password_hash != '!oauth'
+
+
+def test_oauth_google_links_existing_account_case_insensitive_email(oauth_client, oauth_app):
+    with oauth_app.app_context():
+        existing = User(
+            username='preexisting_case_email_user',
+            email='CaseSensitive@example.com',
+            role='viewer',
+        )
+        existing.set_password('SomePass1!')
+        db.session.add(existing)
+        db.session.commit()
+        existing_id = existing.id
+
+    token = {
+        'access_token': 'tok',
+        'token_type': 'Bearer',
+        'userinfo': {'sub': 'google-uid-case-link', 'email': 'casesensitive@example.com', 'name': 'Case User'},
+    }
+
+    with _stub_token_exchange('google', token, token['userinfo']):
+        rv = oauth_client.get('/auth/oauth/google/callback', follow_redirects=False)
+
+    assert rv.status_code == 302
+    with oauth_app.app_context():
+        user = db.session.get(User, existing_id)
+        assert user is not None
+        assert user.oauth_provider == 'google'
+        assert user.oauth_provider_id == 'google-uid-case-link'
+
+
+def test_normalized_identity_from_oauth_normalizes_provider_and_email():
+    identity = NormalizedIdentity.from_oauth(
+        provider='Google',
+        provider_user_id='abc-123',
+        email='User.Name@Example.ORG ',
+        display_name=' User Name ',
+    )
+
+    assert identity.provider == 'google'
+    assert identity.provider_user_id == 'abc-123'
+    assert identity.email == 'user.name@example.org'
+    assert identity.email_normalized == 'user.name@example.org'
+    assert identity.display_name == 'User Name'
 
 
 def test_oauth_repeated_login_reuses_account(oauth_client, oauth_app):

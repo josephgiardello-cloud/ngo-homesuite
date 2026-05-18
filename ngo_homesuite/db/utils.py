@@ -5,7 +5,10 @@ import os
 import sqlite3
 from typing import Any
 
+from flask import has_request_context
+
 from ..config import DB_ENCRYPTION_KEY_ENV, DB_PATH
+from ..observability.context import get_request_id
 from ..prompts import utc_now_compact, utc_now_iso, parse_utc_iso, print_table as _print_table_impl
 from ..utils.backup_core import (
     backup_database_to,
@@ -40,10 +43,27 @@ def audit(
         username = str(CURRENT_USER.get("username") or "") or None
         role = str(CURRENT_USER.get("role") or "") or None
 
+    request_id = get_request_id() if has_request_context() else None
+
+    details_envelope: dict[str, Any] = {
+        "trace": {
+            "request_id": request_id,
+            "schema_version": 1,
+        },
+        "payload": details if details is not None else {},
+    }
+
     try:
-        details_json = json.dumps(details, ensure_ascii=False, separators=(",", ":")) if details is not None else None
+        details_json = json.dumps(details_envelope, ensure_ascii=False, separators=(",", ":"))
     except (TypeError, ValueError):
-        details_json = None
+        details_json = json.dumps(
+            {
+                "trace": {"request_id": request_id, "schema_version": 1},
+                "payload": {"serialization_error": True},
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
 
     def op(conn: Any, cur: Any) -> None:
         cur.execute(

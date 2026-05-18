@@ -1,5 +1,6 @@
-﻿import os, sys, traceback
-os.chdir(r'C:\Users\josep\OneDrive\Desktop\Codes\ngo-homesuite')
+import os, sys, traceback
+from pathlib import Path
+os.chdir(Path(__file__).resolve().parent)
 
 from ngo_homesuite.flask_config import TestingConfig
 class _TestCfg(TestingConfig):

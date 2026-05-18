@@ -1,5 +1,6 @@
-﻿import os, sys, traceback
-os.chdir(r'C:\Users\josep\OneDrive\Desktop\Codes\ngo-homesuite')
+import os, sys, traceback
+from pathlib import Path
+os.chdir(Path(__file__).resolve().parent)
 
 import ngo_homesuite.app_factory as af
 original_seed = af.seed_demo_data

@@ -22,6 +22,7 @@ from urllib.parse import quote_plus
 from collections import defaultdict, deque
 from threading import Lock
 from ngo_homesuite.models.core import db, User
+from ngo_homesuite.auth.identity import NormalizedIdentity
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
 
@@ -1113,30 +1114,42 @@ def oauth_callback(provider: str):
         flash('Could not retrieve account information from the provider.', 'error')
         return redirect(url_for('auth.login'))
 
+    try:
+        identity = NormalizedIdentity.from_oauth(
+            provider=provider,
+            provider_user_id=provider_uid,
+            email=email,
+            display_name=display_name,
+        )
+    except ValueError:
+        current_app.logger.error('oauth_callback identity_normalization_failed provider=%s', provider)
+        flash('Could not normalize provider identity. Please try again.', 'error')
+        return redirect(url_for('auth.login'))
+
     # 1. Look for existing user linked to this provider identity.
     user = db.session.scalars(
         select(User).where(
-            User.oauth_provider == provider,
-            User.oauth_provider_id == provider_uid,
+            User.oauth_provider == identity.provider,
+            User.oauth_provider_id == identity.provider_user_id,
         ).limit(1)
     ).first()
 
     if user is None:
         # 2. Try to link by email (existing password account).
         user = db.session.scalars(
-            select(User).where(User.email == email).limit(1)
+            select(User).where(func.lower(User.email) == identity.email_normalized).limit(1)
         ).first()
         if user is not None:
-            user.oauth_provider = provider
-            user.oauth_provider_id = provider_uid
+            user.oauth_provider = identity.provider
+            user.oauth_provider_id = identity.provider_user_id
             db.session.commit()
 
     if user is None:
         # 3. Auto-create a new account from the OAuth identity.
-        parts = (display_name or '').split(' ', 1)
+        parts = (identity.display_name or '').split(' ', 1)
         first = parts[0] if parts else ''
         last = parts[1] if len(parts) > 1 else ''
-        base_username = (email.split('@')[0] or provider)[:75].replace(' ', '_')
+        base_username = (identity.email.split('@')[0] or identity.provider)[:75].replace(' ', '_')
         # Ensure username uniqueness
         username = base_username
         suffix = 1
@@ -1148,13 +1161,13 @@ def oauth_callback(provider: str):
 
         user = User(
             username=username,
-            email=email,
+            email=identity.email,
             first_name=first,
             last_name=last,
             password_hash='!oauth',   # sentinel — not a valid argon2 hash
             role='viewer',
-            oauth_provider=provider,
-            oauth_provider_id=provider_uid,
+            oauth_provider=identity.provider,
+            oauth_provider_id=identity.provider_user_id,
         )
         db.session.add(user)
         db.session.commit()

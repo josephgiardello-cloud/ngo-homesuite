@@ -414,6 +414,11 @@ def load_runtime_settings() -> RuntimeSettings:
     except ValidationError as exc:
         raise RuntimeError(f"Invalid runtime configuration: {exc}") from exc
 
+    if settings.session_store_backend == "redis" and not settings.redis_url:
+        raise RuntimeError(
+            "Invalid runtime configuration: SESSION_STORE_BACKEND=redis requires REDIS_URL"
+        )
+
     if settings.flask_env == "production":
         if not (
             os.environ.get("SECRET_KEY")
@@ -435,6 +440,19 @@ def load_runtime_settings() -> RuntimeSettings:
             raise RuntimeError(
                 "Invalid runtime configuration: production requires PostgreSQL/MySQL by default; "
                 f"set {ALLOW_SQLITE_IN_PRODUCTION_ENV}=1 only for explicitly accepted non-prod/demo deployments"
+            )
+        if not settings.session_cookie_secure:
+            raise RuntimeError(
+                "Invalid runtime configuration: production requires SESSION_COOKIE_SECURE=1"
+            )
+        if _parse_bool(os.environ.get("SHOW_DEV_LOGIN_CREDENTIALS"), False):
+            raise RuntimeError(
+                "Invalid runtime configuration: production must not enable SHOW_DEV_LOGIN_CREDENTIALS"
+            )
+        oauth_redirect_base = str(os.environ.get("OAUTH_REDIRECT_BASE") or "").strip()
+        if oauth_redirect_base and not oauth_redirect_base.startswith("https://"):
+            raise RuntimeError(
+                "Invalid runtime configuration: production OAUTH_REDIRECT_BASE must use https://"
             )
 
     return settings

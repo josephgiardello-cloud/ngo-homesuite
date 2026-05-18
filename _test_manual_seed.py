@@ -1,5 +1,6 @@
-﻿import os
-os.chdir(r'C:\Users\josep\OneDrive\Desktop\Codes\ngo-homesuite')
+import os
+from pathlib import Path
+os.chdir(Path(__file__).resolve().parent)
 from ngo_homesuite.app_factory import create_app
 from ngo_homesuite.flask_config import TestingConfig
 from ngo_homesuite.models.core import db, Donor, Organization

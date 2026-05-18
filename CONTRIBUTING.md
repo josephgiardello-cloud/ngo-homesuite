@@ -24,6 +24,11 @@ We welcome contributions! Please submit issues, pull requests, and join discussi
 - Install `requirements-dev.txt` before running the default `pytest` command.
 - The repository `pytest.ini` enables timeout and coverage options by default, so a fresh venv also needs dev plugins such as `pytest-timeout` and `pytest-cov`.
 - Full suite from the repo root: `python -m pytest --maxfail=10 -v`
+- Shortcut tasks (PowerShell/Windows): `make install`, `make test`, `make run`
+
+## Security
+- Review and follow the vulnerability disclosure process in [SECURITY.md](SECURITY.md).
+- Never commit credentials, seeded passwords, or API keys.
 
 ## Community
 - [Discord](https://discord.gg/example)
