@@ -18,7 +18,7 @@ from flask_babel import Babel, lazy_gettext as _l
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_ckeditor import CKEditor
-from sqlalchemy import inspect as sa_inspect
+from sqlalchemy import inspect as sa_inspect, text as sa_text
 
 from ngo_homesuite.flask_config import get_config
 from ngo_homesuite.config import get_runtime_settings
@@ -112,12 +112,44 @@ def create_app(config=None):
     def load_user(user_id):
         """Load user from database by ID."""
         return db.session.get(User, int(user_id))
+
+    def _ensure_donor_crm_columns() -> None:
+        """Backfill donor CRM columns for existing SQLite DBs without full SQL migration files."""
+        engine = db.engine
+        if engine.dialect.name != 'sqlite':
+            return
+
+        inspector = sa_inspect(engine)
+        if 'donors' not in inspector.get_table_names():
+            return
+
+        existing_columns = {col['name'] for col in inspector.get_columns('donors')}
+        statements = [
+            ('salutation', "ALTER TABLE donors ADD COLUMN salutation TEXT"),
+            ('preferred_name', "ALTER TABLE donors ADD COLUMN preferred_name TEXT"),
+            ('status', "ALTER TABLE donors ADD COLUMN status TEXT NOT NULL DEFAULT 'active'"),
+            ('address', "ALTER TABLE donors ADD COLUMN address TEXT"),
+            ('city', "ALTER TABLE donors ADD COLUMN city TEXT"),
+            ('country', "ALTER TABLE donors ADD COLUMN country TEXT"),
+            ('postal_code', "ALTER TABLE donors ADD COLUMN postal_code TEXT"),
+            ('preferred_contact_method', "ALTER TABLE donors ADD COLUMN preferred_contact_method TEXT NOT NULL DEFAULT 'email'"),
+            ('communication_opt_in', "ALTER TABLE donors ADD COLUMN communication_opt_in INTEGER NOT NULL DEFAULT 1"),
+            ('employer', "ALTER TABLE donors ADD COLUMN employer TEXT"),
+            ('source', "ALTER TABLE donors ADD COLUMN source TEXT"),
+        ]
+
+        with engine.begin() as conn:
+            for column_name, statement in statements:
+                if column_name not in existing_columns:
+                    conn.execute(sa_text(statement))
+                    app.logger.info('Added donor compatibility column: %s', column_name)
     
     # Create app context and tables
     with app.app_context():
         db_uri = str(app.config.get('SQLALCHEMY_DATABASE_URI', ''))
         if db_uri.startswith('sqlite:///') and ':memory:' not in db_uri:
             auto_migrate(db_uri.replace('sqlite:///', '', 1))
+            _ensure_donor_crm_columns()
         db.create_all()
         if bool(app.config.get('ENABLE_DEMO_SEED', False)):
             seed_demo_data(app)

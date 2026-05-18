@@ -59,6 +59,65 @@
         </div>
     </div>
 
+    <div class="payment-section" data-payment-section="bank_transfer" hidden>
+        <h4 style="margin-top:0;">Bank Transfer Details</h4>
+        <p class="text-muted">Enter routing and account numbers for bank transfers. Only masked values are stored in the internal note.</p>
+        <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.85rem;">
+            <div class="form-group {% if form.bank_routing_number.errors %}error{% endif %}">
+                {{ form.bank_routing_number.label }}
+                {{ form.bank_routing_number(inputmode='numeric', autocomplete='off') }}
+                {% for error in form.bank_routing_number.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            </div>
+            <div class="form-group {% if form.bank_account_number.errors %}error{% endif %}">
+                {{ form.bank_account_number.label }}
+                {{ form.bank_account_number(inputmode='numeric', autocomplete='off') }}
+                {% for error in form.bank_account_number.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <div class="payment-section" data-payment-section="credit_card" hidden>
+        <h4 style="margin-top:0;">Credit Card Details</h4>
+        <p class="text-muted">Collect masked card metadata only. Do not store full card numbers or CVV in this record.</p>
+        <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.85rem;">
+            <div class="form-group {% if form.card_holder_name.errors %}error{% endif %}">
+                {{ form.card_holder_name.label }}
+                {{ form.card_holder_name(autocomplete='cc-name') }}
+                {% for error in form.card_holder_name.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            </div>
+            <div class="form-group {% if form.card_brand.errors %}error{% endif %}">
+                {{ form.card_brand.label }}
+                {{ form.card_brand() }}
+                {% for error in form.card_brand.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            </div>
+            <div class="form-group {% if form.card_last4.errors %}error{% endif %}">
+                {{ form.card_last4.label }}
+                {{ form.card_last4(inputmode='numeric', autocomplete='off') }}
+                {% for error in form.card_last4.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            </div>
+            <div class="form-group {% if form.card_exp_month.errors %}error{% endif %}">
+                {{ form.card_exp_month.label }}
+                {{ form.card_exp_month(inputmode='numeric') }}
+                {% for error in form.card_exp_month.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            </div>
+            <div class="form-group {% if form.card_exp_year.errors %}error{% endif %}">
+                {{ form.card_exp_year.label }}
+                {{ form.card_exp_year(inputmode='numeric') }}
+                {% for error in form.card_exp_year.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <div class="payment-section" data-payment-section="cash" hidden>
+        <h4 style="margin-top:0;">Cash Award Details</h4>
+        <p class="text-muted">Add the award or receipt reference so the cash gift can be reconciled later.</p>
+        <div class="form-group {% if form.cash_award_reference.errors %}error{% endif %}">
+            {{ form.cash_award_reference.label }}
+            {{ form.cash_award_reference() }}
+            {% for error in form.cash_award_reference.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        </div>
+    </div>
+
     <div class="form-group {% if form.notes.errors %}error{% endif %}">
         {{ form.notes.label }}
         {{ form.notes(rows=4) }}
@@ -71,4 +130,23 @@
         <a href="{{ url_for('main.expense_create') }}" class="btn btn-secondary">Record Expense</a>
     </div>
 </form>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const methodField = document.getElementById('payment_method');
+    const sections = Array.from(document.querySelectorAll('[data-payment-section]'));
+
+    function syncSections() {
+        const value = methodField && methodField.value ? methodField.value : 'cash';
+        sections.forEach(function(section) {
+            section.hidden = section.getAttribute('data-payment-section') !== value;
+        });
+    }
+
+    if (methodField) {
+        methodField.addEventListener('change', syncSections);
+        syncSections();
+    }
+});
+</script>
 {% endblock %}

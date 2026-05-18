@@ -4,55 +4,139 @@
 
 {% block content %}
 <h1>{{ 'Edit Donor' if is_edit else 'Add Donor' }}</h1>
+<p class="text-muted">Capture the donor’s identity, contact preferences, address, and stewardship profile in one place.</p>
 
 <form method="post" class="mt-2" enctype="multipart/form-data">
     {{ form.hidden_tag() }}
 
-    <div class="form-group {% if form.name.errors %}error{% endif %}">
-        {{ form.name.label }}
-        {{ form.name() }}
-        {% for error in form.name.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
-    </div>
+    <div class="detail-grid" style="margin-bottom:1rem;">
+        <div class="card">
+            <h3>Identity</h3>
+            <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.85rem;">
+                <div class="form-group {% if form.name.errors %}error{% endif %}">
+                    {{ form.name.label }}
+                    {{ form.name() }}
+                    {% for error in form.name.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="form-group {% if form.salutation.errors %}error{% endif %}">
+                    {{ form.salutation.label }}
+                    {{ form.salutation() }}
+                    {% for error in form.salutation.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="form-group {% if form.preferred_name.errors %}error{% endif %}">
+                    {{ form.preferred_name.label }}
+                    {{ form.preferred_name() }}
+                    {% for error in form.preferred_name.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="form-group {% if form.donor_type.errors %}error{% endif %}">
+                    {{ form.donor_type.label }}
+                    {{ form.donor_type() }}
+                    {% for error in form.donor_type.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="form-group {% if form.status.errors %}error{% endif %}">
+                    {{ form.status.label }}
+                    {{ form.status() }}
+                    {% for error in form.status.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                </div>
+            </div>
+        </div>
 
-    <div class="form-group {% if form.email.errors %}error{% endif %}">
-        {{ form.email.label }}
-        {{ form.email() }}
-        {% for error in form.email.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
-    </div>
-
-    <div class="form-group {% if form.phone.errors %}error{% endif %}">
-        {{ form.phone.label }}
-        {{ form.phone() }}
-        {% for error in form.phone.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
-    </div>
-
-    <div class="form-group {% if form.donor_type.errors %}error{% endif %}">
-        {{ form.donor_type.label }}
-        {{ form.donor_type() }}
-        {% for error in form.donor_type.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
-    </div>
-
-    <div class="form-group {% if form.notes.errors %}error{% endif %}">
-        {{ form.notes.label }}
-        {{ form.notes(rows=4) }}
-        {% for error in form.notes.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
-    </div>
-
-    <div class="form-group">
-        <label for="photo">Photo (JPG, PNG, GIF, WEBP; max 5MB)</label>
-        <input id="photo" name="photo" type="file" accept="image/jpeg,image/png,image/gif,image/webp" />
-    </div>
-
-    {% if donor and donor.photo_path %}
-    <div class="form-group">
-        <label>Current Photo</label>
-        <div>
-            <img src="{{ url_for('main.donor_photo', donor_id=donor.id) }}" alt="Donor photo" style="max-width:180px;border:1px solid var(--border);border-radius:8px;" />
+        <div class="card">
+            <h3>Contact</h3>
+            <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.85rem;">
+                <div class="form-group {% if form.email.errors %}error{% endif %}">
+                    {{ form.email.label }}
+                    {{ form.email() }}
+                    {% for error in form.email.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="form-group {% if form.phone.errors %}error{% endif %}">
+                    {{ form.phone.label }}
+                    {{ form.phone() }}
+                    {% for error in form.phone.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="form-group {% if form.preferred_contact_method.errors %}error{% endif %}">
+                    {{ form.preferred_contact_method.label }}
+                    {{ form.preferred_contact_method() }}
+                    {% for error in form.preferred_contact_method.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="form-group {% if form.communication_opt_in.errors %}error{% endif %}">
+                    <label style="display:flex; align-items:center; gap:0.5rem; margin-top:1.65rem;">{{ form.communication_opt_in() }} <span>{{ form.communication_opt_in.label.text }}</span></label>
+                    {% for error in form.communication_opt_in.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                </div>
+            </div>
         </div>
     </div>
-    {% endif %}
 
-    {{ form.submit(class_='btn btn-primary') }}
-    <a href="{{ url_for('main.donors_list') }}" class="btn btn-secondary">Cancel</a>
+    <div class="detail-grid" style="margin-bottom:1rem;">
+        <div class="card">
+            <h3>Address</h3>
+            <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.85rem;">
+                <div class="form-group {% if form.address.errors %}error{% endif %}">
+                    {{ form.address.label }}
+                    {{ form.address() }}
+                    {% for error in form.address.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="form-group {% if form.city.errors %}error{% endif %}">
+                    {{ form.city.label }}
+                    {{ form.city() }}
+                    {% for error in form.city.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="form-group {% if form.country.errors %}error{% endif %}">
+                    {{ form.country.label }}
+                    {{ form.country() }}
+                    {% for error in form.country.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="form-group {% if form.postal_code.errors %}error{% endif %}">
+                    {{ form.postal_code.label }}
+                    {{ form.postal_code() }}
+                    {% for error in form.postal_code.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>Stewardship</h3>
+            <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.85rem;">
+                <div class="form-group {% if form.employer.errors %}error{% endif %}">
+                    {{ form.employer.label }}
+                    {{ form.employer() }}
+                    {% for error in form.employer.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="form-group {% if form.source.errors %}error{% endif %}">
+                    {{ form.source.label }}
+                    {{ form.source() }}
+                    {% for error in form.source.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card" style="margin-bottom:1rem;">
+        <h3>Notes & Media</h3>
+        <div class="form-group {% if form.notes.errors %}error{% endif %}">
+            {{ form.notes.label }}
+            {{ form.notes(rows=4) }}
+            {% for error in form.notes.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        </div>
+
+        <div class="form-group">
+            <label for="photo">Photo (JPG, PNG, GIF, WEBP; max 5MB)</label>
+            <input id="photo" name="photo" type="file" accept="image/jpeg,image/png,image/gif,image/webp" />
+        </div>
+
+        {% if donor and donor.photo_path %}
+        <div class="form-group">
+            <label>Current Photo</label>
+            <div>
+                <img src="{{ url_for('main.donor_photo', donor_id=donor.id) }}" alt="Donor photo" style="max-width:180px;border:1px solid var(--border);border-radius:8px;" />
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="actions-row">
+        {{ form.submit(class_='btn btn-primary') }}
+        <a href="{{ url_for('main.donors_list') }}" class="btn btn-secondary">Cancel</a>
+    </div>
 </form>
 {% endblock %}

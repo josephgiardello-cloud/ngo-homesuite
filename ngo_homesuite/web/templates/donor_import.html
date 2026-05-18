@@ -38,6 +38,24 @@
                 </select>
             </div>
             <div>
+                <label for="map_salutation">Salutation</label>
+                <select id="map_salutation" name="map_salutation">
+                    <option value="">-- Not mapped --</option>
+                    {% for h in headers %}
+                    <option value="{{ h }}" {{ 'selected' if mapping.salutation == h else '' }}>{{ h }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label for="map_preferred_name">Preferred Name</label>
+                <select id="map_preferred_name" name="map_preferred_name">
+                    <option value="">-- Not mapped --</option>
+                    {% for h in headers %}
+                    <option value="{{ h }}" {{ 'selected' if mapping.preferred_name == h else '' }}>{{ h }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
                 <label for="map_email">Email</label>
                 <select id="map_email" name="map_email">
                     <option value="">-- Not mapped --</option>
@@ -61,6 +79,87 @@
                     <option value="">-- Not mapped --</option>
                     {% for h in headers %}
                     <option value="{{ h }}" {{ 'selected' if mapping.donor_type == h else '' }}>{{ h }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label for="map_status">Status</label>
+                <select id="map_status" name="map_status">
+                    <option value="">-- Not mapped --</option>
+                    {% for h in headers %}
+                    <option value="{{ h }}" {{ 'selected' if mapping.status == h else '' }}>{{ h }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label for="map_preferred_contact_method">Preferred Contact Method</label>
+                <select id="map_preferred_contact_method" name="map_preferred_contact_method">
+                    <option value="">-- Not mapped --</option>
+                    {% for h in headers %}
+                    <option value="{{ h }}" {{ 'selected' if mapping.preferred_contact_method == h else '' }}>{{ h }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label for="map_communication_opt_in">Can Contact This Donor</label>
+                <select id="map_communication_opt_in" name="map_communication_opt_in">
+                    <option value="">-- Not mapped --</option>
+                    {% for h in headers %}
+                    <option value="{{ h }}" {{ 'selected' if mapping.communication_opt_in == h else '' }}>{{ h }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label for="map_address">Address</label>
+                <select id="map_address" name="map_address">
+                    <option value="">-- Not mapped --</option>
+                    {% for h in headers %}
+                    <option value="{{ h }}" {{ 'selected' if mapping.address == h else '' }}>{{ h }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label for="map_city">City</label>
+                <select id="map_city" name="map_city">
+                    <option value="">-- Not mapped --</option>
+                    {% for h in headers %}
+                    <option value="{{ h }}" {{ 'selected' if mapping.city == h else '' }}>{{ h }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label for="map_country">Country</label>
+                <select id="map_country" name="map_country">
+                    <option value="">-- Not mapped --</option>
+                    {% for h in headers %}
+                    <option value="{{ h }}" {{ 'selected' if mapping.country == h else '' }}>{{ h }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label for="map_postal_code">Postal Code</label>
+                <select id="map_postal_code" name="map_postal_code">
+                    <option value="">-- Not mapped --</option>
+                    {% for h in headers %}
+                    <option value="{{ h }}" {{ 'selected' if mapping.postal_code == h else '' }}>{{ h }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label for="map_employer">Employer</label>
+                <select id="map_employer" name="map_employer">
+                    <option value="">-- Not mapped --</option>
+                    {% for h in headers %}
+                    <option value="{{ h }}" {{ 'selected' if mapping.employer == h else '' }}>{{ h }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label for="map_source">Lead Source</label>
+                <select id="map_source" name="map_source">
+                    <option value="">-- Not mapped --</option>
+                    {% for h in headers %}
+                    <option value="{{ h }}" {{ 'selected' if mapping.source == h else '' }}>{{ h }}</option>
                     {% endfor %}
                 </select>
             </div>
@@ -96,9 +195,13 @@
             <th>Row</th>
             <th>Status</th>
             <th>Name</th>
+            <th>Preferred</th>
             <th>Email</th>
             <th>Phone</th>
+            <th>Address</th>
             <th>Type</th>
+            <th>CRM Status</th>
+            <th>Contact</th>
             <th>Notes</th>
             <th>Details</th>
         </tr>
@@ -108,18 +211,24 @@
         <tr>
             <td>{{ row.row_number }}</td>
             <td>
-                {% if row.status == 'ready' %}
+                {% if row.import_status == 'ready' %}
                 <span class="badge badge-success">ready</span>
-                {% elif row.status == 'duplicate' %}
+                {% elif row.import_status == 'duplicate' %}
                 <span class="badge badge-secondary">duplicate</span>
                 {% else %}
                 <span class="badge badge-info">error</span>
                 {% endif %}
             </td>
             <td>{{ row.name or '-' }}</td>
+            <td>{{ row.preferred_name or row.salutation or '-' }}</td>
             <td>{{ row.email or '-' }}</td>
             <td>{{ row.phone or '-' }}</td>
+            <td>{{ row.address or '-' }}</td>
             <td>{{ row.donor_type or '-' }}</td>
+            <td>{{ row.crm_status or '-' }}</td>
+            <td>
+                {{ row.preferred_contact_method or '-' }}{% if not row.communication_opt_in %} (no opt-in){% endif %}
+            </td>
             <td>{{ row.notes or '-' }}</td>
             <td>
                 {% if row.errors %}
