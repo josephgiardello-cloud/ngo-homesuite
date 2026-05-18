@@ -15,7 +15,7 @@ from sqlalchemy import select
 from werkzeug.utils import secure_filename
 
 from ngo_homesuite.grants.facade import GrantsFacade
-from ngo_homesuite.grants.exceptions import GrantNotFound, InvalidGrantTransition
+from ngo_homesuite.grants.exceptions import GrantApprovalError, GrantNotFound, InvalidGrantTransition
 from ngo_homesuite.models.core import Donor, Grant, User, db
 
 from ngo_homesuite.web.rbac import roles_required
@@ -173,16 +173,40 @@ def advance_grant(grant_id: int):
     payload, error = _normalize_grant_dates(data, ("submission_date", "award_date", "report_due_date"))
     if error:
         return jsonify({"error": error}), 400
+
+    transition_fields = {
+        key: value
+        for key, value in payload.items()
+        if key not in {"new_status", "approval_request_id"}
+    }
     try:
-        grant = _grants().advance_grant_status(
-            grant_id,
-            _org_id(),
-            new_status=payload["new_status"],
-            **{k: v for k, v in payload.items() if k != "new_status"},
-        )
+        if payload["new_status"] == "closed":
+            approval_request_id = payload.get("approval_request_id")
+            if approval_request_id is None:
+                return jsonify({"error": "approval_request_id is required for closeout transitions"}), 400
+            try:
+                approval_request_id = int(approval_request_id)
+            except (TypeError, ValueError):
+                return jsonify({"error": "approval_request_id must be an integer"}), 400
+
+            grant = _grants().close_grant_with_approval(
+                grant_id,
+                _org_id(),
+                approval_request_id=approval_request_id,
+                executed_by_user_id=int(current_user.id),
+            )
+        else:
+            grant = _grants().advance_grant_status(
+                grant_id,
+                _org_id(),
+                new_status=payload["new_status"],
+                **transition_fields,
+            )
     except GrantNotFound as exc:
         return jsonify({"error": str(exc)}), 404
     except InvalidGrantTransition as exc:
+        return jsonify({"error": str(exc)}), 422
+    except GrantApprovalError as exc:
         return jsonify({"error": str(exc)}), 422
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
