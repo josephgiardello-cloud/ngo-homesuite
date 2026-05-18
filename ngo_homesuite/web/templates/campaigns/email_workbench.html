@@ -1,61 +1,236 @@
 {% extends 'base.html' %}
 {% block title %}Campaign Email Workbench{% endblock %}
 {% block content %}
-<section class="page-header">
-  <h1>Campaign Email Workbench</h1>
-  <p>Compose rich text campaign email, choose a donor segment, and send through the queue.</p>
-</section>
+<style>
+  .email-shell { display: grid; gap: 1rem; }
+  .hero {
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 1rem;
+    background: linear-gradient(120deg, rgba(10, 84, 108, 0.08), rgba(35, 132, 101, 0.14));
+  }
+  .hero-kpis { display: grid; gap: 0.55rem; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 0.75rem; }
+  .kpi { border: 1px solid var(--border); border-radius: 10px; padding: 0.5rem 0.65rem; background: var(--surface-soft); }
+  .kpi-label { font-size: 0.78rem; color: var(--muted); }
+  .kpi-value { font-size: 1.1rem; font-weight: 700; margin-top: 0.08rem; }
+  .grid-2 { display: grid; gap: 1rem; grid-template-columns: 1fr; }
+  .grid-3 { display: grid; gap: 0.6rem; grid-template-columns: 1fr; }
+  .review-warning {
+    border: 1px solid rgba(201, 125, 18, 0.55);
+    border-radius: 10px;
+    background: rgba(255, 237, 189, 0.35);
+    color: #7f5300;
+    padding: 0.6rem 0.7rem;
+  }
+  .review-ok {
+    border: 1px solid rgba(21, 146, 109, 0.45);
+    border-radius: 10px;
+    background: rgba(174, 244, 216, 0.3);
+    color: #0f5f48;
+    padding: 0.6rem 0.7rem;
+  }
+  .toolbar { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.8rem; }
+  .result {
+    white-space: pre-wrap;
+    margin: 0;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface-soft);
+    padding: 0.75rem;
+    max-height: 360px;
+    overflow: auto;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 0.82rem;
+  }
+  .analytics { display: grid; gap: 0.5rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .analytics .kpi { min-height: 72px; }
+  .quality-list { margin: 0; padding-left: 1rem; display: grid; gap: 0.22rem; }
+  .sample-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.45rem; }
+  .sample-list li { border: 1px solid var(--border); border-radius: 9px; background: var(--surface-soft); padding: 0.45rem 0.55rem; }
+  .batch-table { width: 100%; border-collapse: collapse; }
+  .batch-table th, .batch-table td { border-bottom: 1px solid var(--border); padding: 0.42rem 0.4rem; font-size: 0.85rem; text-align: left; }
+  @media (min-width: 980px) {
+    .hero-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .grid-2 { grid-template-columns: minmax(560px, 1.35fr) minmax(320px, 0.9fr); align-items: start; }
+    .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
+</style>
 
-<section class="card" style="padding: 1rem; margin-bottom: 1rem;">
-  <div class="grid" style="margin-bottom: 1rem; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));">
-    <div>
-      <label for="reviewerName">Human Reviewer Name</label>
-      <input id="reviewerName" class="form-control" type="text" value="Ops Reviewer" />
+<div class="email-shell">
+  <section class="hero">
+    <h1>Campaign Email Workbench</h1>
+    <p class="text-muted">High-volume, compliance-reviewed donor outreach with AI drafting, audience preview, dry-run checks, and send analytics.</p>
+    <div class="hero-kpis">
+      <div class="kpi">
+        <div class="kpi-label">Total Donations</div>
+        <div class="kpi-value">${{ '%.2f'|format(total_donations or 0) }}</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Net Position</div>
+        <div class="kpi-value">${{ '%.2f'|format(net_total or 0) }}</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Campaigns</div>
+        <div class="kpi-value">{{ campaign_summary.total_campaigns if campaign_summary else 0 }}</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Active Campaigns</div>
+        <div class="kpi-value">{{ campaign_summary.active_campaigns if campaign_summary else 0 }}</div>
+      </div>
     </div>
-    <div>
-      <label for="reviewerRole">Reviewer Role</label>
-      <input id="reviewerRole" class="form-control" type="text" value="compliance" />
-    </div>
+  </section>
+
+  <div class="grid-2">
+    <section class="card" style="padding: 1rem;">
+      <div class="card-title">Compose & Send</div>
+      {% if can_send_campaign_email %}
+      <div class="review-ok mb-1">Authorization status: {{ actor_role|upper }}{% if can_authorize_external_comms and actor_role != 'admin' %} with external communications approval{% endif %}.</div>
+      {% else %}
+      <div class="review-warning mb-1">You can preview and draft, but queue send requires admin role or external communications authorization.</div>
+      {% endif %}
+
+      <div class="grid-3 mb-1">
+        <div>
+          <label for="campaignSelect">Campaign</label>
+          <select id="campaignSelect" class="form-control" style="display:block; width:100%;"></select>
+        </div>
+        <div>
+          <label for="segmentPreset">Audience Segment</label>
+          <select id="segmentPreset" class="form-control" style="display:block; width:100%;">
+            <option value="all_active_donors">All active donors (last 365 days)</option>
+            <option value="major_donors">Major donors ($500+ lifetime)</option>
+            <option value="lapsed_donors">Lapsed donors (180+ days)</option>
+            <option value="campaign_donors">Campaign donors only</option>
+            <option value="top_major_donors">Top 100 major donors</option>
+          </select>
+        </div>
+        <div>
+          <label for="askAmount">Ask Amount (optional)</label>
+          <input id="askAmount" class="form-control" type="number" min="1" step="0.01" placeholder="75" />
+        </div>
+      </div>
+
+      <details class="mb-1">
+        <summary>Advanced Audience Filters</summary>
+        <div class="grid-3 mt-1">
+          <div>
+            <label for="minTotalGiven">Min Lifetime Giving</label>
+            <input id="minTotalGiven" class="form-control" type="number" min="0" step="0.01" placeholder="0" />
+          </div>
+          <div>
+            <label for="giftedWithinDays">Gifted Within Days</label>
+            <input id="giftedWithinDays" class="form-control" type="number" min="0" step="1" placeholder="365" />
+          </div>
+          <div>
+            <label for="topNByTotalGiven">Top N by Lifetime Giving</label>
+            <input id="topNByTotalGiven" class="form-control" type="number" min="0" step="1" placeholder="0" />
+          </div>
+        </div>
+      </details>
+
+      <div class="grid-3 mb-1">
+        <div>
+          <label for="reviewerName">Human Reviewer Name</label>
+          <input id="reviewerName" class="form-control" type="text" value="Ops Reviewer" />
+        </div>
+        <div>
+          <label for="reviewerRole">Reviewer Role</label>
+          <input id="reviewerRole" class="form-control" type="text" value="compliance" />
+        </div>
+        <div>
+          <label for="confirmationPhrase">Approval Phrase</label>
+          <input id="confirmationPhrase" class="form-control" type="text" value="I CONFIRM HUMAN REVIEW" />
+        </div>
+      </div>
+
+      <div class="mb-1">
+        <label for="testDonorIds">Test Recipient Donor IDs (comma-separated)</label>
+        <input id="testDonorIds" class="form-control" type="text" placeholder="12, 48, 91" />
+      </div>
+
+      <div class="grid-3 mb-1">
+        <label><input id="warningAcknowledged" type="checkbox" checked> Warning acknowledged</label>
+        <label><input id="aiAssisted" type="checkbox"> AI-assisted message</label>
+        <label><input id="containsInternalDetails" type="checkbox"> Contains internal details</label>
+      </div>
+
+      <div class="grid-3 mb-1">
+        <div>
+          <label for="draftObjective">AI Draft Objective</label>
+          <input id="draftObjective" class="form-control" type="text" value="re-engage donors with a measurable call-to-action" />
+        </div>
+        <div>
+          <label for="draftTone">AI Draft Tone</label>
+          <input id="draftTone" class="form-control" type="text" value="warm and urgent" />
+        </div>
+        <div>
+          <label for="subject">Subject</label>
+          <input id="subject" class="form-control" type="text" placeholder="Impact update: your support in action" />
+        </div>
+      </div>
+
+      <label for="body">Body</label>
+      <textarea id="body" name="body" rows="10" class="form-control" placeholder="Hi {name}, thanks to your support in {campaign_name}..."></textarea>
+      {{ ckeditor.load() }}
+      {{ ckeditor.config(name='body') }}
+
+      <div class="toolbar">
+        <button id="aiDraftBtn" class="btn btn-secondary" type="button">Generate AI Draft</button>
+        <button id="previewBtn" class="btn btn-outline-primary" type="button">Preview Audience</button>
+        <button id="dryRunBtn" class="btn btn-outline-primary" type="button">Dry Run Queue</button>
+        <button id="testSendBtn" class="btn btn-secondary" type="button">Queue Test Send</button>
+        <button id="sendBtn" class="btn btn-primary" type="button" {% if not can_send_campaign_email %}disabled{% endif %}>Queue Send</button>
+      </div>
+    </section>
+
+    <section class="card" style="padding: 1rem; display: grid; gap: 1rem;">
+      <div>
+        <div class="card-title">Live Result</div>
+        <pre id="resultBox" class="result">Ready.</pre>
+      </div>
+
+      <div>
+        <div class="card-title">Preview Quality Hints</div>
+        <ul id="qualityHints" class="quality-list text-muted">
+          <li>Run preview to generate quality hints.</li>
+        </ul>
+      </div>
+
+      <div>
+        <div class="card-title">Sample Personalization</div>
+        <ul id="samplePreview" class="sample-list">
+          <li class="text-muted">Run preview to inspect sample recipients and rendered content.</li>
+        </ul>
+      </div>
+
+      <div>
+        <div class="card-title">Send Analytics</div>
+        <div class="analytics" id="analyticsKpis">
+          <div class="kpi"><div class="kpi-label">Batch Count</div><div class="kpi-value" data-kpi="batch_count">0</div></div>
+          <div class="kpi"><div class="kpi-label">Recipients</div><div class="kpi-value" data-kpi="total_recipients">0</div></div>
+          <div class="kpi"><div class="kpi-label">Sent</div><div class="kpi-value" data-kpi="total_sent">0</div></div>
+          <div class="kpi"><div class="kpi-label">Failed</div><div class="kpi-value" data-kpi="total_failed">0</div></div>
+          <div class="kpi"><div class="kpi-label">Open Rate</div><div class="kpi-value" data-kpi="open_rate">0%</div></div>
+          <div class="kpi"><div class="kpi-label">Click Rate</div><div class="kpi-value" data-kpi="click_rate">0%</div></div>
+        </div>
+      </div>
+
+      <div>
+        <div class="card-title">Recent Batches</div>
+        <div class="table-wrap">
+          <table class="batch-table">
+            <thead>
+              <tr><th>ID</th><th>Status</th><th>Recipients</th><th>Sent</th><th>Failed</th><th>Created</th></tr>
+            </thead>
+            <tbody id="recentBatchRows">
+              <tr><td colspan="6" class="text-muted">Select a campaign to load analytics.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
   </div>
-
-  <div class="alert alert-info" style="margin-bottom: 1rem;">
-    <span class="alert-body"><strong>Special warning:</strong> External Communications Authorization Audit requires a named human reviewer before queueing outreach.</span>
-  </div>
-
-  <label for="campaignSelect">Campaign</label>
-  <select id="campaignSelect" class="form-control" style="display:block; width:100%; margin-bottom:0.75rem;"></select>
-
-  <label for="segmentPreset">Donor segment</label>
-  <select id="segmentPreset" class="form-control" style="display:block; width:100%; margin-bottom:0.75rem;">
-    <option value="all_active_donors">All active donors (last 365 days)</option>
-    <option value="major_donors">Major donors ($500+ lifetime)</option>
-    <option value="lapsed_donors">Lapsed donors (180+ days)</option>
-  </select>
-
-  <label for="subject">Subject</label>
-  <input id="subject" class="form-control" type="text" placeholder="Impact update: your support in action" style="display:block; width:100%; margin-bottom:0.75rem;" />
-
-  <label for="body">Body</label>
-  <textarea id="body" name="body" rows="8" class="form-control" placeholder="Hi {name}, thanks to your support..."></textarea>
-  {{ ckeditor.load() }}
-  {{ ckeditor.config(name='body') }}
-
-  <div style="margin-top: 1rem; display:flex; gap:0.5rem; flex-wrap:wrap;">
-    <button id="draftBtn" class="btn btn-secondary" type="button">Generate AI Draft</button>
-    <button id="previewBtn" class="btn btn-outline-primary" type="button">Preview audience</button>
-    <button id="sendBtn" class="btn btn-primary" type="button">Queue send</button>
-  </div>
-</section>
-
-<section class="card" style="padding: 1rem;">
-  <h2 style="margin-top:0;">Result</h2>
-  <pre id="resultBox" style="white-space:pre-wrap; margin:0;">Ready.</pre>
-</section>
-
-<section class="card" style="padding: 1rem;">
-  <h2 style="margin-top:0;">External Communications Authorization Audit</h2>
-  <p class="text-muted" style="margin-bottom:0;">Every queued outreach action records reviewer identity, warning acknowledgement, and approval phrase for post-send audit review.</p>
-</section>
+</div>
 
 <script>
 (function () {
@@ -63,17 +238,136 @@
   const segmentPreset = document.getElementById('segmentPreset');
   const reviewerNameInput = document.getElementById('reviewerName');
   const reviewerRoleInput = document.getElementById('reviewerRole');
+  const warningAcknowledged = document.getElementById('warningAcknowledged');
+  const confirmationPhrase = document.getElementById('confirmationPhrase');
+  const aiAssisted = document.getElementById('aiAssisted');
+  const containsInternalDetails = document.getElementById('containsInternalDetails');
+  const minTotalGiven = document.getElementById('minTotalGiven');
+  const giftedWithinDays = document.getElementById('giftedWithinDays');
+  const topNByTotalGiven = document.getElementById('topNByTotalGiven');
+  const askAmount = document.getElementById('askAmount');
+  const draftObjective = document.getElementById('draftObjective');
+  const draftTone = document.getElementById('draftTone');
   const subjectInput = document.getElementById('subject');
+  const testDonorIdsInput = document.getElementById('testDonorIds');
   const resultBox = document.getElementById('resultBox');
+  const qualityHints = document.getElementById('qualityHints');
+  const samplePreview = document.getElementById('samplePreview');
+  const recentBatchRows = document.getElementById('recentBatchRows');
+
+  function editorBody() {
+    if (window.CKEDITOR && CKEDITOR.instances.body) {
+      return CKEDITOR.instances.body.getData();
+    }
+    return document.getElementById('body').value;
+  }
+
+  function setEditorBody(value) {
+    if (window.CKEDITOR && CKEDITOR.instances.body) {
+      CKEDITOR.instances.body.setData(value || '');
+      return;
+    }
+    document.getElementById('body').value = value || '';
+  }
 
   function audienceFromPreset(key) {
-    if (key === 'major_donors') {
-      return { min_total_given: 500 };
-    }
-    if (key === 'lapsed_donors') {
-      return { lapsed_days_min: 180 };
-    }
+    if (key === 'major_donors') return { min_total_given: 500 };
+    if (key === 'lapsed_donors') return { lapsed_days_min: 180 };
+    if (key === 'campaign_donors') return { campaign_donors_only: true };
+    if (key === 'top_major_donors') return { min_total_given: 500, top_n_by_total_given: 100 };
     return { gifted_within_days: 365 };
+  }
+
+  function buildAudience() {
+    const payload = audienceFromPreset(segmentPreset.value);
+    const minTotal = Number(minTotalGiven.value || 0);
+    const withinDays = Number(giftedWithinDays.value || 0);
+    const topN = Number(topNByTotalGiven.value || 0);
+    if (minTotal > 0) payload.min_total_given = minTotal;
+    if (withinDays > 0) payload.gifted_within_days = withinDays;
+    if (topN > 0) payload.top_n_by_total_given = topN;
+    return payload;
+  }
+
+  function renderJSON(obj) {
+    resultBox.textContent = JSON.stringify(obj, null, 2);
+  }
+
+  function parseDonorIds(rawValue) {
+    return String(rawValue || '')
+      .split(',')
+      .map((v) => Number(String(v).trim()))
+      .filter((v) => Number.isInteger(v) && v > 0);
+  }
+
+  function renderHints(hints) {
+    qualityHints.innerHTML = '';
+    const rows = Array.isArray(hints) ? hints : [];
+    if (!rows.length) {
+      qualityHints.innerHTML = '<li>No quality issues detected.</li>';
+      return;
+    }
+    rows.forEach((hint) => {
+      const li = document.createElement('li');
+      li.textContent = String(hint || '');
+      qualityHints.appendChild(li);
+    });
+  }
+
+  function renderSamplePreview(samples) {
+    samplePreview.innerHTML = '';
+    const rows = Array.isArray(samples) ? samples : [];
+    if (!rows.length) {
+      samplePreview.innerHTML = '<li class="text-muted">No sample recipients for this audience.</li>';
+      return;
+    }
+    rows.forEach((row) => {
+      const li = document.createElement('li');
+      li.innerHTML =
+        '<strong>' + (row.donor_name || 'Donor') + '</strong>' +
+        '<div class="text-muted">' + (row.recipient_email || '') + '</div>' +
+        '<div><em>' + (row.subject || '') + '</em></div>';
+      samplePreview.appendChild(li);
+    });
+  }
+
+  function renderAnalytics(payload) {
+    const sent = Number(payload.total_sent || 0);
+    const opens = Number(payload.total_opens || 0);
+    const clicks = Number(payload.total_clicks || 0);
+    const openRate = sent > 0 ? ((opens / sent) * 100).toFixed(1) + '%' : '0%';
+    const clickRate = sent > 0 ? ((clicks / sent) * 100).toFixed(1) + '%' : '0%';
+
+    const kpiMap = {
+      batch_count: payload.batch_count || 0,
+      total_recipients: payload.total_recipients || 0,
+      total_sent: payload.total_sent || 0,
+      total_failed: payload.total_failed || 0,
+      open_rate: openRate,
+      click_rate: clickRate
+    };
+    Object.keys(kpiMap).forEach((key) => {
+      const node = document.querySelector('[data-kpi="' + key + '"]');
+      if (node) node.textContent = String(kpiMap[key]);
+    });
+
+    recentBatchRows.innerHTML = '';
+    const rows = Array.isArray(payload.recent_batches) ? payload.recent_batches : [];
+    if (!rows.length) {
+      recentBatchRows.innerHTML = '<tr><td colspan="6" class="text-muted">No email batches yet.</td></tr>';
+      return;
+    }
+    rows.forEach((row) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML =
+        '<td>' + row.id + '</td>' +
+        '<td>' + row.status + '</td>' +
+        '<td>' + row.total_recipients + '</td>' +
+        '<td>' + row.sent_count + '</td>' +
+        '<td>' + row.failed_count + '</td>' +
+        '<td>' + (row.created_at || '-') + '</td>';
+      recentBatchRows.appendChild(tr);
+    });
   }
 
   async function loadCampaigns() {
@@ -87,74 +381,105 @@
       opt.textContent = row.name + ' (' + row.status + ')';
       campaignSelect.appendChild(opt);
     });
-    if (!campaignSelect.value && rows.length > 0) {
-      campaignSelect.value = String(rows[0].id);
-    }
+    if (!campaignSelect.value && rows.length > 0) campaignSelect.value = String(rows[0].id);
+    if (campaignSelect.value) await refreshAnalytics();
+  }
+
+  async function refreshAnalytics() {
+    const campaignId = campaignSelect.value;
+    if (!campaignId) return;
+    const resp = await fetch('/api/v2/campaigns/' + campaignId + '/emails/analytics');
+    const payload = await resp.json();
+    renderAnalytics(payload);
   }
 
   async function preview() {
     const campaignId = campaignSelect.value;
-    const bodyValue = (window.CKEDITOR && CKEDITOR.instances.body)
-      ? CKEDITOR.instances.body.getData()
-      : document.getElementById('body').value;
-
     const resp = await fetch('/api/v2/campaigns/' + campaignId + '/emails/preview', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         subject: subjectInput.value,
-        body: bodyValue,
-        audience: audienceFromPreset(segmentPreset.value)
+        body: editorBody(),
+        audience: buildAudience()
       })
     });
-    resultBox.textContent = JSON.stringify(await resp.json(), null, 2);
+    const payload = await resp.json();
+    renderJSON(payload);
+    renderHints(payload.quality_hints || []);
+    renderSamplePreview(payload.sample_preview || []);
   }
 
-  async function sendNow() {
+  async function queueSend(options) {
     const campaignId = campaignSelect.value;
-    const bodyValue = (window.CKEDITOR && CKEDITOR.instances.body)
-      ? CKEDITOR.instances.body.getData()
-      : document.getElementById('body').value;
-
     const payload = {
       subject: subjectInput.value,
-      body: bodyValue,
-      audience: audienceFromPreset(segmentPreset.value),
+      body: editorBody(),
+      audience: buildAudience(),
+      dry_run: Boolean(options && options.dryRun),
       compliance: {
         reviewer_name: reviewerNameInput.value,
         reviewer_role: reviewerRoleInput.value,
-        warning_acknowledged: true,
-        confirmation_phrase: 'I APPROVE EXTERNAL OUTREACH',
-        ai_assisted: false,
-        contains_internal_details: false
+        warning_acknowledged: warningAcknowledged.checked,
+        human_confirmation_text: confirmationPhrase.value,
+        ai_assisted: aiAssisted.checked,
+        contains_internal_details: containsInternalDetails.checked
       }
     };
+    if (options && Array.isArray(options.testDonorIds) && options.testDonorIds.length) {
+      payload.audience = { donor_ids: options.testDonorIds };
+    }
 
     const resp = await fetch('/api/v2/campaigns/' + campaignId + '/emails/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-    resultBox.textContent = JSON.stringify(await resp.json(), null, 2);
+    const body = await resp.json();
+    renderJSON(body);
+    if (resp.ok) await refreshAnalytics();
   }
 
-  function generateDraft() {
-    const campaignLabel = campaignSelect.options[campaignSelect.selectedIndex]?.text || 'Selected campaign';
-    const reviewerName = reviewerNameInput.value || 'Reviewer';
-    subjectInput.value = subjectInput.value || 'Update from ' + campaignLabel;
-    const draft = 'Hello {name},\n\nWe are sharing a short campaign update with reviewed outreach content.\n\nReviewed by: ' + reviewerName + '\n\nThank you for your continued support.';
-    if (window.CKEDITOR && CKEDITOR.instances.body) {
-      CKEDITOR.instances.body.setData(draft.replace(/\n/g, '<br>'));
+  async function aiDraft() {
+    const campaignId = campaignSelect.value;
+    const payload = {
+      objective: draftObjective.value,
+      tone: draftTone.value,
+      audience: buildAudience()
+    };
+    const ask = Number(askAmount.value || 0);
+    if (ask > 0) payload.ask_amount = ask;
+
+    const resp = await fetch('/api/v2/campaigns/' + campaignId + '/emails/ai-draft', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const body = await resp.json();
+    renderJSON(body);
+    if (resp.ok) {
+      subjectInput.value = body.subject || subjectInput.value;
+      setEditorBody((body.body || '').replace(/\n/g, '<br>'));
+      renderHints(body.quality_hints || []);
+    }
+  }
+
+  document.getElementById('aiDraftBtn').addEventListener('click', aiDraft);
+  document.getElementById('previewBtn').addEventListener('click', preview);
+  document.getElementById('dryRunBtn').addEventListener('click', function () { queueSend({ dryRun: true }); });
+  document.getElementById('testSendBtn').addEventListener('click', function () {
+    const parsedIds = parseDonorIds(testDonorIdsInput.value);
+    if (!parsedIds.length) {
+      resultBox.textContent = 'Provide at least one valid donor ID in "Test Recipient Donor IDs" before queueing test send.';
       return;
     }
-    document.getElementById('body').value = draft;
-  }
+    queueSend({ dryRun: false, testDonorIds: parsedIds });
+  });
+  document.getElementById('sendBtn').addEventListener('click', function () { queueSend({ dryRun: false }); });
+  campaignSelect.addEventListener('change', refreshAnalytics);
 
-  document.getElementById('draftBtn').addEventListener('click', generateDraft);
-  document.getElementById('previewBtn').addEventListener('click', preview);
-  document.getElementById('sendBtn').addEventListener('click', sendNow);
   loadCampaigns().catch((err) => {
-    resultBox.textContent = 'Failed to load campaigns: ' + err;
+    resultBox.textContent = 'Failed to initialize email workbench: ' + err;
   });
 })();
 </script>

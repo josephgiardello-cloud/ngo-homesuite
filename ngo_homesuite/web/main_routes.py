@@ -4666,6 +4666,9 @@ def reports_page():
 @login_required
 def campaign_email_workbench_page():
     org = _current_org()
+    actor_role = str(getattr(current_user, 'role', '') or '').strip().lower()
+    can_authorize_external_comms = bool(getattr(current_user, 'can_authorize_external_comms', False))
+    can_send_campaign_email = actor_role == 'admin' or can_authorize_external_comms
     overview = {
         'total_donations': 0.0,
         'total_expenses': 0.0,
@@ -4678,8 +4681,19 @@ def campaign_email_workbench_page():
             'totals': {'donations': 0.0, 'expenses': 0.0, 'net': 0.0},
         },
     }
+    campaign_summary = {
+        'total_campaigns': 0,
+        'active_campaigns': 0,
+    }
     if org:
         overview = ReportingService().financial_overview(org.id)
+        campaigns = list(
+            db.session.scalars(
+                select(Campaign).where(Campaign.organization_id == org.id)
+            )
+        )
+        campaign_summary['total_campaigns'] = len(campaigns)
+        campaign_summary['active_campaigns'] = sum(1 for c in campaigns if str(getattr(c, 'status', '') or '') == 'active')
 
     return render_template(
         'campaigns/email_workbench.html',
@@ -4687,6 +4701,10 @@ def campaign_email_workbench_page():
         total_expenses=overview['total_expenses'],
         net_total=overview['net_total'],
         chart_data=overview['chart_data'],
+        campaign_summary=campaign_summary,
+        can_send_campaign_email=can_send_campaign_email,
+        can_authorize_external_comms=can_authorize_external_comms,
+        actor_role=actor_role,
         email_workbench_only=True,
         active_page='campaign_email_workbench',
         ai_context={

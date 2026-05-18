@@ -1416,8 +1416,10 @@ def test_campaign_email_workbench_route_renders_dedicated_view(client):
     body = rv.get_data(as_text=True)
     assert "Campaign Email Workbench" in body
     assert "Human Reviewer Name" in body
-    assert "Special warning" in body
-    assert "Email Workbench" in body
+    assert "Advanced Audience Filters" in body
+    assert "Send Analytics" in body
+    assert "Dry Run Queue" in body
+    assert "Test Recipient Donor IDs" in body
 
 
 def test_settings_page_renders_custom_fields_schema_admin_ui(client):
