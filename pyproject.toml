@@ -48,7 +48,7 @@ dependencies = [
   "pyotp==2.9.0",
   "python-dotenv==1.2.2",
   "portalocker==3.2.0",
-  "prometheus-client==0.21.1",
+  "prometheus-client==0.25.0",
   "requests==2.34.2",
   "chardet==5.2.0",
   "psycopg[binary]==3.2.9",
