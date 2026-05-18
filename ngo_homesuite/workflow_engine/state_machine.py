@@ -35,6 +35,7 @@ class DeterministicStateMachine:
         event_type: str,
         tenant: TenantContext,
         payload: dict | None = None,
+        event_emitter: EventEmitter | None = None,
     ) -> WorkflowInstance:
         start = time.perf_counter()
         labels = {"workflow_type": instance.workflow_type, "event_type": event_type}
@@ -75,7 +76,8 @@ class DeterministicStateMachine:
                 self._metrics.inc("workflow_events_total", labels=labels)
                 self._metrics.observe("workflow_event_latency_ms", duration_ms, labels=labels)
 
-            self._event_emitter.emit(
+            emitter = event_emitter or self._event_emitter
+            emitter.emit(
                 AuditEvent(
                     event_id=new_id("evt"),
                     org_id=instance.org_id,
@@ -84,6 +86,7 @@ class DeterministicStateMachine:
                     aggregate_id=instance.instance_id,
                     actor_id=tenant.user_id,
                     payload=payload or {},
+                    version=1,
                 )
             )
             return instance

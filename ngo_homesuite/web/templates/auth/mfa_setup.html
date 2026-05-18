@@ -1,0 +1,312 @@
+{% extends "base.html" %}
+
+{% block title %}Security Setup - NGO HomeSuite{% endblock %}
+
+{% block content %}
+<style>
+    .security-shell {
+        display: grid;
+        gap: 1rem;
+        grid-template-columns: 1.05fr 0.95fr;
+    }
+
+    .security-card {
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,252,0.98));
+        box-shadow: var(--shadow);
+        padding: 1.15rem;
+    }
+
+    .security-hero {
+        min-height: 100%;
+        background:
+            radial-gradient(circle at top right, rgba(20, 118, 212, 0.12), transparent 35%),
+            radial-gradient(circle at bottom left, rgba(20, 118, 212, 0.08), transparent 28%),
+            linear-gradient(160deg, rgba(16, 36, 61, 0.98), rgba(20, 118, 212, 0.88));
+        color: #f8fbff;
+        border-radius: 18px;
+        padding: 1.4rem;
+        overflow: hidden;
+        position: relative;
+    }
+
+    .security-hero h1,
+    .security-hero h2,
+    .security-hero h3 {
+        color: inherit;
+    }
+
+    .badge-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+        margin-top: 0.85rem;
+    }
+
+    .badge-chip {
+        border: 1px solid rgba(255,255,255,0.18);
+        background: rgba(255,255,255,0.11);
+        color: #eef6ff;
+        border-radius: 999px;
+        padding: 0.28rem 0.6rem;
+        font-size: 0.8rem;
+    }
+
+    .qr-panel {
+        display: grid;
+        gap: 0.9rem;
+        justify-items: start;
+    }
+
+    .qr-box {
+        width: 240px;
+        min-height: 240px;
+        border-radius: 18px;
+        padding: 0.85rem;
+        background: #fff;
+        border: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .code-list {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 0.5rem;
+        width: 100%;
+    }
+
+    .code-item {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 0.6rem 0.7rem;
+        background: var(--surface-soft);
+        font-family: Consolas, "Courier New", monospace;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+    }
+
+    .mono {
+        font-family: Consolas, "Courier New", monospace;
+        word-break: break-all;
+    }
+
+    .setup-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.55rem;
+        align-items: center;
+    }
+
+    @media (max-width: 980px) {
+        .security-shell {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+
+<div class="security-shell">
+    <section class="security-hero">
+        <div class="badge-row">
+            <span class="badge-chip">TOTP</span>
+            <span class="badge-chip">Backup codes</span>
+            <span class="badge-chip">Account protection</span>
+        </div>
+        <h1 class="mt-2">Two-factor authentication setup</h1>
+        <p class="mt-1" style="max-width:44rem;color:rgba(239,246,255,0.9);">
+            Use your authenticator app to add a second layer of protection. This page generates the pyotp provisioning URI, renders a QR code, and gives you recovery codes to store safely.
+        </p>
+
+        <div class="card mt-3" style="background:rgba(255,255,255,0.08);border-color:rgba(255,255,255,0.12);color:#fff;">
+            <div style="font-weight:700;">How it works</div>
+            <ol style="margin:0.65rem 0 0 1.1rem;color:rgba(239,246,255,0.92);">
+                <li>Click generate to create a fresh enrollment secret.</li>
+                <li>Scan the QR code or copy the provisioning URI into your app.</li>
+                <li>Save the recovery codes somewhere secure.</li>
+                <li>Use the six-digit code on the login screen when prompted.</li>
+            </ol>
+        </div>
+
+        <div class="badge-row mt-3">
+            <span class="badge-chip">{% if mfa_enabled %}Already enabled{% else %}Not enabled yet{% endif %}</span>
+            <span class="badge-chip">Login uses the same code prompt</span>
+        </div>
+    </section>
+
+    <section class="security-card">
+        <h2 style="margin-bottom:0.3rem;">Enrollment workspace</h2>
+        <p class="text-muted" style="margin-bottom:1rem;">
+            Generate the QR code when you are ready to enroll this account.
+        </p>
+
+        <div class="setup-actions mb-2">
+            <button class="btn btn-primary" id="generateMfaBtn" type="button">Generate QR and recovery codes</button>
+            <button class="btn btn-outline-primary" id="rotateBackupCodesBtn" type="button">Regenerate backup codes</button>
+            <button class="btn btn-outline-secondary" id="downloadBackupCodesBtn" type="button" disabled>Download backup codes</button>
+            <button class="btn btn-secondary" id="copyUriBtn" type="button" disabled>Copy provisioning URI</button>
+        </div>
+
+        <div class="qr-panel">
+            <div class="qr-box" id="qrBox">
+                <span class="text-muted">QR code will appear here after generation.</span>
+            </div>
+
+            <div class="form-group" style="width:100%;">
+                <label for="mfaUri">Provisioning URI</label>
+                <textarea id="mfaUri" rows="3" readonly placeholder="otpauth://totp/..." class="mono"></textarea>
+            </div>
+
+            <div style="width:100%;">
+                <div style="font-weight:700;margin-bottom:0.4rem;">Recovery codes</div>
+                <div class="code-list" id="recoveryCodes">
+                    <div class="code-item text-muted">Generate codes to display them here.</div>
+                </div>
+            </div>
+
+            <div class="card" style="width:100%;margin-bottom:0;">
+                <div style="font-weight:700;margin-bottom:0.25rem;">Next step</div>
+                <p class="text-muted" style="margin:0;">
+                    After scanning, go back to the login page and enter the 6-digit code from your authenticator app.
+                </p>
+            </div>
+
+            <div id="mfaSetupStatus" class="text-muted" role="status"></div>
+        </div>
+    </section>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+(function () {
+    const generateBtn = document.getElementById('generateMfaBtn');
+    const rotateBackupCodesBtn = document.getElementById('rotateBackupCodesBtn');
+    const downloadBackupCodesBtn = document.getElementById('downloadBackupCodesBtn');
+    const copyUriBtn = document.getElementById('copyUriBtn');
+    const qrBox = document.getElementById('qrBox');
+    const uriBox = document.getElementById('mfaUri');
+    const recoveryCodes = document.getElementById('recoveryCodes');
+    const statusBox = document.getElementById('mfaSetupStatus');
+    let currentBackupCodes = [];
+
+    function setStatus(message, isError) {
+        statusBox.textContent = message;
+        statusBox.style.color = isError ? 'var(--danger)' : 'var(--muted)';
+    }
+
+    function renderQr(uri) {
+        qrBox.innerHTML = '';
+        if (!window.QRCode) {
+            qrBox.innerHTML = '<div class="text-muted">QR renderer unavailable. Copy the provisioning URI instead.</div>';
+            return;
+        }
+        new QRCode(qrBox, {
+            text: uri,
+            width: 208,
+            height: 208,
+            correctLevel: QRCode.CorrectLevel.M,
+        });
+    }
+
+    function renderRecoveryCodes(codes) {
+        currentBackupCodes = Array.isArray(codes) ? codes.slice() : [];
+        downloadBackupCodesBtn.disabled = currentBackupCodes.length === 0;
+        recoveryCodes.innerHTML = '';
+        if (!codes || !codes.length) {
+            recoveryCodes.innerHTML = '<div class="code-item text-muted">No recovery codes returned.</div>';
+            return;
+        }
+        codes.forEach(function (code) {
+            const item = document.createElement('div');
+            item.className = 'code-item';
+            item.textContent = code;
+            recoveryCodes.appendChild(item);
+        });
+    }
+
+    generateBtn.addEventListener('click', async function () {
+        generateBtn.classList.add('is-loading');
+        copyUriBtn.disabled = true;
+        setStatus('Generating enrollment secret...', false);
+        try {
+            const response = await fetch('/auth/mfa/enroll', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: '{}',
+            });
+            const payload = await response.json();
+            if (!response.ok) {
+                throw new Error(payload.error || 'Unable to generate enrollment data');
+            }
+
+            uriBox.value = payload.provisioning_uri || '';
+            renderQr(payload.provisioning_uri || '');
+            renderRecoveryCodes(payload.backup_codes || []);
+            copyUriBtn.disabled = !payload.provisioning_uri;
+            setStatus(payload.mfa_enabled ? 'MFA is already enabled for this account.' : 'Enrollment data generated successfully.', false);
+        } catch (error) {
+            setStatus(error.message || 'Unable to generate enrollment data.', true);
+        } finally {
+            generateBtn.classList.remove('is-loading');
+        }
+    });
+
+    copyUriBtn.addEventListener('click', async function () {
+        if (!uriBox.value) {
+            return;
+        }
+        try {
+            await navigator.clipboard.writeText(uriBox.value);
+            setStatus('Provisioning URI copied to clipboard.', false);
+        } catch (error) {
+            setStatus('Clipboard copy failed. Copy the URI manually.', true);
+        }
+    });
+
+    rotateBackupCodesBtn.addEventListener('click', async function () {
+        rotateBackupCodesBtn.classList.add('is-loading');
+        setStatus('Regenerating backup codes...', false);
+        try {
+            const response = await fetch('/auth/2fa/backup-codes', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: '{}',
+            });
+            const payload = await response.json();
+            if (!response.ok) {
+                throw new Error(payload.error || 'Unable to rotate backup codes');
+            }
+            renderRecoveryCodes(payload.backup_codes || []);
+            setStatus('Backup codes regenerated. Replace any previously stored codes.', false);
+        } catch (error) {
+            setStatus(error.message || 'Unable to rotate backup codes.', true);
+        } finally {
+            rotateBackupCodesBtn.classList.remove('is-loading');
+        }
+    });
+
+    downloadBackupCodesBtn.addEventListener('click', function () {
+        if (!currentBackupCodes.length) {
+            return;
+        }
+        const payload = [
+            'NGO HomeSuite backup codes',
+            'Store these in a safe location. Each code can be used once.',
+            '',
+            currentBackupCodes.join('\n'),
+            '',
+        ].join('\n');
+        const blob = new Blob([payload], { type: 'text/plain;charset=utf-8' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = 'ngohs-backup-codes.txt';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(link.href);
+        setStatus('Backup codes downloaded.', false);
+    });
+})();
+</script>
+{% endblock %}

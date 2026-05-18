@@ -5,13 +5,20 @@ Provides audience resolution, bulk dispatch, and campaign email analytics.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+from collections import defaultdict, deque
 from datetime import datetime, timezone
 import json
+import re
+import time
 from typing import Any
+from urllib.parse import quote_plus
 
 from flask import current_app, has_app_context
 from sqlalchemy import func, select
 
+from ngo_homesuite.policy import enforce_error_contract
 from ngo_homesuite.models.core import (
     Campaign,
     CampaignEmailBatch,
@@ -51,6 +58,158 @@ def _quality_hints(subject: str, body: str) -> list[str]:
     if "donate" not in lower and "support" not in lower and "give" not in lower:
         hints.append("CTA appears weak; include a clear donate/support action.")
     return hints
+
+
+def _tracking_base_url() -> str:
+    base = str(current_app.config.get("PUBLIC_APP_URL") or "").strip() if has_app_context() else ""
+    if not base:
+        base = "http://localhost:5000"
+    return base.rstrip("/")
+
+
+def _tracking_secret() -> bytes:
+    secret = str(current_app.config.get("TRACKING_SIGNING_SECRET") or current_app.config.get("SECRET_KEY") or "").strip()
+    if not secret:
+        secret = "ngohs-tracking-default"
+    return secret.encode("utf-8")
+
+
+def _tracking_signature(
+    *,
+    kind: str,
+    campaign_id: int,
+    donor_id: int,
+    delivery_id: int,
+    issued_at: int,
+    target_url: str = "",
+) -> str:
+    payload = "|".join([
+        str(kind),
+        str(int(campaign_id)),
+        str(int(donor_id)),
+        str(int(delivery_id)),
+        str(int(issued_at)),
+        str(target_url or ""),
+    ])
+    digest = hmac.new(_tracking_secret(), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    return digest
+
+
+def verify_tracking_signature(
+    *,
+    kind: str,
+    campaign_id: int,
+    donor_id: int,
+    delivery_id: int,
+    issued_at: int,
+    signature: str,
+    target_url: str = "",
+    max_age_seconds: int = 604800,
+) -> bool:
+    now_ts = int(time.time())
+    if issued_at <= 0 or issued_at > now_ts:
+        return False
+    if now_ts - int(issued_at) > int(max(1, max_age_seconds)):
+        return False
+    expected = _tracking_signature(
+        kind=kind,
+        campaign_id=campaign_id,
+        donor_id=donor_id,
+        delivery_id=delivery_id,
+        issued_at=issued_at,
+        target_url=target_url,
+    )
+    return hmac.compare_digest(str(signature or ""), expected)
+
+
+def _with_tracking_links(body: str, *, campaign_id: int, donor_id: int, delivery_id: int) -> str:
+    base = _tracking_base_url()
+
+    def _replace_href(match: re.Match[str]) -> str:
+        quote = match.group(1)
+        target = match.group(2)
+        issued_at = int(time.time())
+        signature = _tracking_signature(
+            kind="click",
+            campaign_id=int(campaign_id),
+            donor_id=int(donor_id),
+            delivery_id=int(delivery_id),
+            issued_at=issued_at,
+            target_url=target,
+        )
+        tracked = (
+            f"{base}/api/v2/campaigns/email/click?campaign_id={int(campaign_id)}"
+            f"&donor_id={int(donor_id)}&delivery_id={int(delivery_id)}"
+            f"&ts={issued_at}&sig={signature}&url={quote_plus(target)}"
+        )
+        return f"href={quote}{tracked}{quote}"
+
+    tracked_body = re.sub(r"href=(['\"])([^'\"]+)\1", _replace_href, body or "")
+    issued_at = int(time.time())
+    signature = _tracking_signature(
+        kind="open",
+        campaign_id=int(campaign_id),
+        donor_id=int(donor_id),
+        delivery_id=int(delivery_id),
+        issued_at=issued_at,
+    )
+    pixel_url = (
+        f"{base}/api/v2/campaigns/email/open-pixel?campaign_id={int(campaign_id)}"
+        f"&donor_id={int(donor_id)}&delivery_id={int(delivery_id)}"
+        f"&ts={issued_at}&sig={signature}"
+    )
+    return f"{tracked_body}\n\nOpen tracking: {pixel_url}"
+
+
+def _email_rate_cap_settings() -> tuple[int, int, float]:
+    max_per_window = int(current_app.config.get("CAMPAIGN_EMAIL_MAX_PER_MINUTE", 240) or 0)
+    max_per_domain_per_window = int(current_app.config.get("CAMPAIGN_EMAIL_MAX_PER_DOMAIN_PER_MINUTE", 120) or 0)
+    window_seconds = float(current_app.config.get("CAMPAIGN_EMAIL_RATE_WINDOW_SECONDS", 60.0) or 60.0)
+    return max(0, max_per_window), max(0, max_per_domain_per_window), max(1.0, window_seconds)
+
+
+def _recipient_domain(recipient_email: str) -> str:
+    email = str(recipient_email or "").strip().lower()
+    if "@" not in email:
+        return ""
+    return email.rsplit("@", 1)[1]
+
+
+def _prune_window(queue: deque[float], *, cutoff: float) -> None:
+    while queue and queue[0] <= cutoff:
+        queue.popleft()
+
+
+def _enforce_send_rate_caps(
+    *,
+    recipient_email: str,
+    sent_at_times: deque[float],
+    sent_at_times_by_domain: dict[str, deque[float]],
+    max_per_window: int,
+    max_per_domain_per_window: int,
+    window_seconds: float,
+) -> bool:
+    if max_per_window <= 0 and max_per_domain_per_window <= 0:
+        return True
+
+    domain = _recipient_domain(recipient_email)
+    domain_queue = sent_at_times_by_domain[domain] if domain else deque()
+    now = time.monotonic()
+    cutoff = now - window_seconds
+    _prune_window(sent_at_times, cutoff=cutoff)
+    if domain:
+        _prune_window(domain_queue, cutoff=cutoff)
+
+    if max_per_window > 0 and len(sent_at_times) >= max_per_window:
+        return False
+    if domain and max_per_domain_per_window > 0 and len(domain_queue) >= max_per_domain_per_window:
+        return False
+
+    stamp = time.monotonic()
+    sent_at_times.append(stamp)
+    if domain:
+        domain_queue.append(stamp)
+    return True
 
 
 def _get_campaign_or_raise(campaign_id: int, organization_id: int) -> Campaign:
@@ -290,6 +449,7 @@ def generate_ai_campaign_email_draft(
     }
 
 
+@enforce_error_contract
 def send_campaign_bulk_email(
     organization_id: int,
     campaign_id: int,
@@ -375,40 +535,68 @@ def send_campaign_bulk_email(
 
     sent = 0
     failed = 0
+    max_per_window, max_per_domain_per_window, window_seconds = _email_rate_cap_settings()
+    sent_at_times: deque[float] = deque()
+    sent_at_times_by_domain: dict[str, deque[float]] = defaultdict(deque)
     for donor in recipients:
         recipient_email = str(donor.email or "").strip()
-        rendered = _render_body(body_value, donor=donor, campaign=campaign)
-        ok = bool(
-            send_email(
-                to=recipient_email,
-                subject=subject_value,
-                context={"text": rendered},
-            )
+        within_cap = _enforce_send_rate_caps(
+            recipient_email=recipient_email,
+            sent_at_times=sent_at_times,
+            sent_at_times_by_domain=sent_at_times_by_domain,
+            max_per_window=max_per_window,
+            max_per_domain_per_window=max_per_domain_per_window,
+            window_seconds=window_seconds,
         )
-
-        if ok:
-            sent += 1
-            delivery_status = "sent"
-            error_message = None
-            sent_at = _utcnow()
-        else:
-            failed += 1
-            delivery_status = "failed"
-            error_message = "delivery failed"
-            sent_at = None
-
-        db.session.add(
-            CampaignEmailDelivery(
+        with db.session.begin_nested():
+            delivery = CampaignEmailDelivery(
                 batch_id=int(batch.id),
                 organization_id=int(organization_id),
                 campaign_id=int(campaign.id),
                 donor_id=int(donor.id),
                 recipient_email=recipient_email,
-                delivery_status=delivery_status,
-                error_message=error_message,
-                sent_at=sent_at,
+                delivery_status="pending",
             )
-        )
+            db.session.add(delivery)
+            db.session.flush()
+
+            if not within_cap:
+                failed += 1
+                delivery.delivery_status = "failed"
+                delivery.error_message = "rate_limited"
+                delivery.sent_at = None
+                continue
+
+            try:
+                rendered = _render_body(body_value, donor=donor, campaign=campaign)
+                rendered = _with_tracking_links(
+                    rendered,
+                    campaign_id=int(campaign.id),
+                    donor_id=int(donor.id),
+                    delivery_id=int(delivery.id),
+                )
+                ok = bool(
+                    send_email(
+                        to=recipient_email,
+                        subject=subject_value,
+                        context={"text": rendered},
+                    )
+                )
+            except Exception as exc:
+                ok = False
+                delivery.error_message = f"delivery_exception:{exc.__class__.__name__}"
+
+            if ok:
+                sent += 1
+                delivery.delivery_status = "sent"
+                delivery.error_message = None
+                delivery.sent_at = _utcnow()
+            else:
+                failed += 1
+                delivery.delivery_status = "failed"
+                if not delivery.error_message:
+                    delivery.error_message = "delivery failed"
+                delivery.sent_at = None
 
     batch.sent_count = sent
     batch.failed_count = failed
@@ -450,6 +638,16 @@ def campaign_email_analytics(organization_id: int, campaign_id: int) -> dict[str
         )
     ).one()
 
+    engagement_totals = db.session.execute(
+        select(
+            func.coalesce(func.sum(CampaignEmailDelivery.open_count), 0),
+            func.coalesce(func.sum(CampaignEmailDelivery.click_count), 0),
+        ).where(
+            CampaignEmailDelivery.organization_id == int(organization_id),
+            CampaignEmailDelivery.campaign_id == int(campaign.id),
+        )
+    ).one()
+
     recent_batches = list(
         db.session.scalars(
             select(CampaignEmailBatch).where(
@@ -466,6 +664,8 @@ def campaign_email_analytics(organization_id: int, campaign_id: int) -> dict[str
         "total_recipients": int(totals[1] or 0),
         "total_sent": int(totals[2] or 0),
         "total_failed": int(totals[3] or 0),
+        "total_opens": int(engagement_totals[0] or 0),
+        "total_clicks": int(engagement_totals[1] or 0),
         "recent_batches": [
             {
                 "id": int(b.id),

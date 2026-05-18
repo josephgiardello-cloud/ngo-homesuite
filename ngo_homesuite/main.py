@@ -12,6 +12,19 @@ import argparse
 import sys
 import unittest
 
+from ngo_homesuite.config import get_runtime_settings
+
+
+def create_app(*, compat_mode: bool = False):
+    """Create the Flask application through the canonical runtime spine."""
+    settings = get_runtime_settings()
+    if compat_mode and not bool(getattr(settings, "allow_compat_mode", False)):
+        raise RuntimeError("Non-standard entrypoint blocked")
+
+    from ngo_homesuite.app_factory import create_app as _create_app
+
+    return _create_app()
+
 
 def run_cli(argv: list[str] | None = None) -> None:
     """Compatibility CLI entrypoint.
@@ -19,8 +32,6 @@ def run_cli(argv: list[str] | None = None) -> None:
     The legacy CLI menu was removed in favor of explicit web/API runtime paths.
     This command now validates app wiring by constructing the Flask app once.
     """
-    from ngo_homesuite.app_factory import create_app
-
     _ = argv  # reserved for future CLI arguments
     create_app()
     print("CLI compatibility check completed. Use --web to run the server.")
@@ -28,9 +39,13 @@ def run_cli(argv: list[str] | None = None) -> None:
 
 def run_web() -> None:
     """Run the web server via bootstrap."""
-    from ngo_homesuite.app.bootstrap import run_server
+    from ngo_homesuite.config import get_runtime_settings
 
-    run_server()
+    settings = get_runtime_settings()
+    app = create_app(compat_mode=False)
+    debug_default = settings.flask_env == "development"
+    debug = settings.flask_debug or debug_default
+    app.run(host=settings.host, port=settings.port, debug=debug)
 
 
 def run_tests() -> None:

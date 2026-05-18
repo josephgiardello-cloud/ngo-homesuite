@@ -1,0 +1,161 @@
+{% extends 'base.html' %}
+{% block title %}Campaign Email Workbench{% endblock %}
+{% block content %}
+<section class="page-header">
+  <h1>Campaign Email Workbench</h1>
+  <p>Compose rich text campaign email, choose a donor segment, and send through the queue.</p>
+</section>
+
+<section class="card" style="padding: 1rem; margin-bottom: 1rem;">
+  <div class="grid" style="margin-bottom: 1rem; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));">
+    <div>
+      <label for="reviewerName">Human Reviewer Name</label>
+      <input id="reviewerName" class="form-control" type="text" value="Ops Reviewer" />
+    </div>
+    <div>
+      <label for="reviewerRole">Reviewer Role</label>
+      <input id="reviewerRole" class="form-control" type="text" value="compliance" />
+    </div>
+  </div>
+
+  <div class="alert alert-info" style="margin-bottom: 1rem;">
+    <span class="alert-body"><strong>Special warning:</strong> External Communications Authorization Audit requires a named human reviewer before queueing outreach.</span>
+  </div>
+
+  <label for="campaignSelect">Campaign</label>
+  <select id="campaignSelect" class="form-control" style="display:block; width:100%; margin-bottom:0.75rem;"></select>
+
+  <label for="segmentPreset">Donor segment</label>
+  <select id="segmentPreset" class="form-control" style="display:block; width:100%; margin-bottom:0.75rem;">
+    <option value="all_active_donors">All active donors (last 365 days)</option>
+    <option value="major_donors">Major donors ($500+ lifetime)</option>
+    <option value="lapsed_donors">Lapsed donors (180+ days)</option>
+  </select>
+
+  <label for="subject">Subject</label>
+  <input id="subject" class="form-control" type="text" placeholder="Impact update: your support in action" style="display:block; width:100%; margin-bottom:0.75rem;" />
+
+  <label for="body">Body</label>
+  <textarea id="body" name="body" rows="8" class="form-control" placeholder="Hi {name}, thanks to your support..."></textarea>
+  {{ ckeditor.load() }}
+  {{ ckeditor.config(name='body') }}
+
+  <div style="margin-top: 1rem; display:flex; gap:0.5rem; flex-wrap:wrap;">
+    <button id="draftBtn" class="btn btn-secondary" type="button">Generate AI Draft</button>
+    <button id="previewBtn" class="btn btn-outline-primary" type="button">Preview audience</button>
+    <button id="sendBtn" class="btn btn-primary" type="button">Queue send</button>
+  </div>
+</section>
+
+<section class="card" style="padding: 1rem;">
+  <h2 style="margin-top:0;">Result</h2>
+  <pre id="resultBox" style="white-space:pre-wrap; margin:0;">Ready.</pre>
+</section>
+
+<section class="card" style="padding: 1rem;">
+  <h2 style="margin-top:0;">External Communications Authorization Audit</h2>
+  <p class="text-muted" style="margin-bottom:0;">Every queued outreach action records reviewer identity, warning acknowledgement, and approval phrase for post-send audit review.</p>
+</section>
+
+<script>
+(function () {
+  const campaignSelect = document.getElementById('campaignSelect');
+  const segmentPreset = document.getElementById('segmentPreset');
+  const reviewerNameInput = document.getElementById('reviewerName');
+  const reviewerRoleInput = document.getElementById('reviewerRole');
+  const subjectInput = document.getElementById('subject');
+  const resultBox = document.getElementById('resultBox');
+
+  function audienceFromPreset(key) {
+    if (key === 'major_donors') {
+      return { min_total_given: 500 };
+    }
+    if (key === 'lapsed_donors') {
+      return { lapsed_days_min: 180 };
+    }
+    return { gifted_within_days: 365 };
+  }
+
+  async function loadCampaigns() {
+    const resp = await fetch('/api/v2/campaigns');
+    const data = await resp.json();
+    const rows = Array.isArray(data.items) ? data.items : [];
+    campaignSelect.innerHTML = '';
+    rows.forEach((row) => {
+      const opt = document.createElement('option');
+      opt.value = String(row.id);
+      opt.textContent = row.name + ' (' + row.status + ')';
+      campaignSelect.appendChild(opt);
+    });
+    if (!campaignSelect.value && rows.length > 0) {
+      campaignSelect.value = String(rows[0].id);
+    }
+  }
+
+  async function preview() {
+    const campaignId = campaignSelect.value;
+    const bodyValue = (window.CKEDITOR && CKEDITOR.instances.body)
+      ? CKEDITOR.instances.body.getData()
+      : document.getElementById('body').value;
+
+    const resp = await fetch('/api/v2/campaigns/' + campaignId + '/emails/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        subject: subjectInput.value,
+        body: bodyValue,
+        audience: audienceFromPreset(segmentPreset.value)
+      })
+    });
+    resultBox.textContent = JSON.stringify(await resp.json(), null, 2);
+  }
+
+  async function sendNow() {
+    const campaignId = campaignSelect.value;
+    const bodyValue = (window.CKEDITOR && CKEDITOR.instances.body)
+      ? CKEDITOR.instances.body.getData()
+      : document.getElementById('body').value;
+
+    const payload = {
+      subject: subjectInput.value,
+      body: bodyValue,
+      audience: audienceFromPreset(segmentPreset.value),
+      compliance: {
+        reviewer_name: reviewerNameInput.value,
+        reviewer_role: reviewerRoleInput.value,
+        warning_acknowledged: true,
+        confirmation_phrase: 'I APPROVE EXTERNAL OUTREACH',
+        ai_assisted: false,
+        contains_internal_details: false
+      }
+    };
+
+    const resp = await fetch('/api/v2/campaigns/' + campaignId + '/emails/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    resultBox.textContent = JSON.stringify(await resp.json(), null, 2);
+  }
+
+  function generateDraft() {
+    const campaignLabel = campaignSelect.options[campaignSelect.selectedIndex]?.text || 'Selected campaign';
+    const reviewerName = reviewerNameInput.value || 'Reviewer';
+    subjectInput.value = subjectInput.value || 'Update from ' + campaignLabel;
+    const draft = 'Hello {name},\n\nWe are sharing a short campaign update with reviewed outreach content.\n\nReviewed by: ' + reviewerName + '\n\nThank you for your continued support.';
+    if (window.CKEDITOR && CKEDITOR.instances.body) {
+      CKEDITOR.instances.body.setData(draft.replace(/\n/g, '<br>'));
+      return;
+    }
+    document.getElementById('body').value = draft;
+  }
+
+  document.getElementById('draftBtn').addEventListener('click', generateDraft);
+  document.getElementById('previewBtn').addEventListener('click', preview);
+  document.getElementById('sendBtn').addEventListener('click', sendNow);
+  loadCampaigns().catch((err) => {
+    resultBox.textContent = 'Failed to load campaigns: ' + err;
+  });
+})();
+</script>
+{% endblock %}

@@ -749,6 +749,7 @@
                 <a href="{{ url_for('main.dashboard') }}">Dashboard</a>
                 <a href="{{ url_for('main.about') }}">About</a>
                 <a href="{{ url_for('main.help') }}">Help</a>
+                <a href="{{ url_for('auth.mfa_setup_page') }}">Security</a>
             {% endif %}
         </nav>
         <div class="user-menu">
@@ -800,6 +801,7 @@
                     <li><a href="{{ url_for('main.p2p_manage') }}" class="{{ 'active' if active_page == 'p2p' else '' }}">P2P</a></li>
                     <li><a href="{{ url_for('main.campaign_email_workbench_page') }}" class="{{ 'active' if active_page == 'campaign_email_workbench' else '' }}">Email Workbench</a></li>
                     <li><a href="{{ url_for('main.reports_page') }}" class="{{ 'active' if active_page == 'reports' else '' }}">Reports</a></li>
+                    <li><a href="{{ url_for('admin.grant_budget_workbench_page') }}" class="{{ 'active' if active_page == 'grant_budget_workbench' else '' }}">Grant Budgets</a></li>
                     {% if current_user.role == 'admin' %}
                     <li><a href="{{ url_for('main.tony_scoring') }}" class="{{ 'active' if active_page == 'tony_scoring' else '' }}">📊 TONY Scoring</a></li>
                     {% if tony_full_url %}

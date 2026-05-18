@@ -4,19 +4,22 @@ All routes are prefixed with /api/v2 and require login.
 """
 from __future__ import annotations
 
-from datetime import date
+from collections import defaultdict, deque
+from datetime import date, datetime, timezone
 from pathlib import Path
+import time
 from typing import Any
 import uuid
+from urllib.parse import unquote
 
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, Response, current_app, jsonify, redirect, request
 from flask_login import current_user, login_required
 from sqlalchemy import select
 from werkzeug.utils import secure_filename
 
 from ngo_homesuite.grants.facade import GrantsFacade
 from ngo_homesuite.grants.exceptions import GrantApprovalError, GrantNotFound, InvalidGrantTransition
-from ngo_homesuite.models.core import Donor, Grant, User, db
+from ngo_homesuite.models.core import CampaignEmailDelivery, Donor, Grant, User, db
 
 from ngo_homesuite.web.rbac import roles_required
 
@@ -24,10 +27,21 @@ v2_bp = Blueprint("v2", __name__, url_prefix="/api/v2")
 _GRANTS_FACADE = GrantsFacade()
 _PHOTO_ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
 _PHOTO_MAX_BYTES = 5 * 1024 * 1024
+_TRACKING_MAX_REQUESTS_PER_WINDOW = 10
+_TRACKING_RATE_WINDOW_SECONDS = 60.0
+_TRACKING_REQUESTS_BY_IP: dict[str, deque[float]] = defaultdict(deque)
+_TRACKING_PIXEL = (
+    b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01\x00\x00\x00\x00,"
+    b"\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;"
+)
 
 
 def _org_id() -> int:
     return int(current_user.organization_id)
+
+
+def _utcnow_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _json_or_400(required: list[str] | None = None) -> dict[str, Any]:
@@ -38,6 +52,28 @@ def _json_or_400(required: list[str] | None = None) -> dict[str, Any]:
             from flask import abort
             abort(400, description=f"Missing required fields: {missing}")
     return data
+
+
+def _tracking_ip_limited() -> bool:
+    ip = str(request.headers.get("X-Forwarded-For") or request.remote_addr or "unknown").split(",", 1)[0].strip()
+    now = time.monotonic()
+    cutoff = now - _TRACKING_RATE_WINDOW_SECONDS
+    bucket = _TRACKING_REQUESTS_BY_IP[ip]
+    while bucket and bucket[0] <= cutoff:
+        bucket.popleft()
+    if len(bucket) >= _TRACKING_MAX_REQUESTS_PER_WINDOW:
+        return True
+    bucket.append(now)
+    return False
+
+
+def _tracking_request_args() -> tuple[int, int, int, int, str]:
+    campaign_id = int(request.args.get("campaign_id", "0") or 0)
+    donor_id = int(request.args.get("donor_id", "0") or 0)
+    delivery_id = int(request.args.get("delivery_id", "0") or 0)
+    issued_at = int(request.args.get("ts", "0") or 0)
+    signature = str(request.args.get("sig", "") or "").strip()
+    return campaign_id, donor_id, delivery_id, issued_at, signature
 
 
 def _parse_iso_date(value: str) -> date:
@@ -1226,3 +1262,81 @@ def campaign_email_analytics_route(campaign_id: int):
     except LookupError:
         return jsonify({"error": "Campaign not found"}), 404
     return jsonify(payload), 200
+
+
+@v2_bp.get("/campaigns/email/open-pixel")
+def campaign_email_open_pixel() -> Response:
+    """Record an email open and return a 1x1 GIF pixel."""
+    if _tracking_ip_limited():
+        return Response("rate limit exceeded", status=429)
+
+    from ngo_homesuite.services.campaign_email_service import verify_tracking_signature
+
+    campaign_id, donor_id, delivery_id, issued_at, signature = _tracking_request_args()
+    max_age_seconds = int(current_app.config.get("TRACKING_URL_MAX_AGE_SECONDS", 604800) or 604800)
+    if campaign_id > 0 and donor_id > 0 and delivery_id > 0 and signature:
+        valid = verify_tracking_signature(
+            kind="open",
+            campaign_id=campaign_id,
+            donor_id=donor_id,
+            delivery_id=delivery_id,
+            issued_at=issued_at,
+            signature=signature,
+            max_age_seconds=max_age_seconds,
+        )
+        if valid:
+            delivery = db.session.get(CampaignEmailDelivery, int(delivery_id))
+            if (
+                delivery is not None
+                and int(delivery.campaign_id) == int(campaign_id)
+                and int(delivery.donor_id or 0) == int(donor_id)
+            ):
+                delivery.open_count = int(delivery.open_count or 0) + 1
+                delivery.last_opened_at = _utcnow_naive()
+                db.session.commit()
+
+    resp = Response(_TRACKING_PIXEL, mimetype="image/gif")
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    return resp
+
+
+@v2_bp.get("/campaigns/email/click")
+def campaign_email_click_redirect():
+    """Record a tracked click and redirect to the original target URL."""
+    if _tracking_ip_limited():
+        return jsonify({"error": "rate limit exceeded"}), 429
+
+    from ngo_homesuite.services.campaign_email_service import verify_tracking_signature
+
+    campaign_id, donor_id, delivery_id, issued_at, signature = _tracking_request_args()
+    target_url = unquote(request.args.get("url", "").strip())
+    if not (target_url.startswith("http://") or target_url.startswith("https://")):
+        target_url = "/"
+
+    max_age_seconds = int(current_app.config.get("TRACKING_URL_MAX_AGE_SECONDS", 604800) or 604800)
+    valid = verify_tracking_signature(
+        kind="click",
+        campaign_id=campaign_id,
+        donor_id=donor_id,
+        delivery_id=delivery_id,
+        issued_at=issued_at,
+        signature=signature,
+        target_url=target_url,
+        max_age_seconds=max_age_seconds,
+    )
+    if not valid:
+        return jsonify({"error": "invalid or expired tracking token"}), 400
+
+    delivery = db.session.get(CampaignEmailDelivery, int(delivery_id))
+    if (
+        delivery is None
+        or int(delivery.campaign_id) != int(campaign_id)
+        or int(delivery.donor_id or 0) != int(donor_id)
+    ):
+        return jsonify({"error": "tracking record not found"}), 404
+    delivery.click_count = int(delivery.click_count or 0) + 1
+    delivery.last_clicked_at = _utcnow_naive()
+    db.session.commit()
+
+    return redirect(target_url, code=302)

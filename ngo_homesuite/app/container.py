@@ -7,8 +7,9 @@ from ngo_homesuite.integration_fabric import ConnectorRegistry
 from ngo_homesuite.observability import InMemoryMetrics, WorkflowTracer
 from ngo_homesuite.persistence import SqlAlchemyUnitOfWork, WorkflowDefinitionRepositoryPort, WorkflowRepositoryPort
 from ngo_homesuite.persistence.repositories import WorkflowDefinitionRepository, WorkflowRepository
-from ngo_homesuite.shared_kernel import new_id, redact_payload
+from ngo_homesuite.shared_kernel import redact_payload
 from ngo_homesuite.tenant import TenantContext
+from ngo_homesuite.app.write_gate import CollectingEventEmitter, WorkflowWriteCommand, WorkflowWriteHandler, WriteGate
 from ngo_homesuite.workflow_engine import (
     DeterministicStateMachine,
     StepNode,
@@ -16,7 +17,6 @@ from ngo_homesuite.workflow_engine import (
     WorkflowDefinition,
     WorkflowInstance,
 )
-from ngo_homesuite.workflow_engine.event_bus import EventEmitter
 
 
 @dataclass
@@ -29,6 +29,7 @@ class AppContainer:
     workflow_definition_repository: WorkflowDefinitionRepositoryPort
     state_machine: DeterministicStateMachine
     workflow_definitions: dict[str, WorkflowDefinition]
+    write_gate: WriteGate
 
     def __post_init__(self) -> None:
         if not isinstance(self.workflow_repository, WorkflowRepositoryPort):
@@ -44,7 +45,7 @@ class AppContainer:
         workflow_repository = WorkflowRepository()
         workflow_definition_repository = WorkflowDefinitionRepository()
         connector_registry = ConnectorRegistry()
-        emitter = EventEmitter(event_store)
+        emitter = CollectingEventEmitter()
         state_machine = DeterministicStateMachine(event_emitter=emitter, tracer=tracer, metrics=metrics)
 
         intake_flow = WorkflowDefinition(
@@ -84,6 +85,16 @@ class AppContainer:
             workflow_definition_repository.ensure_definition(intake_flow, allow_global_scope=True, uow=uow)
             workflow_definition_repository.ensure_definition(donation_flow, allow_global_scope=True, uow=uow)
 
+        write_gate = WriteGate(
+            domain_handler=WorkflowWriteHandler(
+                workflow_repository=workflow_repository,
+                state_machine=state_machine,
+                workflow_definitions=workflow_definition_repository.list_active_definitions(allow_global_scope=True),
+            ),
+            uow=SqlAlchemyUnitOfWork(),
+            event_store=event_store,
+        )
+
         return cls(
             event_store=event_store,
             tracer=tracer,
@@ -93,35 +104,20 @@ class AppContainer:
             workflow_definition_repository=workflow_definition_repository,
             state_machine=state_machine,
             workflow_definitions=workflow_definition_repository.list_active_definitions(allow_global_scope=True),
+            write_gate=write_gate,
         )
 
     def create_workflow_instance(self, *, org_id: str, workflow_type: str) -> WorkflowInstance:
-        if not str(org_id).strip():
-            raise PermissionError("Tenant isolation requires non-empty org_id")
-        definition = self.workflow_definitions.get(workflow_type)
-        if definition is None:
-            raise KeyError(f"Unknown workflow type: {workflow_type}")
-
-        instance = WorkflowInstance(
-            instance_id=new_id("wfi"),
-            org_id=org_id,
-            workflow_type=workflow_type,
-            current_step=definition.initial_step,
+        result = self.write_gate.execute(
+            WorkflowWriteCommand(
+                action="create_workflow_instance",
+                org_id=org_id,
+                actor_id="system",
+                role="org_admin",
+                workflow_type=workflow_type,
+            )
         )
-        with SqlAlchemyUnitOfWork() as uow:
-            return self.workflow_repository.save(instance, uow=uow)
-
-    @staticmethod
-    def _is_idempotent_replay(instance: WorkflowInstance, *, event_type: str, idempotency_key: str | None) -> bool:
-        if not idempotency_key:
-            return False
-        for item in instance.history:
-            payload = item.get("payload") if isinstance(item, dict) else None
-            if not isinstance(payload, dict):
-                continue
-            if item.get("event_type") == event_type and payload.get("_idempotency_key") == idempotency_key:
-                return True
-        return False
+        return result.value
 
     def dispatch_workflow_event(
         self,
@@ -133,21 +129,16 @@ class AppContainer:
         idempotency_key: str | None = None,
     ) -> tuple[WorkflowInstance, bool]:
         payload = redact_payload(payload or {})
-        instance = self.workflow_repository.get(instance_id, org_id=tenant.org_id)
-        if instance is None:
-            raise KeyError(f"Unknown workflow instance: {instance_id}")
-        if self._is_idempotent_replay(instance, event_type=event_type, idempotency_key=idempotency_key):
-            return instance, True
-        if idempotency_key:
-            payload["_idempotency_key"] = idempotency_key
-        definition = self.workflow_definitions[instance.workflow_type]
-        next_instance = self.state_machine.apply_event(
-            definition=definition,
-            instance=instance,
-            event_type=event_type,
-            tenant=tenant,
-            payload=payload,
+        result = self.write_gate.execute(
+            WorkflowWriteCommand(
+                action="dispatch_workflow_event",
+                org_id=tenant.org_id,
+                actor_id=tenant.user_id,
+                role=tenant.role,
+                instance_id=instance_id,
+                event_type=event_type,
+                payload={**payload, **({"_idempotency_key": idempotency_key} if idempotency_key else {})},
+                idempotency_key=idempotency_key,
+            )
         )
-        with SqlAlchemyUnitOfWork() as uow:
-            saved = self.workflow_repository.save(next_instance, uow=uow)
-        return saved, False
+        return result.value

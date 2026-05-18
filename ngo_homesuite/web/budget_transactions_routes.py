@@ -129,6 +129,8 @@ def reconcile_budget_line(grant_id, line_id):
         reference_type="expense" if data.get("expense_id") else "manual",
         reference_id=data.get("expense_id"),
         created_by_user_id=current_user.id,
+        reconciled_at=_utcnow_naive(),
+        reconciled_by_user_id=current_user.id,
     )
     db.session.add(txn)
 
@@ -144,6 +146,74 @@ def reconcile_budget_line(grant_id, line_id):
         "committed_total": line.committed_amount,
         "reconciled_total": line.reconciled_amount,
         "remaining": remaining,
+    }), 201
+
+
+@budget_transactions_bp.route("/<int:grant_id>/budget/lines/<int:line_id>/expense", methods=["POST"])
+@login_required
+@roles_required("admin")
+def record_budget_expense(grant_id, line_id):
+    """Record an expense transaction and reject writes that exceed allocated budget."""
+    org_id = _org_id()
+    data = request.get_json() or {}
+
+    if data.get("amount") is None:
+        return jsonify({"error": "amount required"}), 400
+
+    try:
+        amount = float(data["amount"])
+    except (ValueError, TypeError):
+        return jsonify({"error": "amount must be numeric"}), 400
+
+    if amount <= 0:
+        return jsonify({"error": "amount must be positive"}), 400
+
+    grant = Grant.query.filter_by(id=grant_id, organization_id=org_id).first()
+    if not grant:
+        return jsonify({"error": "grant not found"}), 404
+
+    with db.session.begin():
+        line = (
+            db.session.query(GrantBudgetLine)
+            .filter_by(id=line_id, grant_id=grant_id, organization_id=org_id)
+            .with_for_update()
+            .first()
+        )
+        if not line:
+            return jsonify({"error": "budget line not found"}), 404
+
+        total_expenses = (
+            db.session.query(db.func.coalesce(db.func.sum(GrantBudgetTransaction.amount), 0.0))
+            .filter(
+                GrantBudgetTransaction.budget_line_id == line.id,
+                GrantBudgetTransaction.transaction_type == "expense",
+            )
+            .scalar()
+            or 0.0
+        )
+        if total_expenses + amount > float(line.allocated_amount):
+            return jsonify({"error": "Would exceed budget"}), 400
+
+        txn = GrantBudgetTransaction(
+            budget_line_id=line.id,
+            grant_id=grant_id,
+            organization_id=org_id,
+            transaction_type="expense",
+            amount=amount,
+            description=data.get("description", f"Expense of ${amount:.2f}"),
+            reference_type="expense",
+            reference_id=data.get("expense_id"),
+            created_by_user_id=current_user.id,
+        )
+        db.session.add(txn)
+        db.session.flush()
+
+    return jsonify({
+        "success": True,
+        "transaction_id": txn.id,
+        "budget_line_id": line.id,
+        "line_allocated": float(line.allocated_amount),
+        "line_expense_total": float(total_expenses + amount),
     }), 201
 
 

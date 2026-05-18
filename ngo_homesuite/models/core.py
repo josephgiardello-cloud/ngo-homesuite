@@ -10,9 +10,11 @@ Core entities:
 """
 
 import hashlib
+import hmac
 import re
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import bcrypt
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
 from argon2 import PasswordHasher
@@ -56,6 +58,7 @@ class User(UserMixin, db.Model):
     role = db.Column(db.String(32), default='viewer', nullable=False)  # admin, staff, volunteer, viewer
     is_active = db.Column(db.Boolean, default=True, nullable=False, index=True)
     can_authorize_external_comms = db.Column(db.Boolean, default=False, nullable=False)
+    totp_required_flag = db.Column(db.Boolean, default=False, nullable=False)
     
     # Organization association
     organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=True)
@@ -74,6 +77,9 @@ class User(UserMixin, db.Model):
     mfa_enabled = db.Column(db.Boolean, default=False, nullable=False)
     mfa_totp_secret = db.Column(db.String(64), nullable=True)
     mfa_backup_codes_json = db.Column(JSON, nullable=True)
+    mfa_failed_attempts = db.Column(db.Integer, default=0, nullable=False)
+    mfa_attempt_window_started_at = db.Column(db.DateTime, nullable=True)
+    mfa_locked_until = db.Column(db.DateTime, nullable=True)
 
     # OAuth / SSO login
     oauth_provider = db.Column(db.String(32), nullable=True, index=True)     # 'google', 'github'
@@ -124,15 +130,35 @@ class User(UserMixin, db.Model):
         return totp.provisioning_uri(name=account, issuer_name=issuer_name)
 
     def generate_mfa_backup_codes(self, count: int = 10) -> list[str]:
-        """Generate one-time backup codes and store only their hashes."""
+        """Generate one-time backup codes and store bcrypt hashes."""
         generated: list[str] = []
         stored_hashes: list[str] = []
         for _ in range(max(1, int(count))):
             code = secrets.token_hex(4).upper()
             generated.append(code)
-            stored_hashes.append(hashlib.sha256(code.encode('utf-8')).hexdigest())
+            hashed = bcrypt.hashpw(code.encode('utf-8'), bcrypt.gensalt(rounds=12)).decode('utf-8')
+            stored_hashes.append(hashed)
         self.mfa_backup_codes_json = stored_hashes
         return generated
+
+    def is_mfa_challenge_locked(self) -> bool:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        return bool(self.mfa_locked_until and self.mfa_locked_until > now)
+
+    def register_mfa_challenge_failure(self, *, max_attempts: int = 5, window_minutes: int = 15) -> None:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        window_start = self.mfa_attempt_window_started_at
+        if window_start is None or (now - window_start).total_seconds() > max(1, int(window_minutes)) * 60:
+            self.mfa_attempt_window_started_at = now
+            self.mfa_failed_attempts = 0
+        self.mfa_failed_attempts = int(self.mfa_failed_attempts or 0) + 1
+        if self.mfa_failed_attempts >= max(1, int(max_attempts)):
+            self.mfa_locked_until = now + timedelta(minutes=max(1, int(window_minutes)))
+
+    def reset_mfa_challenge_failures(self) -> None:
+        self.mfa_failed_attempts = 0
+        self.mfa_attempt_window_started_at = None
+        self.mfa_locked_until = None
 
     def verify_mfa_code(self, code: str, *, valid_window: int = 1) -> bool:
         """Verify TOTP code or one-time backup code.
@@ -150,12 +176,23 @@ class User(UserMixin, db.Model):
             except Exception:
                 pass
 
-        hashed = hashlib.sha256(raw.upper().encode('utf-8')).hexdigest()
-        current_hashes = list(self.mfa_backup_codes_json or [])
-        if hashed in current_hashes:
-            current_hashes.remove(hashed)
-            self.mfa_backup_codes_json = current_hashes
-            return True
+        current_hashes = [str(item) for item in list(self.mfa_backup_codes_json or []) if item]
+        for stored_hash in current_hashes:
+            try:
+                if stored_hash.startswith('$2'):
+                    if bcrypt.checkpw(raw.encode('utf-8'), stored_hash.encode('utf-8')):
+                        current_hashes.remove(stored_hash)
+                        self.mfa_backup_codes_json = current_hashes
+                        return True
+                else:
+                    # Legacy compatibility for old sha256 stored values.
+                    legacy_hash = hashlib.sha256(raw.upper().encode('utf-8')).hexdigest()
+                    if hmac.compare_digest(legacy_hash, stored_hash):
+                        current_hashes.remove(stored_hash)
+                        self.mfa_backup_codes_json = current_hashes
+                        return True
+            except Exception:
+                continue
 
         return False
 
@@ -1115,6 +1152,10 @@ class CampaignEmailDelivery(db.Model):
     recipient_email = db.Column(db.String(255), nullable=False, index=True)
     delivery_status = db.Column(db.String(30), nullable=False, default='pending', index=True)  # sent, failed
     error_message = db.Column(db.Text, nullable=True)
+    open_count = db.Column(db.Integer, nullable=False, default=0)
+    click_count = db.Column(db.Integer, nullable=False, default=0)
+    last_opened_at = db.Column(db.DateTime, nullable=True)
+    last_clicked_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
     sent_at = db.Column(db.DateTime, nullable=True)
 
@@ -1123,6 +1164,31 @@ class CampaignEmailDelivery(db.Model):
 
     def __repr__(self):
         return f'<CampaignEmailDelivery batch={self.batch_id} {self.delivery_status}>'
+
+
+class EventDiscountCode(db.Model):
+    """Event-scoped discount code for registration/payment checkout flows."""
+
+    __tablename__ = 'event_discount_codes'
+
+    id = db.Column(db.Integer, primary_key=True)
+    event_id = db.Column(db.Integer, nullable=False, index=True)
+    code = db.Column(db.String(64), nullable=False, index=True)
+    discount_type = db.Column(db.String(20), nullable=False)  # percentage, fixed
+    discount_value = db.Column(db.Float, nullable=False)
+    usage_limit = db.Column(db.Integer, nullable=True)
+    usage_count = db.Column(db.Integer, nullable=False, default=0)
+    expires_at = db.Column(db.DateTime, nullable=True, index=True)
+    is_active = db.Column(db.Boolean, nullable=False, default=True, index=True)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
+
+    __table_args__ = (
+        db.UniqueConstraint('event_id', 'code', name='uq_event_discount_codes_event_code'),
+    )
+
+    def __repr__(self):
+        return f'<EventDiscountCode event={self.event_id} code={self.code}>'
 
 
 class ExternalCommunicationAuthorization(db.Model):
@@ -1479,6 +1545,7 @@ __all__ = [
     'DonorEngagementScore',
     'SmartGroup',
     'Campaign',
+    'EventDiscountCode',
     'P2PPage',
     'P2PPageDonation',
     'BeneficiaryAssessment',

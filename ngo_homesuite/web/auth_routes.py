@@ -15,6 +15,7 @@ from datetime import datetime, timezone, timedelta
 from flask_wtf import FlaskForm
 from sqlalchemy import select
 from urllib.parse import urlparse
+from urllib.parse import quote_plus
 from ngo_homesuite.models.core import db, User
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
@@ -22,6 +23,8 @@ auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
 # Account lockout policy
 _MAX_FAILED_ATTEMPTS = 5
 _LOCKOUT_DURATION_MINUTES = 15
+_MAX_MFA_FAILED_ATTEMPTS = 5
+_MFA_LOCKOUT_DURATION_MINUTES = 15
 
 
 def _is_safe_next_path(next_page: str | None) -> bool:
@@ -61,6 +64,7 @@ class LoginForm(FlaskForm):
     """Form for user login."""
     username = StringField('Username', validators=[DataRequired(), Length(min=3, max=80)])
     password = PasswordField('Password', validators=[DataRequired()])
+    otp_code = StringField('Verification Code')
     remember_me = BooleanField('Remember Me')
     submit = SubmitField('Sign In')
 
@@ -142,13 +146,21 @@ def login():
         
         otp_code = (request.form.get('otp_code') or '').strip()
         if bool(user.mfa_enabled):
+            if user.is_mfa_challenge_locked():
+                flash('Verification temporarily locked after too many failed codes. Try again later.', 'error')
+                return render_template('auth/login.html', form=form, mfa_required=True)
             if not otp_code:
                 flash('Verification code required for this account.', 'error')
                 return render_template('auth/login.html', form=form, mfa_required=True)
             if not user.verify_mfa_code(otp_code):
+                user.register_mfa_challenge_failure(
+                    max_attempts=_MAX_MFA_FAILED_ATTEMPTS,
+                    window_minutes=_MFA_LOCKOUT_DURATION_MINUTES,
+                )
                 db.session.commit()
                 flash('Invalid verification code.', 'error')
                 return render_template('auth/login.html', form=form, mfa_required=True)
+            user.reset_mfa_challenge_failures()
 
         # Successful login — clear lockout counters and rotate session.
         user.failed_login_count = 0
@@ -193,6 +205,17 @@ def register():
         return redirect(url_for('auth.login'))
     
     return render_template('auth/register.html', form=form)
+
+
+@auth_bp.get('/mfa/setup')
+@login_required
+def mfa_setup_page():
+    """Render the MFA enrollment workspace."""
+    return render_template(
+        'auth/mfa_setup.html',
+        active_page='security',
+        mfa_enabled=bool(current_user.mfa_enabled),
+    )
 
 
 @auth_bp.route('/logout', methods=['POST'])
@@ -311,6 +334,7 @@ def mfa_enroll():
     return {
         'secret': secret,
         'provisioning_uri': provisioning_uri,
+        'qr_code_url': f"https://api.qrserver.com/v1/create-qr-code/?size=240x240&data={quote_plus(provisioning_uri)}",
         'backup_codes': backup_codes,
         'mfa_enabled': bool(current_user.mfa_enabled),
     }, 200
@@ -372,6 +396,75 @@ def mfa_rotate_backup_codes():
     backup_codes = current_user.generate_mfa_backup_codes()
     db.session.commit()
     return {'backup_codes': backup_codes}, 200
+
+
+@auth_bp.post('/2fa/setup')
+@login_required
+def two_factor_setup():
+    """Compatibility endpoint for 2FA setup clients."""
+    return mfa_enroll()
+
+
+@auth_bp.post('/2fa/verify')
+@login_required
+def two_factor_verify():
+    """Compatibility endpoint for 2FA verification clients."""
+    return mfa_confirm()
+
+
+@auth_bp.post('/2fa/backup-codes')
+@login_required
+def two_factor_backup_codes():
+    """Rotate and return fresh backup codes for the current user."""
+    return mfa_rotate_backup_codes()
+
+
+@auth_bp.post('/2fa/login')
+def two_factor_login():
+    """API login endpoint that requires TOTP/backup code when MFA is enabled."""
+    payload = _request_data()
+    username = str(payload.get('username') or '').strip()
+    password = str(payload.get('password') or '')
+    otp_code = str(payload.get('otp_code') or '').strip()
+
+    if not username or not password:
+        return {'error': 'username and password are required'}, 400
+
+    user = db.session.scalars(
+        select(User).where(User.username == username).limit(1)
+    ).first()
+    if user is None or not user.check_password(password):
+        return {'error': 'invalid credentials'}, 401
+
+    if not user.is_active:
+        return {'error': 'account is inactive'}, 403
+
+    if bool(user.mfa_enabled):
+        if user.is_mfa_challenge_locked():
+            return {'error': 'verification temporarily locked, try again later'}, 429
+        if not otp_code:
+            return {'error': 'otp_code is required for this account'}, 401
+        if not user.verify_mfa_code(otp_code):
+            user.register_mfa_challenge_failure(
+                max_attempts=_MAX_MFA_FAILED_ATTEMPTS,
+                window_minutes=_MFA_LOCKOUT_DURATION_MINUTES,
+            )
+            db.session.commit()
+            return {'error': 'invalid verification code'}, 401
+        user.reset_mfa_challenge_failures()
+
+    user.failed_login_count = 0
+    user.locked_until = None
+    db.session.commit()
+
+    session.clear()
+    login_user(user, remember=False)
+    return {
+        'status': 'ok',
+        'user_id': int(user.id),
+        'username': user.username,
+        'mfa_enabled': bool(user.mfa_enabled),
+    }, 200
 
 
 @auth_bp.post('/webauthn/register/begin')

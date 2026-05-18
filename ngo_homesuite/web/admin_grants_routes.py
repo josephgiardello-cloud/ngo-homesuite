@@ -13,7 +13,7 @@ from flask_login import current_user, login_required
 from sqlalchemy import select
 
 from ngo_homesuite.models.core import db
-from ngo_homesuite.grants.models import Grant, GrantBudgetLine, GrantExpenseAllocation
+from ngo_homesuite.grants.models import Grant, GrantBudgetLine, GrantExpenseAllocation, GrantBudgetTransaction
 from ngo_homesuite.web.rbac import roles_required
 
 grant_admin_bp = Blueprint("grant_admin", __name__, url_prefix="/admin/grants")
@@ -315,3 +315,73 @@ def get_budget_variance_report(grant_id: int):
         )
 
     return jsonify(report_data)
+
+
+@grant_admin_bp.route("/<int:grant_id>/budget/line-transactions-report", methods=["GET"])
+@login_required
+@roles_required("admin")
+def get_budget_line_transactions_report(grant_id: int):
+    """Return budget lines with attached transactions for variance investigation."""
+    org_id = _org_id()
+
+    stmt = select(Grant).where(Grant.id == grant_id, Grant.organization_id == org_id)
+    grant = db.session.scalar(stmt)
+    if not grant:
+        return jsonify({"error": "Grant not found"}), 404
+
+    rows = (
+        db.session.query(GrantBudgetLine, GrantBudgetTransaction)
+        .outerjoin(
+            GrantBudgetTransaction,
+            GrantBudgetTransaction.budget_line_id == GrantBudgetLine.id,
+        )
+        .filter(
+            GrantBudgetLine.grant_id == grant_id,
+            GrantBudgetLine.organization_id == org_id,
+        )
+        .order_by(GrantBudgetLine.category.asc(), GrantBudgetTransaction.created_at.desc())
+        .all()
+    )
+
+    lines_index: dict[int, dict] = {}
+    for line, txn in rows:
+        entry = lines_index.setdefault(
+            int(line.id),
+            {
+                "line_id": int(line.id),
+                "category": line.category,
+                "line_name": line.line_name,
+                "allocated_amount": float(line.allocated_amount or 0.0),
+                "transactions": [],
+                "expense_total": 0.0,
+            },
+        )
+        if txn is None:
+            continue
+        amount = float(txn.amount or 0.0)
+        if txn.transaction_type == "expense":
+            entry["expense_total"] += amount
+        entry["transactions"].append(
+            {
+                "id": int(txn.id),
+                "transaction_type": txn.transaction_type,
+                "amount": amount,
+                "description": txn.description,
+                "reference_type": txn.reference_type,
+                "reference_id": txn.reference_id,
+                "created_at": txn.created_at.isoformat() if txn.created_at else None,
+            }
+        )
+
+    lines_payload = []
+    for payload in lines_index.values():
+        payload["variance"] = float(payload["allocated_amount"] - payload["expense_total"])
+        lines_payload.append(payload)
+
+    return jsonify(
+        {
+            "grant_id": int(grant.id),
+            "grant_title": grant.title,
+            "lines": lines_payload,
+        }
+    )

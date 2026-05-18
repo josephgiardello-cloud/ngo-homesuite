@@ -297,6 +297,17 @@
                     {% endif %}
                 </div>
 
+                {% if mfa_required %}
+                <div class="form-group" style="padding:0.9rem 1rem;border:1px solid var(--border);border-radius:14px;background:var(--surface-soft);">
+                    <div style="font-weight:700;margin-bottom:0.35rem;">Two-factor verification required</div>
+                    <p class="text-muted" style="margin:0 0 0.7rem 0;">
+                        Enter the 6-digit code from your authenticator app. If you need to enroll first, use the security setup page after signing in.
+                    </p>
+                    {{ form.otp_code.label }}
+                    {{ form.otp_code(class='form-control', autocomplete='one-time-code', inputmode='numeric', placeholder='123456') }}
+                </div>
+                {% endif %}
+
                 <div class="login-meta">
                     <label class="remember-wrap">
                         {{ form.remember_me() }}
@@ -304,6 +315,15 @@
                     </label>
                     <a class="secondary-link" href="{{ url_for('auth.register') }}">Create an account</a>
                 </div>
+
+                {% if mfa_required %}
+                <div class="login-footer" style="text-align:left;">
+                    <strong>Need to enroll or recover access?</strong>
+                    <div class="mt-1">
+                        <a href="{{ url_for('auth.mfa_setup_page') }}">Open security setup</a>
+                    </div>
+                </div>
+                {% endif %}
 
                 <div class="form-group">
                     {{ form.submit(class='btn auth-submit') }}
