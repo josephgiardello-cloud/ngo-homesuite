@@ -367,6 +367,7 @@ class DonorForm(FlaskForm):
 
 class DonationForm(FlaskForm):
     donor_id = SelectField('Donor', coerce=int, validators=[DataRequired()])
+    campaign_id = SelectField('Campaign', coerce=int, validators=[WTOptional()])
     project_id = SelectField('Project', coerce=int, validators=[WTOptional()])
     fund_id = SelectField('Fund', coerce=int, validators=[WTOptional()])
     amount = FloatField('Amount', validators=[DataRequired(), NumberRange(min=0.01)])
@@ -376,6 +377,29 @@ class DonationForm(FlaskForm):
         choices=[('cash', 'Cash'), ('bank_transfer', 'Bank Transfer'), ('credit_card', 'Credit Card')],
         validators=[DataRequired()],
     )
+    channel = SelectField(
+        'Channel/Source',
+        choices=[
+            ('', 'Unspecified'),
+            ('web', 'Web'),
+            ('event', 'Event'),
+            ('mail', 'Mail'),
+            ('phone', 'Phone'),
+            ('p2p', 'Peer-to-Peer'),
+            ('grant_portal', 'Grant Portal'),
+        ],
+        validators=[WTOptional()],
+    )
+    is_anonymous = BooleanField('Anonymous/Publicly Hidden')
+    public_display_name = StringField('Public Display Name', validators=[WTOptional(), Length(max=200)])
+    tribute_type = SelectField(
+        'Tribute Type',
+        choices=[('', 'None'), ('in_honor_of', 'In Honor Of'), ('in_memory_of', 'In Memory Of')],
+        validators=[WTOptional()],
+    )
+    tribute_honoree_name = StringField('Honoree Name', validators=[WTOptional(), Length(max=200)])
+    tribute_honoree_contact = StringField('Honoree Contact', validators=[WTOptional(), Length(max=255)])
+    soft_credit_name = StringField('Soft Credit Name', validators=[WTOptional(), Length(max=200)])
     purpose = StringField('Purpose', validators=[WTOptional()])
     reference_number = StringField('Reference Number', validators=[WTOptional()])
     bank_routing_number = StringField('Bank Routing Number', validators=[WTOptional(), Length(max=20)])
@@ -485,11 +509,30 @@ class ConfirmDeleteForm(FlaskForm):
     submit = SubmitField('Delete')
 
 
+class FundStatusActionForm(FlaskForm):
+    fund_id = HiddenField(validators=[DataRequired()])
+    next_url = HiddenField(validators=[WTOptional()])
+    set_status = HiddenField(validators=[DataRequired()])
+    submit = SubmitField('Update')
+
+
+class BulkFundActionForm(FlaskForm):
+    next_url = HiddenField(validators=[WTOptional()])
+    set_status = HiddenField(validators=[DataRequired()])
+    submit = SubmitField('Apply')
+
+
 class DonationRowActionForm(FlaskForm):
     donation_id = HiddenField(validators=[DataRequired()])
     next_url = HiddenField(validators=[WTOptional()])
     new_status = HiddenField(validators=[WTOptional()])
     submit = SubmitField('Submit')
+
+
+class BulkDonationActionForm(FlaskForm):
+    next_url = HiddenField(validators=[WTOptional()])
+    new_status = HiddenField(validators=[WTOptional()])
+    submit = SubmitField('Apply')
 
 
 class PublicDonationForm(FlaskForm):
@@ -2201,7 +2244,7 @@ def mobile_intake():
 @login_required
 @roles_required('admin', 'staff')
 def p2p_manage():
-    from ngo_homesuite.services.p2p_service import close_page, create_page, list_pages, publish_page
+    from ngo_homesuite.services.p2p_service import close_page, create_page, get_progress, list_pages, publish_page
 
     org = _current_org()
     if not org:
@@ -2213,6 +2256,13 @@ def p2p_manage():
     form.donor_id.choices = [(int(d.id), d.name) for d in donors]
 
     status_filter = (request.args.get('status') or '').strip().lower() or None
+    query = (request.args.get('q') or '').strip().lower()
+    sort_by = (request.args.get('sort_by') or 'created').strip().lower()
+    sort_dir = (request.args.get('sort_dir') or 'desc').strip().lower()
+    if sort_by not in {'created', 'title', 'raised', 'progress', 'supporters'}:
+        sort_by = 'created'
+    if sort_dir not in {'asc', 'desc'}:
+        sort_dir = 'desc'
 
     if request.method == 'POST':
         action = (request.form.get('action') or '').strip().lower()
@@ -2259,12 +2309,73 @@ def p2p_manage():
             flash('Please fix the highlighted form issues.', 'error')
 
     pages = list_pages(org.id, status=status_filter)
+    if query:
+        pages = [
+            p for p in pages
+            if query in str(getattr(p, 'title', '') or '').lower()
+            or query in str(getattr(p, 'public_slug', '') or '').lower()
+            or query in str(getattr(p, 'story', '') or '').lower()
+            or query in str(getattr(getattr(p, 'owner', None), 'name', '') or '').lower()
+        ]
+
+    page_stats: dict[int, dict[str, object]] = {}
+    total_raised = 0.0
+    pages_at_goal = 0
+    for page in pages:
+        progress = get_progress(int(page.id), int(org.id))
+        raised = float(progress.get('total_raised', 0.0) or 0.0)
+        pct = float(progress.get('pct_of_goal', 0.0) or 0.0)
+        supporters = int(progress.get('donor_count', 0) or 0)
+        if pct >= 100.0:
+            pages_at_goal += 1
+        total_raised += raised
+        page_stats[int(page.id)] = {
+            'raised': round(raised, 2),
+            'pct_of_goal': round(pct, 1),
+            'supporters': supporters,
+        }
+
+    def _sort_key(page):
+        stats = page_stats.get(int(page.id), {})
+        if sort_by == 'title':
+            return str(getattr(page, 'title', '') or '').lower()
+        if sort_by == 'raised':
+            return float(stats.get('raised', 0.0) or 0.0)
+        if sort_by == 'progress':
+            return float(stats.get('pct_of_goal', 0.0) or 0.0)
+        if sort_by == 'supporters':
+            return int(stats.get('supporters', 0) or 0)
+        return getattr(page, 'created_at', datetime.min)
+
+    pages.sort(key=_sort_key, reverse=(sort_dir == 'desc'))
+
+    summary = {
+        'total_pages': len(pages),
+        'active_pages': sum(1 for p in pages if str(getattr(p, 'status', '') or '') == 'active'),
+        'draft_pages': sum(1 for p in pages if str(getattr(p, 'status', '') or '') == 'draft'),
+        'closed_pages': sum(1 for p in pages if str(getattr(p, 'status', '') or '') == 'closed'),
+        'total_raised': round(total_raised, 2),
+        'pages_at_goal': pages_at_goal,
+    }
+
     ai_context = {
         'active_page': 'p2p',
         'organization': org.name,
         'p2p_page_count': len(pages),
     }
-    return render_template('p2p_manage.html', form=form, pages=pages, active_page='p2p', ai_context=ai_context)
+    return render_template(
+        'p2p_manage.html',
+        form=form,
+        pages=pages,
+        page_stats=page_stats,
+        summary=summary,
+        filter_q=request.args.get('q', ''),
+        filter_status=status_filter or '',
+        filter_sort_by=sort_by,
+        filter_sort_dir=sort_dir,
+        active_page='p2p',
+        ai_context=ai_context,
+    )
 
 
 @main_bp.route('/donors')
@@ -2958,6 +3069,12 @@ def donation_create():
     donor_service = DonorService()
     donation_service = DonationService()
     donor_options = [(0, 'Select a donor')] + [(d.id, d.name) for d in donor_service.list_all_donors(org.id)]
+    campaign_options = [(0, 'General / None')] + [
+        (c.id, c.name)
+        for c in db.session.scalars(
+            select(Campaign).where(Campaign.organization_id == org.id).order_by(Campaign.name.asc())
+        ).all()
+    ]
     project_options = [(0, 'General / None')] + [(p.id, p.name) for p in ProjectService().list_all_projects(org.id)]
     fund_options = [(0, 'General / None')] + [
         (f.id, f.name)
@@ -2966,6 +3083,7 @@ def donation_create():
 
     form = DonationForm()
     form.donor_id.choices = donor_options
+    form.campaign_id.choices = campaign_options
     form.project_id.choices = project_options
     form.fund_id.choices = fund_options
 
@@ -2991,11 +3109,19 @@ def donation_create():
                 donor_email=donor.email,
                 donor_phone=donor.phone,
                 donor_id=donor.id,
+                campaign_id=form.campaign_id.data or None,
                 project_id=form.project_id.data or None,
                 fund_id=form.fund_id.data or None,
                 payment_method=form.payment_method.data,
+                channel=form.channel.data or None,
                 reference_number=_build_quick_donation_reference(form),
                 purpose=form.purpose.data,
+                is_anonymous=bool(form.is_anonymous.data),
+                public_display_name=form.public_display_name.data,
+                tribute_type=form.tribute_type.data or None,
+                tribute_honoree_name=form.tribute_honoree_name.data,
+                tribute_honoree_contact=form.tribute_honoree_contact.data,
+                soft_credit_name=form.soft_credit_name.data,
                 notes=_build_quick_donation_notes(form),
                 status='received',
             )
@@ -3090,7 +3216,9 @@ def process_recurring_donations():
 def donations_list():
     org = _current_org()
     query = request.args.get('q', '').strip()
+    fund_id = request.args.get('fund_id', type=int)
     payment_method = request.args.get('payment_method', '').strip()
+    channel = request.args.get('channel', '').strip().lower()
     status = request.args.get('status', '').strip()
     currency = request.args.get('currency', '').strip().upper()
     donor_type = request.args.get('donor_type', '').strip().lower()
@@ -3126,6 +3254,15 @@ def donations_list():
 
     if currency:
         donations = [d for d in donations if str(getattr(d, 'currency', '') or '').upper() == currency]
+
+    if fund_id:
+        donations = [d for d in donations if int(getattr(d, 'fund_id', 0) or 0) == int(fund_id)]
+
+    if channel:
+        donations = [
+            d for d in donations
+            if str(getattr(d, 'channel', '') or '').strip().lower() == channel
+        ]
 
     if donor_type:
         donations = [
@@ -3193,6 +3330,7 @@ def donations_list():
             status_counts[status_key] += 1
 
     row_action_form = DonationRowActionForm()
+    bulk_action_form = BulkDonationActionForm()
     next_status_map = {
         'pending': ['received', 'failed'],
         'received': ['processed', 'refunded'],
@@ -3213,6 +3351,16 @@ def donations_list():
             if str(getattr(d, 'currency', '') or '').strip()
         }
     )
+    available_funds = []
+    if org:
+        available_funds = FundService().list_all_funds(org.id)
+    available_channels = sorted(
+        {
+            str(getattr(d, 'channel', '') or '').strip().lower()
+            for d in donations
+            if str(getattr(d, 'channel', '') or '').strip()
+        }
+    )
     donor_type_options = ['individual', 'corporate', 'foundation', 'anonymous']
 
     ai_context = {
@@ -3228,16 +3376,21 @@ def donations_list():
         total_filtered=total_filtered,
         status_counts=status_counts,
         row_action_form=row_action_form,
+        bulk_action_form=bulk_action_form,
         donation_next_statuses=donation_next_statuses,
         page=page,
         total_pages=total_pages,
         per_page=per_page,
         per_page_options=per_page_options,
         available_currencies=available_currencies,
+        available_funds=available_funds,
+        available_channels=available_channels,
         donor_type_options=donor_type_options,
         active_page='donations',
         filter_q=query,
+        filter_fund_id=fund_id,
         filter_payment_method=payment_method,
+        filter_channel=channel,
         filter_status=status,
         filter_currency=currency,
         filter_donor_type=donor_type,
@@ -3329,6 +3482,94 @@ def donation_receipt_resend(donation_id: int):
     return redirect(url_for('main.donations_list'))
 
 
+@main_bp.route('/donations/bulk/status', methods=['POST'])
+@login_required
+@roles_required('admin', 'staff')
+def donations_bulk_status_update():
+    org = _current_org()
+    if not org:
+        flash('No organization is available.', 'error')
+        return redirect(url_for('main.donations_list'))
+
+    form = BulkDonationActionForm()
+    if not form.validate_on_submit():
+        flash('Invalid bulk status update request.', 'error')
+        return redirect(url_for('main.donations_list'))
+
+    selected_ids = [
+        int(raw_id)
+        for raw_id in request.form.getlist('donation_ids')
+        if str(raw_id or '').strip().isdigit()
+    ]
+    if not selected_ids:
+        flash('Select at least one donation for bulk status update.', 'error')
+        return redirect(url_for('main.donations_list'))
+
+    new_status = str(form.new_status.data or '').strip().lower()
+    if not new_status:
+        flash('Choose a status to apply.', 'error')
+        return redirect(url_for('main.donations_list'))
+
+    svc = DonationService()
+    updated = 0
+    skipped = 0
+    for donation_id in selected_ids:
+        try:
+            donation = svc.update_status(donation_id, org.id, new_status, actor_id=getattr(current_user, 'id', None))
+            if new_status == 'receipted':
+                _issue_receipt_for_donation(donation, recipient_email=donation.donor_email)
+            updated += 1
+        except (DonationNotFound, InvalidStatusTransition, DonationConcurrencyError, ValueError):
+            skipped += 1
+
+    flash(f'Bulk status update complete: {updated} updated, {skipped} skipped.', 'success' if updated else 'info')
+    next_url = str(form.next_url.data or '').strip()
+    if next_url.startswith('/'):
+        return redirect(next_url)
+    return redirect(url_for('main.donations_list'))
+
+
+@main_bp.route('/donations/bulk/receipt/resend', methods=['POST'])
+@login_required
+@roles_required('admin', 'staff')
+def donations_bulk_receipt_resend():
+    org = _current_org()
+    if not org:
+        flash('No organization is available.', 'error')
+        return redirect(url_for('main.donations_list'))
+
+    form = BulkDonationActionForm()
+    if not form.validate_on_submit():
+        flash('Invalid bulk receipt resend request.', 'error')
+        return redirect(url_for('main.donations_list'))
+
+    selected_ids = [
+        int(raw_id)
+        for raw_id in request.form.getlist('donation_ids')
+        if str(raw_id or '').strip().isdigit()
+    ]
+    if not selected_ids:
+        flash('Select at least one donation to resend receipts.', 'error')
+        return redirect(url_for('main.donations_list'))
+
+    resent = 0
+    skipped = 0
+    for donation_id in selected_ids:
+        try:
+            donation = DonationService().get_donation(donation_id, org.id)
+            recipient_email = str(getattr(donation, 'donor_email', '') or '').strip() or None
+            _issue_receipt_for_donation(donation, recipient_email=recipient_email)
+            resent += 1
+        except (DonationNotFound, ValueError):
+            skipped += 1
+
+    flash(f'Bulk receipt resend complete: {resent} resent, {skipped} skipped.', 'success' if resent else 'info')
+    next_url = str(form.next_url.data or '').strip()
+    if next_url.startswith('/'):
+        return redirect(next_url)
+    return redirect(url_for('main.donations_list'))
+
+
 @main_bp.route('/donations/export/<string:file_type>')
 @login_required
 def donations_export(file_type: str):
@@ -3338,7 +3579,9 @@ def donations_export(file_type: str):
         return redirect(url_for('main.donations_list'))
 
     query = request.args.get('q', '').strip()
+    fund_id = request.args.get('fund_id', type=int)
     payment_method = request.args.get('payment_method', '').strip()
+    channel = request.args.get('channel', '').strip().lower()
     status = request.args.get('status', '').strip()
     min_amount = _parse_float(request.args.get('min_amount', ''))
     max_amount = _parse_float(request.args.get('max_amount', ''))
@@ -3351,6 +3594,13 @@ def donations_export(file_type: str):
         min_amount=min_amount,
         max_amount=max_amount,
     )
+    if channel:
+        donations = [
+            d for d in donations
+            if str(getattr(d, 'channel', '') or '').strip().lower() == channel
+        ]
+    if fund_id:
+        donations = [d for d in donations if int(getattr(d, 'fund_id', 0) or 0) == int(fund_id)]
     headers = ['ID', 'Date', 'Donor', 'Email', 'Amount', 'Currency', 'Status', 'Payment Method', 'Purpose', 'Reference']
     rows = [
         [
@@ -3431,17 +3681,23 @@ def donation_receipt(donation_id: int):
 def expenses_list():
     org = _current_org()
     query = request.args.get('q', '').strip()
+    fund_id = request.args.get('fund_id', type=int)
     min_amount = _parse_float(request.args.get('min_amount', ''))
     max_amount = _parse_float(request.args.get('max_amount', ''))
+    available_funds = []
 
     expenses = []
     if org:
+        available_funds = FundService().list_all_funds(org.id)
         expenses = ExpenseService().list_filtered_expenses(
             org.id,
             search=query or None,
             min_amount=min_amount,
             max_amount=max_amount,
         )
+
+    if fund_id:
+        expenses = [e for e in expenses if int(getattr(e, 'fund_id', 0) or 0) == int(fund_id)]
     ai_context = {
         'active_page': 'expenses',
         'organization': org.name if org else None,
@@ -3451,8 +3707,10 @@ def expenses_list():
     return render_template(
         'expenses.html',
         expenses=expenses,
+        available_funds=available_funds,
         active_page='expenses',
         filter_q=query,
+        filter_fund_id=fund_id,
         filter_min_amount=request.args.get('min_amount', ''),
         filter_max_amount=request.args.get('max_amount', ''),
         ai_context=ai_context,
@@ -3507,6 +3765,7 @@ def expenses_export(file_type: str):
         return redirect(url_for('main.expenses_list'))
 
     query = request.args.get('q', '').strip()
+    fund_id = request.args.get('fund_id', type=int)
     min_amount = _parse_float(request.args.get('min_amount', ''))
     max_amount = _parse_float(request.args.get('max_amount', ''))
 
@@ -3516,6 +3775,8 @@ def expenses_export(file_type: str):
         min_amount=min_amount,
         max_amount=max_amount,
     )
+    if fund_id:
+        expenses = [e for e in expenses if int(getattr(e, 'fund_id', 0) or 0) == int(fund_id)]
     headers = ['ID', 'Date', 'Payee', 'Amount', 'Currency', 'Project', 'Fund', 'Description']
     rows = [
         [
@@ -3674,10 +3935,265 @@ def funds_list():
     org = _current_org()
     query = request.args.get('q', '').strip()
     status = request.args.get('status', '').strip()
+    has_activity = request.args.get('has_activity', '').strip().lower()
+    trend_window = request.args.get('trend_window', '6m').strip().lower()
+    sort_by = request.args.get('sort_by', 'name').strip().lower()
+    sort_dir = request.args.get('sort_dir', 'asc').strip().lower()
+    if sort_by not in {'name', 'status', 'updated', 'in', 'out', 'net', 'donations', 'expenses'}:
+        sort_by = 'name'
+    if sort_dir not in {'asc', 'desc'}:
+        sort_dir = 'asc'
+    if trend_window not in {'30d', '90d', 'ytd', '6m'}:
+        trend_window = '6m'
+
+    per_page_options = [25, 50, 100, 250]
+    per_page = request.args.get('per_page', type=int) or 50
+    if per_page not in per_page_options:
+        per_page = 50
+    page = request.args.get('page', type=int) or 1
+    page = max(page, 1)
 
     funds = []
+    fund_metrics: dict[int, dict[str, float | int]] = {}
+    summary = {
+        'total_funds': 0,
+        'active_funds': 0,
+        'inactive_funds': 0,
+        'total_in': 0.0,
+        'total_out': 0.0,
+        'net': 0.0,
+    }
     if org:
         funds = FundService().list_all_funds(org.id, search=query or None, status=status or None)
+        fund_ids = [int(f.id) for f in funds]
+        summary['total_funds'] = len(funds)
+        summary['active_funds'] = sum(1 for f in funds if bool(getattr(f, 'is_active', False)))
+        summary['inactive_funds'] = max(0, int(summary['total_funds']) - int(summary['active_funds']))
+
+        donations_by_fund: dict[int, dict[str, float | int]] = {}
+        expenses_by_fund: dict[int, dict[str, float | int]] = {}
+
+        if fund_ids:
+            donation_rollups = db.session.execute(
+                select(
+                    Donation.fund_id,
+                    func.count(Donation.id),
+                    func.coalesce(func.sum(Donation.amount), 0.0),
+                )
+                .where(
+                    Donation.organization_id == org.id,
+                    Donation.fund_id.in_(fund_ids),
+                )
+                .group_by(Donation.fund_id)
+            ).all()
+            for fund_id, count, amount in donation_rollups:
+                if fund_id is None:
+                    continue
+                donations_by_fund[int(fund_id)] = {
+                    'count': int(count or 0),
+                    'amount': float(amount or 0.0),
+                }
+
+            expense_rollups = db.session.execute(
+                select(
+                    Expense.fund_id,
+                    func.count(Expense.id),
+                    func.coalesce(func.sum(Expense.amount), 0.0),
+                )
+                .where(
+                    Expense.organization_id == org.id,
+                    Expense.fund_id.in_(fund_ids),
+                )
+                .group_by(Expense.fund_id)
+            ).all()
+            for fund_id, count, amount in expense_rollups:
+                if fund_id is None:
+                    continue
+                expenses_by_fund[int(fund_id)] = {
+                    'count': int(count or 0),
+                    'amount': float(amount or 0.0),
+                }
+
+            now_dt = datetime.now(timezone.utc).replace(tzinfo=None)
+            trend_labels: list[str] = []
+            trend_ranges: list[tuple[datetime, datetime]] = []
+
+            if trend_window == '30d':
+                start_dt = (now_dt - timedelta(days=29)).replace(hour=0, minute=0, second=0, microsecond=0)
+                for idx in range(6):
+                    bucket_start = start_dt + timedelta(days=idx * 5)
+                    bucket_end = bucket_start + timedelta(days=4, hours=23, minutes=59, seconds=59)
+                    trend_labels.append(bucket_start.strftime('%m/%d'))
+                    trend_ranges.append((bucket_start, bucket_end))
+            elif trend_window == '90d':
+                start_dt = (now_dt - timedelta(days=89)).replace(hour=0, minute=0, second=0, microsecond=0)
+                for idx in range(6):
+                    bucket_start = start_dt + timedelta(days=idx * 15)
+                    bucket_end = bucket_start + timedelta(days=14, hours=23, minutes=59, seconds=59)
+                    trend_labels.append(bucket_start.strftime('%m/%d'))
+                    trend_ranges.append((bucket_start, bucket_end))
+            elif trend_window == 'ytd':
+                for month in range(1, now_dt.month + 1):
+                    bucket_start = datetime(now_dt.year, month, 1)
+                    if month == 12:
+                        next_month = datetime(now_dt.year + 1, 1, 1)
+                    else:
+                        next_month = datetime(now_dt.year, month + 1, 1)
+                    bucket_end = next_month - timedelta(seconds=1)
+                    trend_labels.append(bucket_start.strftime('%b'))
+                    trend_ranges.append((bucket_start, bucket_end))
+            else:
+                month_anchor = now_dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                offsets: list[tuple[int, int]] = []
+                year = month_anchor.year
+                month = month_anchor.month
+                for _ in range(6):
+                    offsets.append((year, month))
+                    month -= 1
+                    if month <= 0:
+                        month = 12
+                        year -= 1
+                offsets.reverse()
+                for year, month in offsets:
+                    bucket_start = datetime(year, month, 1)
+                    if month == 12:
+                        next_month = datetime(year + 1, 1, 1)
+                    else:
+                        next_month = datetime(year, month + 1, 1)
+                    bucket_end = next_month - timedelta(seconds=1)
+                    trend_labels.append(bucket_start.strftime('%b'))
+                    trend_ranges.append((bucket_start, bucket_end))
+
+            trend_map: dict[int, dict[str, float]] = {fid: {label: 0.0 for label in trend_labels} for fid in fund_ids}
+            earliest_dt = trend_ranges[0][0] if trend_ranges else now_dt
+
+            donation_trend_rows = db.session.execute(
+                select(Donation.fund_id, Donation.donation_date, Donation.amount).where(
+                    Donation.organization_id == org.id,
+                    Donation.fund_id.in_(fund_ids),
+                    Donation.donation_date >= earliest_dt,
+                )
+            ).all()
+            for d_fund_id, donation_date, amount in donation_trend_rows:
+                if d_fund_id is None or donation_date is None:
+                    continue
+                fund_trend = trend_map.get(int(d_fund_id), {})
+                for idx, (bucket_start, bucket_end) in enumerate(trend_ranges):
+                    if bucket_start <= donation_date <= bucket_end:
+                        label = trend_labels[idx]
+                        if label in fund_trend:
+                            fund_trend[label] += float(amount or 0.0)
+                        break
+
+            expense_trend_rows = db.session.execute(
+                select(Expense.fund_id, Expense.paid_at, Expense.amount).where(
+                    Expense.organization_id == org.id,
+                    Expense.fund_id.in_(fund_ids),
+                    Expense.paid_at >= earliest_dt,
+                )
+            ).all()
+            for e_fund_id, paid_at, amount in expense_trend_rows:
+                if e_fund_id is None or paid_at is None:
+                    continue
+                fund_trend = trend_map.get(int(e_fund_id), {})
+                for idx, (bucket_start, bucket_end) in enumerate(trend_ranges):
+                    if bucket_start <= paid_at <= bucket_end:
+                        label = trend_labels[idx]
+                        if label in fund_trend:
+                            fund_trend[label] -= float(amount or 0.0)
+                        break
+
+            def _sparkline_points(values: list[float]) -> str:
+                if not values:
+                    return ''
+                min_v = min(values)
+                max_v = max(values)
+                width = 72.0
+                height = 22.0
+                if max_v == min_v:
+                    return ' '.join(f"{(idx * (width / max(1, len(values) - 1))):.2f},{height / 2:.2f}" for idx in range(len(values)))
+                points: list[str] = []
+                x_step = width / max(1, len(values) - 1)
+                for idx, val in enumerate(values):
+                    x = idx * x_step
+                    y = height - ((val - min_v) / (max_v - min_v) * height)
+                    points.append(f"{x:.2f},{y:.2f}")
+                return ' '.join(points)
+
+        total_in = 0.0
+        total_out = 0.0
+        for fund in funds:
+            f_id = int(fund.id)
+            donation_info = donations_by_fund.get(f_id, {'count': 0, 'amount': 0.0})
+            expense_info = expenses_by_fund.get(f_id, {'count': 0, 'amount': 0.0})
+            amount_in = float(donation_info['amount'])
+            amount_out = float(expense_info['amount'])
+            total_in += amount_in
+            total_out += amount_out
+            fund_metrics[f_id] = {
+                'donation_count': int(donation_info['count']),
+                'expense_count': int(expense_info['count']),
+                'amount_in': round(amount_in, 2),
+                'amount_out': round(amount_out, 2),
+                'net': round(amount_in - amount_out, 2),
+                'trend_labels': trend_labels,
+                'trend_values': [round(trend_map.get(f_id, {}).get(label, 0.0), 2) for label in trend_labels],
+                'sparkline_points': _sparkline_points([trend_map.get(f_id, {}).get(label, 0.0) for label in trend_labels]),
+            }
+
+        summary['total_in'] = round(total_in, 2)
+        summary['total_out'] = round(total_out, 2)
+        summary['net'] = round(total_in - total_out, 2)
+
+        if has_activity in {'with', 'without'}:
+            filtered_funds: list[Fund] = []
+            for fund in funds:
+                metrics = fund_metrics.get(int(fund.id), {})
+                has_rows = int(metrics.get('donation_count', 0)) > 0 or int(metrics.get('expense_count', 0)) > 0
+                if has_activity == 'with' and has_rows:
+                    filtered_funds.append(fund)
+                if has_activity == 'without' and not has_rows:
+                    filtered_funds.append(fund)
+            funds = filtered_funds
+
+        def _fund_sort_key(item: Fund):
+            metrics = fund_metrics.get(int(item.id), {})
+            if sort_by == 'status':
+                return 'active' if bool(getattr(item, 'is_active', False)) else 'inactive'
+            if sort_by == 'updated':
+                return getattr(item, 'updated_at', datetime.min)
+            if sort_by == 'in':
+                return float(metrics.get('amount_in', 0.0) or 0.0)
+            if sort_by == 'out':
+                return float(metrics.get('amount_out', 0.0) or 0.0)
+            if sort_by == 'net':
+                return float(metrics.get('net', 0.0) or 0.0)
+            if sort_by == 'donations':
+                return int(metrics.get('donation_count', 0) or 0)
+            if sort_by == 'expenses':
+                return int(metrics.get('expense_count', 0) or 0)
+            return str(getattr(item, 'name', '') or '').strip().lower()
+
+        funds.sort(key=_fund_sort_key, reverse=(sort_dir == 'desc'))
+
+        filtered_total = len(funds)
+        active_filtered_count = sum(1 for f in funds if bool(getattr(f, 'is_active', False)))
+        total_pages = max(1, (filtered_total + per_page - 1) // per_page)
+        if page > total_pages:
+            page = total_pages
+        start_idx = (page - 1) * per_page
+        end_idx = start_idx + per_page
+        funds = funds[start_idx:end_idx]
+
+        summary['total_funds'] = filtered_total
+        summary['active_funds'] = active_filtered_count
+        summary['inactive_funds'] = max(0, int(filtered_total) - int(active_filtered_count))
+    else:
+        total_pages = 1
+
+    status_action_form = FundStatusActionForm()
+    bulk_action_form = BulkFundActionForm()
+
     ai_context = {
         'active_page': 'funds',
         'organization': org.name if org else None,
@@ -3686,11 +4202,117 @@ def funds_list():
     return render_template(
         'funds.html',
         funds=funds,
+        fund_metrics=fund_metrics,
+        summary=summary,
+        status_action_form=status_action_form,
+        bulk_action_form=bulk_action_form,
         active_page='funds',
         filter_q=query,
         filter_status=status,
+        filter_has_activity=has_activity,
+        filter_trend_window=trend_window,
+        filter_sort_by=sort_by,
+        filter_sort_dir=sort_dir,
+        page=page,
+        total_pages=total_pages,
+        per_page=per_page,
+        per_page_options=per_page_options,
         ai_context=ai_context,
     )
+
+
+@main_bp.route('/funds/<int:fund_id>/status', methods=['POST'])
+@login_required
+@roles_required('admin', 'staff')
+def fund_status_update(fund_id: int):
+    org = _current_org()
+    if not org:
+        flash('No organization is available.', 'error')
+        return redirect(url_for('main.funds_list'))
+
+    form = FundStatusActionForm()
+    if not form.validate_on_submit():
+        flash('Invalid fund status request.', 'error')
+        return redirect(url_for('main.funds_list'))
+
+    if int(form.fund_id.data or 0) != int(fund_id):
+        flash('Fund status request did not match record id.', 'error')
+        return redirect(url_for('main.funds_list'))
+
+    set_status = str(form.set_status.data or '').strip().lower()
+    if set_status not in {'active', 'inactive'}:
+        flash('Choose a valid fund status.', 'error')
+        return redirect(url_for('main.funds_list'))
+
+    try:
+        FundService().update_fund(
+            fund_id,
+            org.id,
+            actor_id=getattr(current_user, 'id', None),
+            is_active=(set_status == 'active'),
+        )
+        flash(f'Fund status updated to {set_status}.', 'success')
+    except FundNotFound:
+        flash('Fund not found.', 'error')
+    except ValueError as exc:
+        flash(str(exc), 'error')
+    except FundConcurrencyError:
+        flash('This fund changed while updating. Please retry.', 'error')
+
+    next_url = str(form.next_url.data or '').strip()
+    if next_url.startswith('/'):
+        return redirect(next_url)
+    return redirect(url_for('main.funds_list'))
+
+
+@main_bp.route('/funds/bulk/status', methods=['POST'])
+@login_required
+@roles_required('admin', 'staff')
+def funds_bulk_status_update():
+    org = _current_org()
+    if not org:
+        flash('No organization is available.', 'error')
+        return redirect(url_for('main.funds_list'))
+
+    form = BulkFundActionForm()
+    if not form.validate_on_submit():
+        flash('Invalid bulk fund status request.', 'error')
+        return redirect(url_for('main.funds_list'))
+
+    selected_ids = [
+        int(raw_id)
+        for raw_id in request.form.getlist('fund_ids')
+        if str(raw_id or '').strip().isdigit()
+    ]
+    if not selected_ids:
+        flash('Select at least one fund for bulk status update.', 'error')
+        return redirect(url_for('main.funds_list'))
+
+    set_status = str(form.set_status.data or '').strip().lower()
+    if set_status not in {'active', 'inactive'}:
+        flash('Choose a valid status to apply.', 'error')
+        return redirect(url_for('main.funds_list'))
+
+    updated = 0
+    skipped = 0
+    svc = FundService()
+    for fund_id in selected_ids:
+        try:
+            svc.update_fund(
+                fund_id,
+                org.id,
+                actor_id=getattr(current_user, 'id', None),
+                is_active=(set_status == 'active'),
+            )
+            updated += 1
+        except (FundNotFound, FundConcurrencyError, ValueError):
+            skipped += 1
+
+    flash(f'Bulk fund status update complete: {updated} updated, {skipped} skipped.', 'success' if updated else 'info')
+    next_url = str(form.next_url.data or '').strip()
+    if next_url.startswith('/'):
+        return redirect(next_url)
+    return redirect(url_for('main.funds_list'))
 
 
 @main_bp.route('/funds/export/<string:file_type>')

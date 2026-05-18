@@ -3,102 +3,318 @@
 {% block title %}P2P Fundraising - NGO HomeSuite{% endblock %}
 
 {% block content %}
-<h1>P2P Fundraising</h1>
-<p class="text-muted">Create and operate peer fundraising pages without leaving the admin dashboard.</p>
+<style>
+    .p2p-manage-shell {
+        display: grid;
+        gap: 1rem;
+    }
 
-<div class="grid" style="grid-template-columns: minmax(280px, 1fr) minmax(360px, 1.3fr); align-items: start;">
-    <section class="card">
-        <div class="card-title">Create Fundraiser</div>
-        <form method="post">
-            {{ form.hidden_tag() }}
+    .p2p-hero {
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 1rem;
+        background: linear-gradient(125deg, rgba(7, 52, 88, 0.08), rgba(14, 113, 147, 0.14));
+    }
 
-            <div class="form-group {% if form.donor_id.errors %}error{% endif %}">
-                {{ form.donor_id.label }}
-                {{ form.donor_id() }}
-                {% for error in form.donor_id.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+    .kpi-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.6rem;
+        margin-top: 0.85rem;
+    }
+
+    .kpi-card {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 0.55rem 0.65rem;
+        background: var(--surface-soft);
+    }
+
+    .kpi-label {
+        font-size: 0.8rem;
+        color: var(--muted);
+    }
+
+    .kpi-value {
+        font-size: 1.15rem;
+        font-weight: 700;
+        margin-top: 0.1rem;
+    }
+
+    .grid-layout {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 1rem;
+        align-items: start;
+    }
+
+    .filters {
+        display: grid;
+        gap: 0.55rem;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        margin-bottom: 0.8rem;
+    }
+
+    .progress-wrap {
+        display: grid;
+        gap: 0.25rem;
+    }
+
+    .progress-track {
+        width: 100%;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--surface-soft);
+        border: 1px solid var(--border);
+        overflow: hidden;
+    }
+
+    .progress-track > span {
+        display: block;
+        height: 100%;
+        width: 0;
+        background: linear-gradient(90deg, #1ba96f 0%, #0f7d97 100%);
+    }
+
+    .status-pill {
+        display: inline-block;
+        border-radius: 999px;
+        padding: 0.12rem 0.5rem;
+        font-size: 0.78rem;
+        border: 1px solid var(--border);
+        background: var(--surface-soft);
+    }
+
+    .status-pill.active {
+        color: #0e6f54;
+        border-color: rgba(25, 154, 111, 0.5);
+        background: rgba(167, 241, 211, 0.25);
+    }
+
+    .status-pill.closed {
+        color: #7f2431;
+        border-color: rgba(206, 78, 97, 0.5);
+        background: rgba(255, 198, 207, 0.26);
+    }
+
+    .status-pill.draft {
+        color: #855f0c;
+        border-color: rgba(214, 169, 53, 0.45);
+        background: rgba(255, 236, 166, 0.35);
+    }
+
+    .url-cell {
+        display: grid;
+        gap: 0.35rem;
+    }
+
+    .action-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+    }
+
+    .action-row form {
+        margin: 0;
+    }
+
+    @media (min-width: 980px) {
+        .grid-layout {
+            grid-template-columns: minmax(300px, 1fr) minmax(560px, 1.4fr);
+        }
+
+        .kpi-grid {
+            grid-template-columns: repeat(6, minmax(0, 1fr));
+        }
+    }
+</style>
+
+<div class="p2p-manage-shell">
+    <section class="p2p-hero">
+        <h1>P2P Fundraising</h1>
+        <p class="text-muted">Create and operate peer fundraising pages with campaign-level visibility and quick actions.</p>
+        <div class="kpi-grid">
+            <div class="kpi-card">
+                <div class="kpi-label">Pages</div>
+                <div class="kpi-value">{{ summary.total_pages if summary else pages|length }}</div>
             </div>
-
-            <div class="form-group {% if form.title.errors %}error{% endif %}">
-                {{ form.title.label }}
-                {{ form.title(placeholder='Run for Clean Water 2026') }}
-                {% for error in form.title.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            <div class="kpi-card">
+                <div class="kpi-label">Active</div>
+                <div class="kpi-value">{{ summary.active_pages if summary else 0 }}</div>
             </div>
-
-            <div class="form-group {% if form.goal_amount.errors %}error{% endif %}">
-                {{ form.goal_amount.label }}
-                {{ form.goal_amount(placeholder='1000.00', min='0', step='0.01') }}
-                {% for error in form.goal_amount.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            <div class="kpi-card">
+                <div class="kpi-label">Draft</div>
+                <div class="kpi-value">{{ summary.draft_pages if summary else 0 }}</div>
             </div>
-
-            <div class="form-group {% if form.story.errors %}error{% endif %}">
-                {{ form.story.label }}
-                {{ form.story(rows='4', placeholder='Share why this campaign matters...') }}
-                {% for error in form.story.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            <div class="kpi-card">
+                <div class="kpi-label">Closed</div>
+                <div class="kpi-value">{{ summary.closed_pages if summary else 0 }}</div>
             </div>
-
-            <div class="form-group {% if form.campaign_slug.errors %}error{% endif %}">
-                {{ form.campaign_slug.label }}
-                {{ form.campaign_slug(placeholder='spring-campaign-2026') }}
-                {% for error in form.campaign_slug.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            <div class="kpi-card">
+                <div class="kpi-label">Raised</div>
+                <div class="kpi-value">${{ '%.2f'|format(summary.total_raised if summary else 0) }}</div>
             </div>
-
-            <div class="actions-row">
-                {{ form.submit(class_='btn btn-primary') }}
+            <div class="kpi-card">
+                <div class="kpi-label">At Goal</div>
+                <div class="kpi-value">{{ summary.pages_at_goal if summary else 0 }}</div>
             </div>
-        </form>
-    </section>
-
-    <section class="card">
-        <div class="card-title">Fundraiser Pages</div>
-        {% if pages %}
-        <div class="table-wrap">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Title</th>
-                        <th>Status</th>
-                        <th>Goal</th>
-                        <th>Public URL</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for page in pages %}
-                    <tr>
-                        <td>{{ page.title }}</td>
-                        <td>{{ page.status }}</td>
-                        <td>${{ '%.2f'|format(page.goal_amount or 0) }}</td>
-                        <td>
-                            <a href="{{ url_for('p2p.public_page_route', slug=page.public_slug) }}" target="_blank" rel="noopener">
-                                /p2p/{{ page.public_slug }}
-                            </a>
-                        </td>
-                        <td>
-                            <div class="actions-row">
-                                {% if page.status != 'active' %}
-                                <form method="post" style="display:inline;">
-                                    <input type="hidden" name="action" value="publish">
-                                    <input type="hidden" name="page_id" value="{{ page.id }}">
-                                    <button class="btn btn-primary" type="submit">Publish</button>
-                                </form>
-                                {% endif %}
-                                {% if page.status != 'closed' %}
-                                <form method="post" style="display:inline;">
-                                    <input type="hidden" name="action" value="close">
-                                    <input type="hidden" name="page_id" value="{{ page.id }}">
-                                    <button class="btn btn-secondary" type="submit">Close</button>
-                                </form>
-                                {% endif %}
-                            </div>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
         </div>
-        {% else %}
-        <p class="text-muted">No fundraiser pages yet. Create your first one using the form.</p>
-        {% endif %}
     </section>
+
+    <div class="grid-layout">
+        <section class="card">
+            <div class="card-title">Create Fundraiser</div>
+            <form method="post">
+                {{ form.hidden_tag() }}
+
+                <div class="form-group {% if form.donor_id.errors %}error{% endif %}">
+                    {{ form.donor_id.label }}
+                    {{ form.donor_id() }}
+                    {% for error in form.donor_id.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                </div>
+
+                <div class="form-group {% if form.title.errors %}error{% endif %}">
+                    {{ form.title.label }}
+                    {{ form.title(placeholder='Run for Clean Water 2026') }}
+                    {% for error in form.title.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                </div>
+
+                <div class="form-group {% if form.goal_amount.errors %}error{% endif %}">
+                    {{ form.goal_amount.label }}
+                    {{ form.goal_amount(placeholder='1000.00', min='0', step='0.01') }}
+                    {% for error in form.goal_amount.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                </div>
+
+                <div class="form-group {% if form.story.errors %}error{% endif %}">
+                    {{ form.story.label }}
+                    {{ form.story(rows='4', placeholder='Share why this campaign matters...') }}
+                    {% for error in form.story.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                </div>
+
+                <div class="form-group {% if form.campaign_slug.errors %}error{% endif %}">
+                    {{ form.campaign_slug.label }}
+                    {{ form.campaign_slug(placeholder='spring-campaign-2026') }}
+                    {% for error in form.campaign_slug.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+                </div>
+
+                <div class="actions-row">
+                    {{ form.submit(class_='btn btn-primary') }}
+                </div>
+            </form>
+        </section>
+
+        <section class="card">
+            <div class="card-title">Fundraiser Pages</div>
+            <form method="get" class="filters">
+                <input type="text" name="q" value="{{ filter_q or '' }}" placeholder="Search title, slug, owner, story">
+                <select name="status">
+                    <option value="" {% if not filter_status %}selected{% endif %}>All statuses</option>
+                    <option value="draft" {% if filter_status == 'draft' %}selected{% endif %}>Draft</option>
+                    <option value="active" {% if filter_status == 'active' %}selected{% endif %}>Active</option>
+                    <option value="closed" {% if filter_status == 'closed' %}selected{% endif %}>Closed</option>
+                </select>
+                <select name="sort_by">
+                    <option value="created" {% if filter_sort_by == 'created' %}selected{% endif %}>Newest</option>
+                    <option value="title" {% if filter_sort_by == 'title' %}selected{% endif %}>Title</option>
+                    <option value="raised" {% if filter_sort_by == 'raised' %}selected{% endif %}>Raised</option>
+                    <option value="progress" {% if filter_sort_by == 'progress' %}selected{% endif %}>Progress</option>
+                    <option value="supporters" {% if filter_sort_by == 'supporters' %}selected{% endif %}>Supporters</option>
+                </select>
+                <select name="sort_dir">
+                    <option value="desc" {% if filter_sort_dir == 'desc' %}selected{% endif %}>Desc</option>
+                    <option value="asc" {% if filter_sort_dir == 'asc' %}selected{% endif %}>Asc</option>
+                </select>
+                <button class="btn btn-secondary" type="submit">Apply</button>
+            </form>
+
+            {% if pages %}
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Page</th>
+                            <th>Status</th>
+                            <th>Goal</th>
+                            <th>Raised / Progress</th>
+                            <th>Supporters</th>
+                            <th>Public URL</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for page in pages %}
+                        {% set stats = page_stats.get(page.id, {}) if page_stats else {} %}
+                        <tr>
+                            <td>
+                                <strong>{{ page.title }}</strong>
+                                {% if page.campaign_slug %}
+                                <div class="text-muted">Campaign: {{ page.campaign_slug }}</div>
+                                {% endif %}
+                                <div class="text-muted">Owner: {{ page.owner.name if page.owner else 'Unknown' }}</div>
+                            </td>
+                            <td><span class="status-pill {{ page.status }}">{{ page.status }}</span></td>
+                            <td>${{ '%.2f'|format(page.goal_amount or 0) }}</td>
+                            <td>
+                                <div class="progress-wrap">
+                                    <div>${{ '%.2f'|format(stats.get('raised', 0) or 0) }}</div>
+                                    <div class="progress-track"><span style="width: {{ stats.get('pct_of_goal', 0) or 0 }}%;"></span></div>
+                                    <small class="text-muted">{{ stats.get('pct_of_goal', 0) or 0 }}%</small>
+                                </div>
+                            </td>
+                            <td>{{ stats.get('supporters', 0) or 0 }}</td>
+                            <td class="url-cell">
+                                <a href="{{ url_for('p2p.public_page_route', slug=page.public_slug) }}" target="_blank" rel="noopener">/p2p/{{ page.public_slug }}</a>
+                                <button type="button" class="btn btn-link" data-copy-link="{{ request.url_root.rstrip('/') }}{{ url_for('p2p.public_page_route', slug=page.public_slug) }}">Copy Link</button>
+                            </td>
+                            <td>
+                                <div class="action-row">
+                                    <a class="btn btn-secondary" href="{{ url_for('p2p.public_page_route', slug=page.public_slug) }}" target="_blank" rel="noopener">Preview</a>
+                                    {% if page.status != 'active' %}
+                                    <form method="post">
+                                        <input type="hidden" name="action" value="publish">
+                                        <input type="hidden" name="page_id" value="{{ page.id }}">
+                                        <button class="btn btn-primary" type="submit">Publish</button>
+                                    </form>
+                                    {% endif %}
+                                    {% if page.status != 'closed' %}
+                                    <form method="post">
+                                        <input type="hidden" name="action" value="close">
+                                        <input type="hidden" name="page_id" value="{{ page.id }}">
+                                        <button class="btn btn-secondary" type="submit">Close</button>
+                                    </form>
+                                    {% endif %}
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted">No fundraiser pages yet. Create your first one using the form.</p>
+            {% endif %}
+        </section>
+    </div>
 </div>
+
+<script>
+    (function () {
+        var copyButtons = document.querySelectorAll('[data-copy-link]');
+        copyButtons.forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var value = btn.getAttribute('data-copy-link') || '';
+                if (!value) {
+                    return;
+                }
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(value);
+                }
+                btn.textContent = 'Copied';
+                setTimeout(function () {
+                    btn.textContent = 'Copy Link';
+                }, 1200);
+            });
+        });
+    })();
+</script>
 {% endblock %}

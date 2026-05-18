@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 
 from flask import Blueprint, Response, jsonify, render_template, request
 from flask_login import current_user, login_required
+from sqlalchemy import func, select
 
+from ngo_homesuite.models.core import Donation, P2PPageDonation, db
 from ngo_homesuite.web.rbac import roles_required
 
 
@@ -126,11 +129,58 @@ def public_page_route(slug: str):
         limit=8,
         offset=0,
     )
+
+    linked_donations = list(
+        db.session.scalars(
+            select(Donation)
+            .join(P2PPageDonation, P2PPageDonation.donation_id == Donation.id)
+            .where(P2PPageDonation.page_id == page.id, Donation.organization_id == page.organization_id)
+            .order_by(Donation.donation_date.desc(), Donation.id.desc())
+            .limit(7)
+        )
+    )
+    gift_count = int(
+        db.session.scalar(
+            select(func.count(P2PPageDonation.donation_id)).where(P2PPageDonation.page_id == page.id)
+        )
+        or 0
+    )
+    raised = float(progress.get("total_raised", 0.0) or 0.0)
+    goal_amount = float(page.goal_amount or 0.0)
+    average_gift = (raised / gift_count) if gift_count > 0 else 0.0
+    amount_left = max(goal_amount - raised, 0.0)
+    pct = float(progress.get("pct_of_goal", 0.0) or 0.0)
+
+    milestone_markers = [25, 50, 75, 100]
+    milestone_rows = [{"pct": m, "reached": pct >= m} for m in milestone_markers]
+
+    fallback_amounts = [25, 50, 100, 250]
+    if goal_amount >= 1000:
+        fallback_amounts = [50, 100, 250, 500]
+
+    public_url = request.base_url
+    encoded_share_text = f"Support {page.title}"
+
+    days_live = None
+    created_at = getattr(page, "created_at", None)
+    if isinstance(created_at, datetime):
+        now_naive_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+        days_live = max((now_naive_utc - created_at).days, 0)
+
     return render_template(
         "p2p_public_page.html",
         page=page,
         progress=progress,
         leaderboard_rows=page_leaderboard,
+        linked_donations=linked_donations,
+        gift_count=gift_count,
+        average_gift=average_gift,
+        amount_left=amount_left,
+        milestone_rows=milestone_rows,
+        donation_tiers=fallback_amounts,
+        public_url=public_url,
+        share_text=encoded_share_text,
+        days_live=days_live,
         active_page="give",
         is_embed=request.args.get("embed", "0") == "1",
     )
