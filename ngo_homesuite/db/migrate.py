@@ -6,6 +6,7 @@ import json
 import os
 import sqlite3
 import shutil
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -315,6 +316,33 @@ def _restore_backup_if_needed(db_path: str, backup_path: str | None) -> None:
     _emit_migration_event(step="rollback", status="ok", message="Backup restored", db_path=db_path, backup_path=backup_path)
 
 
+def _execute_script_with_retry(conn: sqlite3.Connection, sql: str, *, version: int, filename: str) -> None:
+    retries = max(1, int(os.environ.get("NGO_HOMESUITE_MIGRATION_LOCK_RETRIES", "3")))
+    backoff = max(0.0, float(os.environ.get("NGO_HOMESUITE_MIGRATION_LOCK_BACKOFF_SEC", "0.2")))
+
+    for attempt in range(1, retries + 1):
+        try:
+            conn.executescript(sql)
+            return
+        except sqlite3.OperationalError as exc:
+            if "database is locked" not in str(exc).lower() or attempt >= retries:
+                raise MigrationApplyError(
+                    f"Failed applying migration v{version} ({filename}) due to database lock"
+                ) from exc
+            _emit_migration_event(
+                step="apply",
+                status="error",
+                message="Migration lock contention detected; retrying",
+                version=version,
+                file=filename,
+                attempt=attempt,
+                retries=retries,
+            )
+            time.sleep(backoff * (2 ** (attempt - 1)))
+        except Exception as exc:
+            raise MigrationApplyError(f"Failed applying migration v{version} ({filename})") from exc
+
+
 @enforce_error_contract
 def auto_migrate(db_path: str | None = None) -> None:
     _guard_encrypted_db_not_supported()
@@ -391,9 +419,9 @@ def auto_migrate(db_path: str | None = None) -> None:
                         )
                         print(f"Skipped migration {version} ({mf.name}) until required tables are created by bootstrap.")
                         continue
-                conn.executescript(sql)
-            except Exception as exc:
-                raise MigrationApplyError(f"Failed applying migration v{version} ({mf.name})") from exc
+                _execute_script_with_retry(conn, sql, version=version, filename=mf.name)
+            except Exception:
+                raise
 
             now_utc = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
             _insert_schema_version_row(conn, version=version, hash_value=hash_val, applied_at_utc=now_utc)

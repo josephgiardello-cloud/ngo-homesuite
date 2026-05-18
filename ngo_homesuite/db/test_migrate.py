@@ -10,6 +10,7 @@ from ngo_homesuite.db.migrate import (
     MigrationApplyError,
     MigrationError,
     MigrationPlan,
+    _execute_script_with_retry,
     auto_migrate,
     plan_migrations,
 )
@@ -412,3 +413,57 @@ def test_workflow_event_table_is_append_only_after_migrations(tmp_path):
             conn.execute("DELETE FROM workflow_events_v2 WHERE event_id=?", ("evt_test_append_only",))
     finally:
         conn.close()
+
+
+def test_execute_script_with_retry_recovers_after_lock(monkeypatch):
+    monkeypatch.setenv("NGO_HOMESUITE_MIGRATION_LOCK_RETRIES", "3")
+    monkeypatch.setenv("NGO_HOMESUITE_MIGRATION_LOCK_BACKOFF_SEC", "0")
+
+    class _Conn:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def executescript(self, _sql: str) -> None:
+            self.calls += 1
+            if self.calls == 1:
+                raise sqlite3.OperationalError("database is locked")
+
+    conn = _Conn()
+    _execute_script_with_retry(conn, "CREATE TABLE IF NOT EXISTS t (id INTEGER);", version=999, filename="lock.sql")
+    assert conn.calls == 2
+
+
+def test_execute_script_with_retry_raises_after_exhaustion(monkeypatch):
+    monkeypatch.setenv("NGO_HOMESUITE_MIGRATION_LOCK_RETRIES", "2")
+    monkeypatch.setenv("NGO_HOMESUITE_MIGRATION_LOCK_BACKOFF_SEC", "0")
+
+    class _Conn:
+        def executescript(self, _sql: str) -> None:
+            raise sqlite3.OperationalError("database is locked")
+
+    with pytest.raises(MigrationApplyError, match="database lock"):
+        _execute_script_with_retry(_Conn(), "SELECT 1;", version=1000, filename="always_locked.sql")
+
+
+def test_auto_migrate_fails_fast_when_encrypted_db_key_present(tmp_path, monkeypatch):
+    migrations_dir = tmp_path / "migrations"
+    migrations_dir.mkdir(parents=True, exist_ok=True)
+    _write_migration(
+        migrations_dir,
+        "0001_initial.sql",
+        """
+        CREATE TABLE IF NOT EXISTS schema_version (
+            version INTEGER PRIMARY KEY,
+            applied_at_utc TEXT NOT NULL,
+            hash TEXT NOT NULL
+        );
+        """,
+    )
+
+    import ngo_homesuite.migrations as migrations_module
+
+    monkeypatch.setattr(migrations_module, "MIGRATIONS_DIR", migrations_dir)
+    monkeypatch.setenv("NGO_HOMESUITE_DB_KEY", "hex:" + ("bb" * 32))
+
+    with pytest.raises(MigrationError, match="Encrypted database migration is not supported"):
+        auto_migrate(str(tmp_path / "encrypted_auto.db"))
