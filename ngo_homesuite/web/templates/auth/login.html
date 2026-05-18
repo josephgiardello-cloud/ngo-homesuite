@@ -1,130 +1,402 @@
 {% extends "base.html" %}
+{% set hide_public_donate = true %}
 
-{% block title %}Sign In - NGO HomeSuite{% endblock %}
+{% block title %}Sign In - NGO-OMG{% endblock %}
 
 {% block content %}
 <style>
     .login-shell {
-        min-height: calc(100vh - 11rem);
+        --login-accent: #1476d4;
+        --login-accent-deep: #0f5ea7;
+        --login-ink: #0f2a46;
+        --login-muted: #4f6177;
+        --login-line: rgba(205, 218, 233, 0.95);
+        --login-glass: rgba(255, 255, 255, 0.14);
+    }
+
+    @keyframes floatDrift {
+        0% {
+            transform: translate3d(0, 0, 0) scale(1);
+        }
+        50% {
+            transform: translate3d(-1.8%, 1.2%, 0) scale(1.035);
+        }
+        100% {
+            transform: translate3d(0, 0, 0) scale(1);
+        }
+    }
+
+    @keyframes revealLift {
+        from {
+            opacity: 0;
+            transform: translateY(14px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    @keyframes pulseGlow {
+        0% {
+            box-shadow: 0 0 0 0 rgba(76, 223, 157, 0.35);
+        }
+        100% {
+            box-shadow: 0 0 0 10px rgba(76, 223, 157, 0);
+        }
+    }
+
+    .login-shell {
+        min-height: calc(100vh - 10.5rem);
         width: 100%;
-        display: block;
-        padding: 1.25rem 0.5rem 2rem;
+        padding: 1.05rem 0.6rem 1.8rem;
+        position: relative;
+        isolation: isolate;
+    }
+
+    .login-shell::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background:
+            radial-gradient(circle at 8% 4%, rgba(20, 118, 212, 0.16), transparent 32%),
+            radial-gradient(circle at 92% 8%, rgba(177, 31, 63, 0.12), transparent 30%),
+            linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(244, 248, 252, 0.7));
+        z-index: 0;
+    }
+
+    .login-shell::after {
+        content: "";
+        position: absolute;
+        width: min(54vw, 660px);
+        height: min(54vw, 660px);
+        right: -18%;
+        top: -30%;
+        border-radius: 999px;
+        background: radial-gradient(circle, rgba(20, 118, 212, 0.18) 0%, rgba(20, 118, 212, 0.04) 50%, transparent 72%);
+        filter: blur(10px);
+        animation: floatDrift 16s ease-in-out infinite;
+        z-index: 0;
+        pointer-events: none;
     }
 
     .login-card {
-        width: min(100%, 820px);
+        position: relative;
+        z-index: 1;
+        width: min(1180px, 100%);
         margin: 0 auto;
+        display: grid;
+        grid-template-columns: minmax(340px, 0.95fr) minmax(460px, 1.05fr);
         border-radius: 28px;
-        border: 1px solid rgba(219, 227, 237, 0.95);
-        box-shadow: 0 20px 56px rgba(16, 36, 61, 0.12);
+        border: 1px solid rgba(214, 224, 236, 0.95);
+        box-shadow: 0 34px 78px rgba(15, 36, 61, 0.16);
         overflow: hidden;
-        background: linear-gradient(180deg, rgba(255,255,255,0.99), rgba(248,250,252,0.98));
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(248, 251, 254, 0.98));
+        animation: revealLift 480ms ease-out both;
+    }
+
+    .login-card::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        pointer-events: none;
+        border: 1px solid rgba(255, 255, 255, 0.5);
+        mix-blend-mode: soft-light;
+    }
+
+    .login-card::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        pointer-events: none;
+        background: linear-gradient(115deg, rgba(255, 255, 255, 0.24), transparent 32%, transparent 68%, rgba(20, 118, 212, 0.08));
+        opacity: 0.65;
     }
 
     .login-hero {
         position: relative;
-        padding: 2rem 2rem 1.5rem;
+        padding: 2.05rem 1.72rem;
         color: #eff6ff;
+        display: grid;
+        align-content: start;
+        gap: 0.7rem;
         background:
-            radial-gradient(circle at top right, rgba(255,255,255,0.18), transparent 28%),
-            radial-gradient(circle at bottom left, rgba(255,255,255,0.1), transparent 22%),
-            linear-gradient(145deg, #0c2440 0%, #134c82 52%, #176fc7 100%);
+            radial-gradient(circle at 84% 16%, rgba(255, 255, 255, 0.23), transparent 32%),
+            radial-gradient(circle at 12% 86%, rgba(255, 222, 148, 0.18), transparent 34%),
+            linear-gradient(150deg, #0b2037 0%, #123f68 46%, #145e95 76%, #1a84bd 100%);
+    }
+
+    .login-hero::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image:
+            linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+        background-size: 40px 40px;
+        opacity: 0.23;
+        pointer-events: none;
     }
 
     .login-badge {
+        position: relative;
+        z-index: 1;
         display: inline-flex;
         align-items: center;
         gap: 0.45rem;
-        padding: 0.4rem 0.75rem;
+        width: fit-content;
+        padding: 0.38rem 0.78rem;
         border-radius: 999px;
-        background: rgba(255, 255, 255, 0.12);
-        border: 1px solid rgba(255, 255, 255, 0.15);
-        font-size: 0.78rem;
-        letter-spacing: 0.06em;
+        background: linear-gradient(135deg, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0.12));
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        font-size: 0.74rem;
+        letter-spacing: 0.08em;
         text-transform: uppercase;
+        font-weight: 700;
     }
 
     .login-hero h1 {
-        margin: 1rem 0 0.75rem;
+        position: relative;
+        z-index: 1;
+        margin: 0.6rem 0 0.3rem;
         color: inherit;
-        font-size: clamp(2rem, 4vw, 3rem);
-        line-height: 1.04;
+        font-family: "Segoe UI Variable Display", "Bahnschrift", "Trebuchet MS", sans-serif;
+        font-size: clamp(2rem, 3.6vw, 2.95rem);
+        line-height: 0.99;
+        letter-spacing: -0.024em;
+        text-wrap: balance;
     }
 
     .login-hero p {
+        position: relative;
+        z-index: 1;
         margin: 0;
-        max-width: 40rem;
-        color: rgba(239, 246, 255, 0.9);
-        font-size: 0.98rem;
+        max-width: 34rem;
+        color: rgba(239, 246, 255, 0.92);
+        font-size: 0.97rem;
+        line-height: 1.58;
+    }
+
+    .login-signals {
+        position: relative;
+        z-index: 1;
+        margin-top: 0.6rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
+    .signal-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.42rem;
+        padding: 0.35rem 0.62rem;
+        border-radius: 999px;
+        background: linear-gradient(135deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.1));
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        color: rgba(239, 246, 255, 0.95);
+        font-size: 0.76rem;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+    }
+
+    .signal-dot {
+        width: 0.5rem;
+        height: 0.5rem;
+        border-radius: 999px;
+        background: #4cdf9d;
+        animation: pulseGlow 1.8s ease-out infinite;
     }
 
     .login-aspects {
         position: relative;
         z-index: 1;
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-        gap: 0.85rem;
-        margin-top: 1.25rem;
+        grid-template-columns: 1fr;
+        gap: 0.68rem;
+        margin-top: 1rem;
+        perspective: 900px;
+    }
+
+    .login-aspects::before {
+        content: "";
+        position: absolute;
+        inset: -6% -4% auto;
+        height: 56%;
+        border-radius: 20px;
+        background: radial-gradient(circle at 18% 28%, rgba(76, 223, 157, 0.16), transparent 44%);
+        filter: blur(14px);
+        pointer-events: none;
+        z-index: 0;
     }
 
     .aspect-card {
-        min-height: 116px;
-        padding: 0.95rem;
-        border-radius: 18px;
-        background: rgba(255, 255, 255, 0.1);
-        border: 1px solid rgba(255, 255, 255, 0.12);
+        min-height: 0;
+        position: relative;
+        z-index: 1;
+        padding: 0.86rem 0.88rem;
+        border-radius: 14px;
+        background:
+            linear-gradient(160deg, rgba(255, 255, 255, 0.26), rgba(255, 255, 255, 0.1) 44%, rgba(255, 255, 255, 0.06)),
+            radial-gradient(circle at 90% 6%, rgba(255, 255, 255, 0.18), transparent 44%);
+        border: 1px solid rgba(255, 255, 255, 0.2);
         backdrop-filter: blur(10px);
+        display: grid;
+        grid-template-columns: 2rem minmax(0, 1fr);
+        column-gap: 0.7rem;
+        row-gap: 0.18rem;
+        align-items: start;
+        box-shadow: 0 14px 26px rgba(6, 16, 30, 0.2);
+        transform: translateZ(0);
+        transition: transform 180ms ease, border-color 200ms ease, box-shadow 220ms ease, background 220ms ease;
+        animation: revealLift 520ms ease-out both;
+    }
+
+    .aspect-card:hover {
+        transform: translateY(-2px) rotateX(1deg) scale(1.01);
+        border-color: rgba(255, 255, 255, 0.4);
+        box-shadow: 0 20px 32px rgba(6, 16, 30, 0.28);
+    }
+
+    .aspect-card::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        pointer-events: none;
+        background: linear-gradient(90deg, rgba(76, 223, 157, 0.35), rgba(76, 223, 157, 0));
+        mask: linear-gradient(#000, #000) left / 4px 100% no-repeat;
+        opacity: 0.9;
+    }
+
+    .aspect-card::after {
+        content: "";
+        position: absolute;
+        inset: auto -24% -52% auto;
+        width: 160px;
+        height: 140px;
+        border-radius: 999px;
+        background: radial-gradient(circle, rgba(76, 223, 157, 0.34), rgba(76, 223, 157, 0));
+        pointer-events: none;
+        opacity: 0.55;
     }
 
     .aspect-icon {
-        width: 2.15rem;
-        height: 2.15rem;
-        border-radius: 12px;
+        width: 2rem;
+        height: 2rem;
+        border-radius: 11px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        background: rgba(255, 255, 255, 0.18);
-        margin-bottom: 0.75rem;
-        font-size: 1rem;
+        background: linear-gradient(145deg, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0.12));
+        font-size: 0.85rem;
+        font-weight: 800;
+        grid-column: 1;
+        grid-row: 1 / span 3;
+        align-self: start;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 8px 16px rgba(8, 20, 36, 0.28);
     }
 
     .aspect-card strong {
         display: block;
         color: #ffffff;
-        font-size: 0.98rem;
-        margin-bottom: 0.35rem;
+        font-size: 0.9rem;
+        margin: 0;
+        line-height: 1.2;
+        grid-column: 2;
+        grid-row: 1;
+    }
+
+    .aspect-meta {
+        display: block;
+        margin: 0;
+        color: rgba(205, 241, 255, 0.96);
+        font-size: 0.72rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        font-weight: 700;
+        grid-column: 2;
+        grid-row: 2;
     }
 
     .aspect-card span {
         display: block;
-        color: rgba(239, 246, 255, 0.83);
-        font-size: 0.9rem;
+        color: rgba(239, 246, 255, 0.84);
+        font-size: 0.82rem;
         line-height: 1.45;
+        grid-column: 2;
+        grid-row: 3;
+        margin: 0;
+        max-width: 30ch;
+    }
+
+    .aspect-card:nth-child(1) {
+        animation-delay: 90ms;
+    }
+
+    .aspect-card:nth-child(2) {
+        animation-delay: 170ms;
+    }
+
+    .aspect-card:nth-child(3) {
+        animation-delay: 250ms;
+    }
+
+    .aspect-card:nth-child(2)::before {
+        background: linear-gradient(90deg, rgba(255, 191, 109, 0.4), rgba(255, 191, 109, 0));
+    }
+
+    .aspect-card:nth-child(3)::before {
+        background: linear-gradient(90deg, rgba(135, 179, 255, 0.42), rgba(135, 179, 255, 0));
+    }
+
+    .aspect-card:nth-child(2)::after {
+        background: radial-gradient(circle, rgba(255, 191, 109, 0.34), rgba(255, 191, 109, 0));
+    }
+
+    .aspect-card:nth-child(3)::after {
+        background: radial-gradient(circle, rgba(135, 179, 255, 0.36), rgba(135, 179, 255, 0));
     }
 
     .login-form-wrap {
-        padding: 2rem;
-        background: var(--surface);
+        position: relative;
+        padding: 1.8rem 1.7rem;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 1), rgba(246, 249, 253, 0.98));
+    }
+
+    .login-form-wrap::before {
+        content: "";
+        position: absolute;
+        inset: 0 auto auto 0;
+        width: 100%;
+        height: 3px;
+        background: linear-gradient(90deg, rgba(20, 118, 212, 0.85), rgba(14, 90, 160, 0.45), transparent 82%);
     }
 
     .login-card-header {
-        margin-bottom: 1.35rem;
-        text-align: center;
+        margin-bottom: 1.2rem;
+        text-align: left;
     }
 
     .login-card-header h2 {
         margin-bottom: 0.35rem;
-        font-size: 1.7rem;
+        font-size: 1.72rem;
+        letter-spacing: -0.024em;
+        color: #0f2a46;
     }
 
     .login-card-header p {
         margin: 0;
-        color: var(--muted);
+        color: var(--login-muted);
+        font-size: 0.95rem;
     }
 
     .login-form {
         display: grid;
-        gap: 1rem;
+        gap: 0.95rem;
     }
 
     .login-form .form-group {
@@ -133,20 +405,120 @@
 
     .login-form label {
         margin-bottom: 0.4rem;
-        font-size: 0.9rem;
+        font-size: 0.84rem;
+        font-weight: 700;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+        color: #324860;
+    }
+
+    .login-form .form-group {
+        position: relative;
     }
 
     .login-form input[type="text"],
     .login-form input[type="password"] {
         height: 50px;
-        border-radius: 14px;
-        background: var(--surface-soft);
-        border-color: rgba(219, 227, 237, 0.95);
+        border-radius: 13px;
+        background: #f7fafd;
+        border-color: var(--login-line);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75);
+        font-size: 0.96rem;
+        transition: border-color 180ms ease, box-shadow 180ms ease, background 180ms ease, transform 120ms ease;
     }
 
     .login-form input[type="text"]:focus,
     .login-form input[type="password"]:focus {
-        background: var(--surface);
+        background: #ffffff;
+        border-color: rgba(20, 118, 212, 0.5);
+        box-shadow: 0 0 0 3px rgba(20, 118, 212, 0.15);
+        transform: translateY(-1px);
+    }
+
+    .login-form input[type="text"]::placeholder,
+    .login-form input[type="password"]::placeholder {
+        color: #8aa0b8;
+    }
+
+    .password-field {
+        position: relative;
+    }
+
+    .password-field .form-control {
+        padding-right: 4.2rem;
+    }
+
+    .password-toggle {
+        position: absolute;
+        top: 50%;
+        right: 0.62rem;
+        transform: translateY(-50%);
+        border: 1px solid var(--login-line);
+        background: #ffffff;
+        border-radius: 10px;
+        font-size: 0.74rem;
+        font-weight: 700;
+        line-height: 1;
+        color: #31506f;
+        padding: 0.36rem 0.5rem;
+        cursor: pointer;
+    }
+
+    .password-toggle:hover {
+        border-color: rgba(20, 118, 212, 0.45);
+        color: #0f5ea7;
+    }
+
+    .caps-warning {
+        margin: 0.45rem 0 0;
+        font-size: 0.8rem;
+        color: #9a5f12;
+        display: none;
+    }
+
+    .caps-warning.visible {
+        display: block;
+    }
+
+    .login-alert {
+        margin: 0 0 0.92rem;
+        padding: 0.7rem 0.8rem;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 187, 99, 0.58);
+        background: linear-gradient(180deg, rgba(255, 244, 226, 0.96), rgba(255, 236, 203, 0.88));
+        color: #6e4312;
+        font-size: 0.86rem;
+        line-height: 1.45;
+    }
+
+    .passkey-button {
+        width: 100%;
+        min-height: 48px;
+        border-radius: 13px;
+        border: 1px solid rgba(164, 190, 218, 0.92);
+        background: linear-gradient(180deg, #f9fcff, #edf5ff);
+        color: #153a61;
+        font-weight: 700;
+        font-size: 0.9rem;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.52rem;
+        margin-top: 0.34rem;
+        transition: transform 0.12s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+    }
+
+    .passkey-button:hover {
+        transform: translateY(-1px);
+        border-color: rgba(20, 118, 212, 0.45);
+        box-shadow: 0 10px 20px rgba(16, 36, 61, 0.09);
+    }
+
+    .passkey-status {
+        margin-top: 0.42rem;
+        font-size: 0.82rem;
+        color: #556d86;
+        min-height: 1.2rem;
     }
 
     .login-meta {
@@ -155,15 +527,15 @@
         justify-content: space-between;
         gap: 0.85rem;
         flex-wrap: wrap;
-        padding-top: 0.2rem;
+        padding-top: 0.15rem;
     }
 
     .remember-wrap {
         display: inline-flex;
         align-items: center;
         gap: 0.55rem;
-        color: var(--muted);
-        font-size: 0.94rem;
+        color: var(--login-muted);
+        font-size: 0.92rem;
     }
 
     .remember-wrap input {
@@ -173,11 +545,12 @@
     }
 
     .secondary-link {
-        color: var(--primary);
+        color: #115fa9;
         text-decoration: none;
-        font-weight: 600;
-        font-size: 0.94rem;
+        font-weight: 700;
+        font-size: 0.92rem;
         white-space: nowrap;
+        text-underline-offset: 3px;
     }
 
     .secondary-link:hover {
@@ -186,27 +559,49 @@
     }
 
     .auth-submit {
+        position: relative;
         width: 100%;
         min-height: 52px;
-        border-radius: 14px;
-        background: linear-gradient(135deg, var(--primary) 0%, #0f5ea7 100%);
-        box-shadow: 0 14px 28px rgba(20, 118, 212, 0.2);
+        border-radius: 13px;
+        background: linear-gradient(135deg, var(--login-accent) 0%, var(--login-accent-deep) 100%);
+        border: 0;
+        box-shadow: 0 16px 30px rgba(20, 118, 212, 0.24);
+        font-weight: 800;
+        letter-spacing: 0.01em;
+        overflow: hidden;
+    }
+
+    .auth-submit::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: -120%;
+        width: 58%;
+        height: 100%;
+        background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.28), transparent);
+        transition: left 260ms ease;
     }
 
     .auth-submit:hover {
-        background: linear-gradient(135deg, var(--primary-hover) 0%, #0c538f 100%);
+        background: linear-gradient(135deg, #1166ba 0%, #0b528f 100%);
+        transform: translateY(-1px);
+    }
+
+    .auth-submit:hover::after {
+        left: 122%;
     }
 
     .login-footer {
-        margin-top: 1.15rem;
-        padding-top: 1rem;
-        border-top: 1px solid var(--border);
-        text-align: center;
-        color: var(--muted);
+        margin-top: 1rem;
+        padding-top: 0.95rem;
+        border-top: 1px solid var(--login-line);
+        text-align: left;
+        color: #405064;
+        font-size: 0.93rem;
     }
 
     .login-footer a {
-        color: var(--primary);
+        color: #115fa9;
         font-weight: 700;
         text-decoration: none;
     }
@@ -216,8 +611,502 @@
         text-underline-offset: 2px;
     }
 
-    @media (max-width: 840px) {
-        .login-aspects { grid-template-columns: 1fr; }
+    .auth-assist {
+        margin-top: 0.85rem;
+        padding: 0.82rem 0.9rem;
+        border-radius: 14px;
+        border: 1px solid rgba(196, 212, 228, 0.95);
+        background: linear-gradient(180deg, #ffffff, #f6faff);
+    }
+
+    .auth-assist strong {
+        display: block;
+        color: #17324f;
+        font-size: 0.88rem;
+        margin-bottom: 0.3rem;
+    }
+
+    .assist-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.55rem 0.85rem;
+        font-size: 0.84rem;
+    }
+
+    .assist-links a {
+        color: #165f9f;
+        font-weight: 700;
+        text-decoration: none;
+    }
+
+    .assist-links a:hover {
+        text-decoration: underline;
+        text-underline-offset: 2px;
+    }
+
+    .login-recovery {
+        margin-top: 0.25rem;
+        padding: 0.85rem 0.95rem;
+        border: 1px solid rgba(205, 217, 229, 0.95);
+        border-radius: 14px;
+        background: linear-gradient(180deg, #ffffff, #f8fbfe);
+        box-shadow: 0 10px 22px rgba(16, 36, 61, 0.06);
+    }
+
+    .login-recovery strong {
+        display: block;
+        color: #12304b;
+        margin-bottom: 0.24rem;
+        font-size: 0.92rem;
+    }
+
+    .login-recovery p {
+        margin: 0;
+        color: #526479;
+        font-size: 0.88rem;
+    }
+
+    .login-divider {
+        display: flex;
+        align-items: center;
+        gap: 0.7rem;
+        margin: 1rem 0 0.9rem;
+        color: #5f7083;
+        font-size: 0.75rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+    }
+
+    .login-divider::before,
+    .login-divider::after {
+        content: "";
+        flex: 1;
+        border-top: 1px solid var(--login-line);
+    }
+
+    .sso-stack {
+        display: grid;
+        gap: 0.65rem;
+    }
+
+    .sso-button {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.6rem;
+        min-height: 50px;
+        padding: 0.72rem 0.95rem;
+        border-radius: 13px;
+        border: 1px solid rgba(205, 217, 229, 0.95);
+        font-weight: 700;
+        font-size: 0.92rem;
+        text-decoration: none;
+        transition: transform 0.12s ease, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+    }
+
+    .sso-button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 12px 24px rgba(16, 36, 61, 0.1);
+    }
+
+    .sso-button.google {
+        background: linear-gradient(180deg, #ffffff, #f8fbff);
+        color: #17324f;
+    }
+
+    .sso-button.google:hover {
+        border-color: rgba(66, 133, 244, 0.45);
+    }
+
+    .sso-button.microsoft {
+        background: linear-gradient(180deg, #ffffff, #f7fbff);
+        color: #16314f;
+    }
+
+    .sso-button.microsoft:hover {
+        border-color: rgba(0, 120, 212, 0.45);
+    }
+
+    .sso-button.okta {
+        background: linear-gradient(180deg, #ffffff, #f7faff);
+        color: #1b3a57;
+    }
+
+    .sso-button.okta:hover {
+        border-color: rgba(0, 102, 204, 0.42);
+    }
+
+    .sso-button.github {
+        background: linear-gradient(140deg, #202833 0%, #11161d 100%);
+        border-color: rgba(17, 22, 29, 0.95);
+        color: #f8fbff;
+    }
+
+    .sso-button.github:hover {
+        border-color: #202833;
+    }
+
+    .sso-button.disabled {
+        opacity: 0.58;
+        cursor: not-allowed;
+        border-style: dashed;
+        box-shadow: none;
+    }
+
+    .sso-button.disabled:hover {
+        transform: none;
+        box-shadow: none;
+    }
+
+    .login-start-panel {
+        margin-top: 1.1rem;
+        padding: 0.96rem;
+        border-radius: 15px;
+        border: 1px solid rgba(174, 205, 235, 0.9);
+        background:
+            radial-gradient(circle at top right, rgba(20, 118, 212, 0.12), transparent 38%),
+            linear-gradient(180deg, #ffffff, #eef6ff);
+        box-shadow: 0 14px 30px rgba(18, 48, 75, 0.08);
+        text-align: left;
+        animation: revealLift 560ms ease-out both;
+        animation-delay: 80ms;
+    }
+
+    .login-start-panel h3 {
+        margin: 0 0 0.32rem;
+        font-size: 1rem;
+        color: #10243d;
+        letter-spacing: -0.01em;
+    }
+
+    .login-start-panel p {
+        margin: 0;
+        color: #45596f;
+        line-height: 1.5;
+        font-size: 0.89rem;
+    }
+
+    .login-start-list {
+        margin: 0.72rem 0 0;
+        padding: 0;
+        list-style: none;
+        display: grid;
+        gap: 0.5rem;
+    }
+
+    .login-start-list li {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.52rem;
+        color: #17324f;
+        font-size: 0.87rem;
+        line-height: 1.42;
+    }
+
+    .login-start-list li::before {
+        content: "";
+        width: 0.56rem;
+        height: 0.56rem;
+        margin-top: 0.36rem;
+        border-radius: 999px;
+        background: linear-gradient(135deg, #1476d4, #0c538f);
+        box-shadow: 0 0 0 4px rgba(20, 118, 212, 0.12);
+        flex: 0 0 auto;
+    }
+
+    .login-start-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.65rem;
+        align-items: center;
+        margin-top: 0.86rem;
+    }
+
+    .login-start-actions .secondary-link {
+        font-size: 0.9rem;
+    }
+
+    .login-note {
+        color: #587088;
+        font-size: 0.84rem;
+    }
+
+    .compliance-footer {
+        margin-top: 1rem;
+        border-top: 1px dashed rgba(176, 201, 226, 0.95);
+        padding-top: 0.72rem;
+    }
+
+    .compliance-footer p {
+        margin: 0;
+        color: #5c7289;
+        font-size: 0.8rem;
+        line-height: 1.45;
+    }
+
+    .compliance-links {
+        margin-top: 0.44rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.55rem 0.85rem;
+        font-size: 0.8rem;
+    }
+
+    .compliance-links a {
+        color: #175f9c;
+        font-weight: 700;
+        text-decoration: none;
+    }
+
+    .compliance-links a:hover {
+        text-decoration: underline;
+    }
+
+    .dev-access-panel {
+        margin-top: 1.1rem;
+        padding: 0.95rem;
+        border-radius: 15px;
+        border: 1px solid rgba(255, 198, 130, 0.9);
+        background:
+            radial-gradient(circle at top right, rgba(255, 182, 71, 0.12), transparent 34%),
+            linear-gradient(180deg, #fffaf2, #fff2dc);
+        box-shadow: 0 14px 30px rgba(86, 52, 14, 0.08);
+        text-align: left;
+        animation: revealLift 560ms ease-out both;
+        animation-delay: 120ms;
+    }
+
+    .dev-access-panel h3 {
+        margin: 0 0 0.3rem;
+        font-size: 0.98rem;
+        color: #5d3410;
+    }
+
+    .dev-access-panel p {
+        margin: 0;
+        color: #745029;
+        font-size: 0.86rem;
+        line-height: 1.45;
+    }
+
+    .dev-credential-grid {
+        margin-top: 0.76rem;
+        display: grid;
+        gap: 0.56rem;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    }
+
+    .dev-credential-card {
+        padding: 0.7rem 0.76rem;
+        border-radius: 12px;
+        border: 1px solid rgba(213, 177, 122, 0.8);
+        background: rgba(255, 255, 255, 0.78);
+        font-size: 0.86rem;
+        transition: transform 130ms ease, box-shadow 180ms ease;
+    }
+
+    .dev-credential-card:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 10px 20px rgba(16, 36, 61, 0.08);
+    }
+
+    .dev-credential-card strong {
+        display: block;
+        color: #5d3410;
+        margin-bottom: 0.18rem;
+    }
+
+    .dev-credential-card code {
+        display: inline-block;
+        margin-top: 0.2rem;
+        padding: 0.14rem 0.4rem;
+        border-radius: 8px;
+        background: rgba(16, 36, 61, 0.08);
+        color: #17324f;
+        font-size: 0.8rem;
+        border: 1px solid rgba(16, 36, 61, 0.08);
+    }
+
+    [data-theme="dark"] .login-shell::before {
+        background:
+            radial-gradient(circle at 8% 4%, rgba(81, 168, 255, 0.2), transparent 34%),
+            radial-gradient(circle at 92% 8%, rgba(177, 31, 63, 0.15), transparent 33%),
+            linear-gradient(180deg, rgba(9, 15, 30, 0), rgba(9, 15, 30, 0.6));
+    }
+
+    [data-theme="dark"] .login-shell {
+        --login-line: rgba(104, 128, 170, 0.45);
+        --login-muted: #b5c8e8;
+    }
+
+    [data-theme="dark"] .login-shell::after {
+        background: radial-gradient(circle, rgba(81, 168, 255, 0.2) 0%, rgba(81, 168, 255, 0.04) 52%, transparent 72%);
+    }
+
+    [data-theme="dark"] .login-card {
+        border-color: rgba(63, 88, 126, 0.75);
+        box-shadow: 0 24px 56px rgba(0, 0, 0, 0.34);
+        background: linear-gradient(180deg, rgba(19, 33, 59, 0.98), rgba(14, 26, 47, 0.98));
+    }
+
+    [data-theme="dark"] .login-form-wrap {
+        background: linear-gradient(180deg, rgba(19, 33, 59, 0.96), rgba(16, 29, 52, 0.98));
+    }
+
+    [data-theme="dark"] .login-form-wrap::before {
+        background: linear-gradient(90deg, rgba(81, 168, 255, 0.92), rgba(81, 168, 255, 0.34), transparent 84%);
+    }
+
+    [data-theme="dark"] .login-card-header p,
+    [data-theme="dark"] .login-footer,
+    [data-theme="dark"] .remember-wrap,
+    [data-theme="dark"] .login-recovery p,
+    [data-theme="dark"] .login-divider,
+    [data-theme="dark"] .login-start-panel p,
+    [data-theme="dark"] .login-note,
+    [data-theme="dark"] .passkey-status,
+    [data-theme="dark"] .compliance-footer p,
+    [data-theme="dark"] .login-form label {
+        color: #b5c8e8;
+    }
+
+    [data-theme="dark"] .login-form input[type="text"],
+    [data-theme="dark"] .login-form input[type="password"] {
+        background: rgba(11, 19, 35, 0.55);
+        border-color: rgba(122, 147, 189, 0.45);
+        color: #eaf3ff;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    }
+
+    [data-theme="dark"] .login-form input[type="text"]::placeholder,
+    [data-theme="dark"] .login-form input[type="password"]::placeholder {
+        color: #8fa9cb;
+    }
+
+    [data-theme="dark"] .password-toggle,
+    [data-theme="dark"] .passkey-button,
+    [data-theme="dark"] .auth-assist,
+    [data-theme="dark"] .sso-button.microsoft,
+    [data-theme="dark"] .sso-button.okta {
+        background: linear-gradient(180deg, rgba(26, 43, 73, 0.96), rgba(19, 33, 59, 0.98));
+        border-color: rgba(92, 121, 166, 0.68);
+        color: #dcecff;
+    }
+
+    [data-theme="dark"] .password-toggle:hover,
+    [data-theme="dark"] .passkey-button:hover {
+        border-color: rgba(81, 168, 255, 0.72);
+        color: #f2f7ff;
+    }
+
+    [data-theme="dark"] .auth-assist strong,
+    [data-theme="dark"] .assist-links a,
+    [data-theme="dark"] .compliance-links a,
+    [data-theme="dark"] .caps-warning {
+        color: #dcecff;
+    }
+
+    [data-theme="dark"] .login-alert {
+        border-color: rgba(255, 187, 99, 0.44);
+        background: linear-gradient(180deg, rgba(77, 52, 23, 0.82), rgba(53, 36, 16, 0.78));
+        color: #ffd9aa;
+    }
+
+    [data-theme="dark"] .login-form input[type="text"]:focus,
+    [data-theme="dark"] .login-form input[type="password"]:focus {
+        border-color: rgba(81, 168, 255, 0.75);
+        box-shadow: 0 0 0 3px rgba(81, 168, 255, 0.2);
+        transform: translateY(-1px);
+    }
+
+    [data-theme="dark"] .login-recovery,
+    [data-theme="dark"] .login-start-panel,
+    [data-theme="dark"] .dev-access-panel,
+    [data-theme="dark"] .sso-button.google {
+        background: linear-gradient(180deg, rgba(26, 43, 73, 0.96), rgba(19, 33, 59, 0.98));
+        border-color: rgba(63, 88, 126, 0.78);
+        color: #e8f1ff;
+    }
+
+    [data-theme="dark"] .login-start-panel h3,
+    [data-theme="dark"] .dev-access-panel h3,
+    [data-theme="dark"] .dev-credential-card strong,
+    [data-theme="dark"] .login-recovery strong,
+    [data-theme="dark"] .dev-credential-card,
+    [data-theme="dark"] .login-start-list li,
+    [data-theme="dark"] .login-card-header h2 {
+        color: #eef6ff;
+    }
+
+    [data-theme="dark"] .dev-credential-card {
+        background: rgba(9, 17, 34, 0.34);
+        border-color: rgba(122, 147, 189, 0.4);
+    }
+
+    [data-theme="dark"] .signal-chip {
+        background: linear-gradient(135deg, rgba(81, 168, 255, 0.22), rgba(81, 168, 255, 0.08));
+        border-color: rgba(81, 168, 255, 0.28);
+    }
+
+    [data-theme="dark"] .aspect-card {
+        background:
+            linear-gradient(160deg, rgba(81, 168, 255, 0.22), rgba(37, 75, 128, 0.16) 44%, rgba(21, 39, 67, 0.3)),
+            radial-gradient(circle at 90% 6%, rgba(255, 255, 255, 0.09), transparent 44%);
+        border-color: rgba(122, 147, 189, 0.34);
+        box-shadow: 0 16px 28px rgba(0, 0, 0, 0.32);
+    }
+
+    [data-theme="dark"] .aspect-meta {
+        color: rgba(190, 221, 255, 0.96);
+    }
+
+    [data-theme="dark"] .aspect-card span {
+        color: rgba(215, 230, 248, 0.9);
+    }
+
+    [data-theme="dark"] .dev-credential-card code {
+        background: rgba(255, 255, 255, 0.06);
+        color: #cfe4ff;
+        border-color: rgba(255, 255, 255, 0.08);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .login-shell::after,
+        .login-card,
+        .login-start-panel,
+        .dev-access-panel {
+            animation: none;
+        }
+
+        .aspect-card,
+        .auth-submit,
+        .passkey-button,
+        .sso-button,
+        .login-form input[type="text"],
+        .login-form input[type="password"] {
+            transition: none;
+        }
+    }
+
+    @media (max-width: 980px) {
+        .login-card {
+            grid-template-columns: 1fr;
+        }
+
+        .login-aspects {
+            grid-template-columns: 1fr 1fr;
+        }
+
+        .login-signals {
+            margin-top: 0.48rem;
+        }
+    }
+
+    @media (max-width: 700px) {
+        .login-aspects {
+            grid-template-columns: 1fr;
+        }
     }
 
     @media (max-width: 560px) {
@@ -227,11 +1116,21 @@
 
         .login-hero,
         .login-form-wrap {
-            padding: 1.25rem;
+            padding: 1.18rem;
         }
 
-        .login-card-header {
-            text-align: left;
+        .login-signals {
+            gap: 0.4rem;
+        }
+
+        .signal-chip {
+            font-size: 0.72rem;
+            padding: 0.32rem 0.52rem;
+        }
+
+        .assist-links,
+        .compliance-links {
+            gap: 0.45rem 0.65rem;
         }
     }
 </style>
@@ -245,20 +1144,29 @@
                 NGO-OMG brings donor management, funds, volunteers, and compliance together in one focused workspace built for real nonprofit operations.
             </p>
 
+            <div class="login-signals" aria-label="Platform trust indicators">
+                <span class="signal-chip"><span class="signal-dot" aria-hidden="true"></span>Live secure session controls</span>
+                <span class="signal-chip">Audit-friendly workflows</span>
+                <span class="signal-chip">Role-based operational access</span>
+            </div>
+
             <div class="login-aspects">
                 <div class="aspect-card">
                     <div class="aspect-icon">1</div>
                     <strong>All core work in one place</strong>
+                    <small class="aspect-meta">Unified workspace</small>
                     <span>Manage donors, donations, funds, and reports from a single streamlined dashboard.</span>
                 </div>
                 <div class="aspect-card">
                     <div class="aspect-icon">2</div>
                     <strong>Operations that stay organized</strong>
+                    <small class="aspect-meta">Operational flow</small>
                     <span>Track tasks, volunteers, and compliance without losing the thread across tools.</span>
                 </div>
                 <div class="aspect-card">
                     <div class="aspect-icon">3</div>
                     <strong>Security and accountability</strong>
+                    <small class="aspect-meta">Trust by design</small>
                     <span>Session-based auth, secure cookies, and audit-friendly controls keep access disciplined.</span>
                 </div>
             </div>
@@ -267,15 +1175,25 @@
         <section class="login-form-wrap">
             <div class="login-card-header">
                 <h2>Welcome back</h2>
-                <p>Use your NGO HomeSuite account to continue.</p>
+                <p>Use your NGO-OMG account to continue.</p>
             </div>
+
+            {% if lockout_active %}
+            <div class="login-alert" role="alert">
+                Sign-in is temporarily locked to protect this account. Please wait about {{ lockout_remaining_minutes }} minute(s), then try again.
+            </div>
+            {% elif failed_attempts_remaining is defined %}
+            <div class="login-alert" role="status">
+                Security notice: {{ failed_attempts_remaining }} attempt(s) remaining before a temporary lockout.
+            </div>
+            {% endif %}
 
             <form method="post" novalidate class="login-form">
                 {{ form.hidden_tag() }}
 
                 <div class="form-group {% if form.username.errors %}error{% endif %}">
                     {{ form.username.label }}
-                    {{ form.username(class='form-control', autocomplete='username', placeholder='Your username') }}
+                    {{ form.username(class='form-control', autocomplete='username', placeholder='Your username or email', autofocus=true) }}
                     {% if form.username.errors %}
                         <div class="error-message">
                             {% for error in form.username.errors %}
@@ -287,7 +1205,11 @@
 
                 <div class="form-group {% if form.password.errors %}error{% endif %}">
                     {{ form.password.label }}
-                    {{ form.password(class='form-control', autocomplete='current-password', placeholder='Your password') }}
+                    <div class="password-field">
+                        {{ form.password(class='form-control js-password-input', autocomplete='current-password', placeholder='Your password') }}
+                        <button type="button" class="password-toggle" id="passwordToggleBtn" aria-label="Show password" aria-pressed="false">Show</button>
+                    </div>
+                    <p class="caps-warning" id="capsWarning" role="status" aria-live="polite">Caps Lock is on.</p>
                     {% if form.password.errors %}
                         <div class="error-message">
                             {% for error in form.password.errors %}
@@ -314,38 +1236,51 @@
                         <span>{{ form.remember_me.label.text }}</span>
                     </label>
                     <a class="secondary-link" href="{{ url_for('auth.register') }}">Create an account</a>
+                    <a class="secondary-link" href="{{ url_for('auth.password_forgot') }}">Forgot password?</a>
                 </div>
 
                 {% if mfa_required %}
-                <div class="login-footer" style="text-align:left;">
+                <div class="login-recovery">
                     <strong>Need to enroll or recover access?</strong>
-                    <div class="mt-1">
+                    <p class="mt-1">
                         <a href="{{ url_for('auth.mfa_setup_page') }}">Open security setup</a>
-                    </div>
+                    </p>
                 </div>
                 {% endif %}
 
                 <div class="form-group">
                     {{ form.submit(class='btn auth-submit') }}
                 </div>
+
+                <button type="button" class="passkey-button" id="passkeySignInBtn">
+                    <span aria-hidden="true">🔐</span>
+                    Sign in with passkey
+                </button>
+                <div class="passkey-status" id="passkeyStatus" role="status" aria-live="polite"></div>
             </form>
 
             <div class="login-footer">
                 <span>Need access? </span><a href="{{ url_for('auth.register') }}">Register here</a>
 
-                        {# ---- Social / SSO login ---- #}
-                        <div style="margin-top:1.25rem;">
-                            <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.85rem;">
-                                <hr style="flex:1;border:none;border-top:1px solid var(--border);">
-                                <span style="font-size:0.82rem;color:var(--muted);white-space:nowrap;">or continue with</span>
-                                <hr style="flex:1;border:none;border-top:1px solid var(--border);">
-                            </div>
-                            <div style="display:flex;flex-direction:column;gap:0.65rem;">
-                                <a href="{{ url_for('auth.oauth_login', provider='google') }}"
-                                   style="display:flex;align-items:center;justify-content:center;gap:0.6rem;
-                                          padding:0.75rem 1rem;border-radius:12px;border:1px solid var(--border);
-                                          background:#fff;color:#1f2937;font-weight:600;font-size:0.94rem;
-                                          text-decoration:none;transition:box-shadow 0.15s;">
+                <div class="auth-assist">
+                    <strong>Need help signing in?</strong>
+                    <div class="assist-links">
+                        {% if support_email %}
+                        <a href="mailto:{{ support_email }}?subject=Login%20support%20request">Contact support</a>
+                        {% endif %}
+                        <a href="{{ url_for('auth.mfa_setup_page') }}">MFA setup and backup codes</a>
+                        {% if status_page_url %}
+                        <a href="{{ status_page_url }}" target="_blank" rel="noopener">Service status</a>
+                        {% endif %}
+                    </div>
+                </div>
+
+                {# ---- Social / SSO login ---- #}
+                {% if not hide_sso_options %}
+                <div class="login-divider">or continue with</div>
+                <div class="sso-stack">
+                    {% if oauth_provider_enabled.get('google') %}
+                    <a href="{{ url_for('auth.oauth_login', provider='google') }}" class="sso-button google">
                                     <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
                                         <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615Z" fill="#4285F4"/>
                                         <path d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18Z" fill="#34A853"/>
@@ -353,21 +1288,244 @@
                                         <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58Z" fill="#EA4335"/>
                                     </svg>
                                     Sign in with Google
-                                </a>
-                                <a href="{{ url_for('auth.oauth_login', provider='github') }}"
-                                   style="display:flex;align-items:center;justify-content:center;gap:0.6rem;
-                                          padding:0.75rem 1rem;border-radius:12px;border:1px solid var(--border);
-                                          background:#24292e;color:#fff;font-weight:600;font-size:0.94rem;
-                                          text-decoration:none;transition:box-shadow 0.15s;">
+                    </a>
+                    {% else %}
+                    <span class="sso-button google disabled" aria-disabled="true" title="Google SSO is not configured on this server">Google SSO not configured</span>
+                    {% endif %}
+
+                    {% if oauth_provider_enabled.get('microsoft') %}
+                    <a href="{{ url_for('auth.oauth_login', provider='microsoft') }}" class="sso-button microsoft">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none">
+                                        <rect x="2" y="2" width="9" height="9" fill="#f25022"/>
+                                        <rect x="13" y="2" width="9" height="9" fill="#7fba00"/>
+                                        <rect x="2" y="13" width="9" height="9" fill="#00a4ef"/>
+                                        <rect x="13" y="13" width="9" height="9" fill="#ffb900"/>
+                                    </svg>
+                                    Sign in with Microsoft
+                    </a>
+                    {% else %}
+                    <span class="sso-button microsoft disabled" aria-disabled="true" title="Microsoft SSO is not configured on this server">Microsoft SSO not configured</span>
+                    {% endif %}
+
+                    {% if oauth_provider_enabled.get('okta') %}
+                    <a href="{{ url_for('auth.oauth_login', provider='okta') }}" class="sso-button okta">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="currentColor">
+                                        <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2Zm4.05 11.08a4.06 4.06 0 0 1-2.16 2.16l1.56 3.74h-2.06L12 15.65l-1.39 3.33H8.55l1.56-3.74a4.06 4.06 0 0 1-2.16-2.16l1.83-.76a2.13 2.13 0 1 0 4.44 0Z"/>
+                                    </svg>
+                                    Sign in with Okta
+                    </a>
+                    {% else %}
+                    <span class="sso-button okta disabled" aria-disabled="true" title="Okta SSO is not configured on this server">Okta SSO not configured</span>
+                    {% endif %}
+
+                    {% if oauth_provider_enabled.get('github') %}
+                    <a href="{{ url_for('auth.oauth_login', provider='github') }}" class="sso-button github">
                                     <svg width="18" height="18" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="currentColor">
                                         <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>
                                     </svg>
                                     Sign in with GitHub
-                                </a>
-                            </div>
+                    </a>
+                    {% else %}
+                    <span class="sso-button github disabled" aria-disabled="true" title="GitHub SSO is not configured on this server">GitHub SSO not configured</span>
+                    {% endif %}
+                </div>
+                {% endif %}
+
+                <div class="login-start-panel">
+                    <h3>Get started faster</h3>
+                    <p>
+                        New teams can create an account, connect their organization, and start managing donors and operations without leaving the workspace.
+                    </p>
+                    <ul class="login-start-list">
+                        <li>Register a new account and begin onboarding in a guided workspace.</li>
+                        <li>Use secure sign-in options with clearer recovery and enrollment paths.</li>
+                        <li>Keep donor, finance, volunteer, and compliance work visible in one system.</li>
+                    </ul>
+                    <div class="login-start-actions">
+                        <a class="secondary-link" href="{{ url_for('auth.register') }}">Create your account</a>
+                        <span class="login-note">Readable contrast, stronger hierarchy, and clearer next steps.</span>
+                    </div>
+                </div>
+
+                <div class="compliance-footer">
+                    <p>Protected sessions, audited access controls, and policy-ready account safeguards for nonprofit operations.</p>
+                    <div class="compliance-links">
+                        {% if privacy_url %}<a href="{{ privacy_url }}" target="_blank" rel="noopener">Privacy</a>{% endif %}
+                        {% if terms_url %}<a href="{{ terms_url }}" target="_blank" rel="noopener">Terms</a>{% endif %}
+                        {% if cookies_url %}<a href="{{ cookies_url }}" target="_blank" rel="noopener">Cookies</a>{% endif %}
+                        {% if status_page_url %}<a href="{{ status_page_url }}" target="_blank" rel="noopener">Status</a>{% endif %}
+                    </div>
+                </div>
+
+                {% if dev_login_credentials %}
+                <div class="dev-access-panel">
+                    <h3>Local admin and dev access</h3>
+                    <p>
+                        In local development, demo users can be provisioned for quick sign-in. If demo seed is enabled, these credentials are available in the local workspace only.
+                    </p>
+                    <div class="dev-credential-grid">
+                        <div class="dev-credential-card">
+                            <strong>Admin</strong>
+                            Username <code>{{ dev_login_credentials.admin_username }}</code><br>
+                            Password <code>{{ dev_login_credentials.admin_password }}</code>
                         </div>
+                        <div class="dev-credential-card">
+                            <strong>Staff</strong>
+                            Username <code>{{ dev_login_credentials.staff_username }}</code><br>
+                            Password <code>{{ dev_login_credentials.staff_password }}</code>
+                        </div>
+                        <div class="dev-credential-card">
+                            <strong>Viewer</strong>
+                            Username <code>{{ dev_login_credentials.viewer_username }}</code><br>
+                            Password <code>{{ dev_login_credentials.viewer_password }}</code>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
             </div>
         </section>
     </div>
 </div>
+
+<script>
+(() => {
+    const passwordInput = document.querySelector('.js-password-input');
+    const toggleBtn = document.getElementById('passwordToggleBtn');
+    const capsWarning = document.getElementById('capsWarning');
+    const passkeyBtn = document.getElementById('passkeySignInBtn');
+    const passkeyStatus = document.getElementById('passkeyStatus');
+    const usernameInput = document.getElementById('username');
+
+    function setPasskeyStatus(message, isError) {
+        if (!passkeyStatus) {
+            return;
+        }
+        passkeyStatus.textContent = message || '';
+        passkeyStatus.style.color = isError ? '#a84d10' : '';
+    }
+
+    if (passwordInput && toggleBtn) {
+        toggleBtn.addEventListener('click', () => {
+            const reveal = passwordInput.type === 'password';
+            passwordInput.type = reveal ? 'text' : 'password';
+            toggleBtn.textContent = reveal ? 'Hide' : 'Show';
+            toggleBtn.setAttribute('aria-label', reveal ? 'Hide password' : 'Show password');
+            toggleBtn.setAttribute('aria-pressed', reveal ? 'true' : 'false');
+            passwordInput.focus();
+        });
+
+        const updateCapsLockState = (event) => {
+            if (!capsWarning) {
+                return;
+            }
+            const capsOn = Boolean(event.getModifierState && event.getModifierState('CapsLock'));
+            capsWarning.classList.toggle('visible', capsOn);
+        };
+
+        passwordInput.addEventListener('keydown', updateCapsLockState);
+        passwordInput.addEventListener('keyup', updateCapsLockState);
+        passwordInput.addEventListener('blur', () => {
+            if (capsWarning) {
+                capsWarning.classList.remove('visible');
+            }
+        });
+    }
+
+    if (!passkeyBtn) {
+        return;
+    }
+
+    if (!window.PublicKeyCredential || !navigator.credentials) {
+        passkeyBtn.disabled = true;
+        setPasskeyStatus('Passkeys are not available in this browser.', true);
+        return;
+    }
+
+    const toBase64Url = (bytes) => {
+        const binary = Array.from(bytes, (b) => String.fromCharCode(b)).join('');
+        return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    };
+
+    const fromBase64Url = (base64url) => {
+        const padded = base64url.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (base64url.length % 4)) % 4);
+        const binary = atob(padded);
+        return Uint8Array.from(binary, (c) => c.charCodeAt(0));
+    };
+
+    const parseCredentialRequestOptions = (options) => {
+        const parsed = { ...options };
+        parsed.challenge = fromBase64Url(options.challenge);
+        if (Array.isArray(options.allowCredentials)) {
+            parsed.allowCredentials = options.allowCredentials.map((item) => ({
+                ...item,
+                id: fromBase64Url(item.id),
+            }));
+        }
+        return parsed;
+    };
+
+    const serializeAssertion = (assertion) => ({
+        id: assertion.id,
+        rawId: toBase64Url(new Uint8Array(assertion.rawId)),
+        type: assertion.type,
+        response: {
+            authenticatorData: toBase64Url(new Uint8Array(assertion.response.authenticatorData)),
+            clientDataJSON: toBase64Url(new Uint8Array(assertion.response.clientDataJSON)),
+            signature: toBase64Url(new Uint8Array(assertion.response.signature)),
+            userHandle: assertion.response.userHandle
+                ? toBase64Url(new Uint8Array(assertion.response.userHandle))
+                : null,
+        },
+    });
+
+    passkeyBtn.addEventListener('click', async () => {
+        const identifier = (usernameInput?.value || '').trim();
+        if (!identifier) {
+            setPasskeyStatus('Enter your username or email first, then try passkey sign-in.', true);
+            if (usernameInput) {
+                usernameInput.focus();
+            }
+            return;
+        }
+
+        passkeyBtn.disabled = true;
+        setPasskeyStatus('Preparing passkey challenge...', false);
+
+        try {
+            const beginRes = await fetch('{{ url_for('auth.webauthn_authenticate_begin') }}', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ identifier }),
+            });
+            const beginPayload = await beginRes.json();
+            if (!beginRes.ok) {
+                throw new Error(beginPayload.error || 'Passkey challenge failed.');
+            }
+
+            const publicKey = parseCredentialRequestOptions(beginPayload.options || {});
+            setPasskeyStatus('Waiting for your security key or device confirmation...', false);
+            const assertion = await navigator.credentials.get({ publicKey });
+            if (!assertion) {
+                throw new Error('No passkey assertion returned.');
+            }
+
+            const completeRes = await fetch('{{ url_for('auth.webauthn_authenticate_complete') }}', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ credential: serializeAssertion(assertion) }),
+            });
+            const completePayload = await completeRes.json();
+            if (!completeRes.ok) {
+                throw new Error(completePayload.error || 'Passkey verification failed.');
+            }
+
+            setPasskeyStatus('Passkey verified. Redirecting...', false);
+            window.location.assign(completePayload.redirect || '{{ url_for('main.dashboard') }}');
+        } catch (error) {
+            setPasskeyStatus(error.message || 'Passkey sign-in failed. Use password and try again.', true);
+            passkeyBtn.disabled = false;
+        }
+    });
+})();
+</script>
 {% endblock %}

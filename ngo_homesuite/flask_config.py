@@ -103,13 +103,29 @@ class Config:
     COPILOT_RATE_LIMIT_PER_MIN = _RUNTIME_SETTINGS.copilot_rate_limit_per_min
     CORS_ALLOWED_ORIGINS = _RUNTIME_SETTINGS.cors_allowed_origins
     ENABLE_DEMO_SEED = _RUNTIME_SETTINGS.enable_demo_seed
+    DEMO_ADMIN_PASSWORD = _RUNTIME_SETTINGS.demo_admin_password
 
     # OAuth / SSO providers
     GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
     GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
     GITHUB_CLIENT_ID = os.environ.get('GITHUB_CLIENT_ID', '')
     GITHUB_CLIENT_SECRET = os.environ.get('GITHUB_CLIENT_SECRET', '')
+    MICROSOFT_CLIENT_ID = os.environ.get('MICROSOFT_CLIENT_ID', '')
+    MICROSOFT_CLIENT_SECRET = os.environ.get('MICROSOFT_CLIENT_SECRET', '')
+    OKTA_CLIENT_ID = os.environ.get('OKTA_CLIENT_ID', '')
+    OKTA_CLIENT_SECRET = os.environ.get('OKTA_CLIENT_SECRET', '')
+    OKTA_SERVER_METADATA_URL = os.environ.get('OKTA_SERVER_METADATA_URL', '')
     OAUTH_REDIRECT_BASE = os.environ.get('OAUTH_REDIRECT_BASE', '')  # e.g. https://app.example.com
+    HIDE_SSO_OPTIONS = os.environ.get('HIDE_SSO_OPTIONS', '1').strip().lower() in {'1', 'true', 'yes', 'on'}
+    SHOW_DEV_LOGIN_CREDENTIALS = os.environ.get('SHOW_DEV_LOGIN_CREDENTIALS', '0').strip().lower() in {'1', 'true', 'yes', 'on'}
+    PASSWORD_RESET_TOKEN_TTL_SECONDS = int(os.environ.get('PASSWORD_RESET_TOKEN_TTL_SECONDS', '3600'))
+
+    # Auth support and compliance links
+    SUPPORT_EMAIL = os.environ.get('SUPPORT_EMAIL', '')
+    STATUS_PAGE_URL = os.environ.get('STATUS_PAGE_URL', '')
+    PRIVACY_URL = os.environ.get('PRIVACY_URL', '')
+    TERMS_URL = os.environ.get('TERMS_URL', '')
+    COOKIES_URL = os.environ.get('COOKIES_URL', '')
 
     # WebAuthn / Passkeys
     WEBAUTHN_RP_ID = os.environ.get('WEBAUTHN_RP_ID', '')

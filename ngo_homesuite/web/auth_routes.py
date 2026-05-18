@@ -6,16 +6,21 @@ Handles user login, registration, logout, and password management.
 
 from flask import Blueprint, render_template, redirect, url_for, flash, request, session, abort, current_app
 import base64
+import hashlib
 import json
+import os
 from authlib.integrations.flask_client import OAuth
 from flask_login import login_user, logout_user, login_required, current_user
 from wtforms import StringField, PasswordField, BooleanField, SubmitField
 from wtforms.validators import DataRequired, Email, EqualTo, ValidationError, Length
 from datetime import datetime, timezone, timedelta
 from flask_wtf import FlaskForm
-from sqlalchemy import select
+from itsdangerous import URLSafeTimedSerializer, BadSignature, BadTimeSignature, SignatureExpired
+from sqlalchemy import select, or_, func
 from urllib.parse import urlparse
 from urllib.parse import quote_plus
+from collections import defaultdict, deque
+from threading import Lock
 from ngo_homesuite.models.core import db, User
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
@@ -25,6 +30,109 @@ _MAX_FAILED_ATTEMPTS = 5
 _LOCKOUT_DURATION_MINUTES = 15
 _MAX_MFA_FAILED_ATTEMPTS = 5
 _MFA_LOCKOUT_DURATION_MINUTES = 15
+_LOGIN_WINDOW_SECONDS = 60
+_LOGIN_RATE_LIMIT = 10
+_FORGOT_WINDOW_SECONDS = 60
+_FORGOT_RATE_LIMIT = 5
+
+_LOGIN_ATTEMPT_BUCKETS: dict[str, deque[datetime]] = defaultdict(deque)
+_FORGOT_ATTEMPT_BUCKETS: dict[str, deque[datetime]] = defaultdict(deque)
+_RATE_LIMIT_LOCK = Lock()
+
+
+def _dev_login_credentials() -> dict[str, str] | None:
+    if not bool(current_app.config.get('SHOW_DEV_LOGIN_CREDENTIALS', False)):
+        return None
+    if not (current_app.config.get('DEBUG') or current_app.config.get('ENABLE_DEMO_SEED')):
+        return None
+    return {
+        'admin_username': 'admin',
+        'admin_password': current_app.config.get('DEMO_ADMIN_PASSWORD', 'admin123!'),
+        'staff_username': 'staff',
+        'staff_password': 'staff123!',
+        'viewer_username': 'viewer',
+        'viewer_password': 'viewer123!',
+    }
+
+
+def _mask_config_value(value: str, *, keep_start: int = 3, keep_end: int = 2) -> str:
+    raw = str(value or '').strip()
+    if not raw:
+        return '(missing)'
+    if len(raw) <= (keep_start + keep_end):
+        return '*' * len(raw)
+    return f"{raw[:keep_start]}{'*' * (len(raw) - keep_start - keep_end)}{raw[-keep_end:]}"
+
+
+def _auth_rate_limited(
+    buckets: dict[str, deque[datetime]],
+    key: str,
+    *,
+    limit: int,
+    window_seconds: int,
+) -> bool:
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    with _RATE_LIMIT_LOCK:
+        queue = buckets[key]
+        cutoff = now - timedelta(seconds=max(1, int(window_seconds)))
+        while queue and queue[0] < cutoff:
+            queue.popleft()
+        if len(queue) >= max(1, int(limit)):
+            return True
+        queue.append(now)
+        return False
+
+
+def _provider_metadata_url(provider_name: str, provider_params: dict, app=None) -> str:
+    config_source = app.config if app is not None else current_app.config
+    if provider_name == 'okta':
+        return str(config_source.get('OKTA_SERVER_METADATA_URL', '')).strip()
+    return str(provider_params.get('server_metadata_url') or '').strip()
+
+
+def _oauth_provider_diagnostics(app=None) -> dict[str, dict]:
+    config_source = app.config if app is not None else current_app.config
+    diagnostics: dict[str, dict] = {}
+    for name, params in _OAUTH_PROVIDERS.items():
+        client_id = str(config_source.get(f'{name.upper()}_CLIENT_ID', '')).strip()
+        client_secret = str(config_source.get(f'{name.upper()}_CLIENT_SECRET', '')).strip()
+        metadata_url = _provider_metadata_url(name, params, app=app)
+
+        reasons: list[str] = []
+        if not client_id:
+            reasons.append('missing_client_id')
+        if not client_secret:
+            reasons.append('missing_client_secret')
+        if name == 'okta' and not metadata_url:
+            reasons.append('missing_okta_metadata_url')
+
+        registered = False
+        if not reasons:
+            try:
+                registered = _oauth.create_client(name) is not None
+            except Exception:
+                registered = False
+                reasons.append('client_registry_error')
+
+        diagnostics[name] = {
+            'configured': not reasons,
+            'registered': registered,
+            'client_id_masked': _mask_config_value(client_id),
+            'client_secret_masked': _mask_config_value(client_secret),
+            'metadata_url': metadata_url,
+            'reasons': reasons,
+            'authorize_path': f"/auth/oauth/{name}",
+            'callback_path': f"/auth/oauth/{name}/callback",
+        }
+    return diagnostics
+
+
+def _oauth_provider_enabled(provider: str) -> bool:
+    """Return True when an OAuth provider client is registered and ready."""
+    try:
+        return _oauth.create_client(provider) is not None
+    except Exception:
+        return False
 
 
 def _is_safe_next_path(next_page: str | None) -> bool:
@@ -62,11 +170,118 @@ def _is_same_origin_request() -> bool:
 
 class LoginForm(FlaskForm):
     """Form for user login."""
-    username = StringField('Username', validators=[DataRequired(), Length(min=3, max=80)])
+    username = StringField('Username or Email', validators=[DataRequired(), Length(min=3, max=120)])
     password = PasswordField('Password', validators=[DataRequired()])
     otp_code = StringField('Verification Code')
     remember_me = BooleanField('Remember Me')
     submit = SubmitField('Sign In')
+
+
+class ForgotPasswordForm(FlaskForm):
+    """Request a password reset link."""
+    email = StringField('Email', validators=[DataRequired(), Email()])
+    submit = SubmitField('Send Reset Link')
+
+
+class ResetPasswordForm(FlaskForm):
+    """Set a new password using a reset token."""
+    password = PasswordField('New Password', validators=[
+        DataRequired(),
+        Length(min=8, message='Password must be at least 8 characters.'),
+    ])
+    password_confirm = PasswordField('Confirm New Password', validators=[
+        DataRequired(),
+        EqualTo('password', message='Passwords must match.'),
+    ])
+    submit = SubmitField('Reset Password')
+
+
+def _password_reset_serializer() -> URLSafeTimedSerializer:
+    secret_key = str(current_app.config.get('SECRET_KEY') or '')
+    return URLSafeTimedSerializer(secret_key=secret_key, salt='password-reset-v1')
+
+
+def _issue_password_reset_token(user: User) -> str:
+    serializer = _password_reset_serializer()
+    pwd_sig = hashlib.sha256(str(user.password_hash or '').encode('utf-8')).hexdigest()[:20]
+    payload = {
+        'uid': int(user.id),
+        'email': str(user.email or '').strip().lower(),
+        'pwd': pwd_sig,
+    }
+    return serializer.dumps(payload)
+
+
+def _resolve_user_from_password_reset_token(token: str) -> User | None:
+    if not token:
+        return None
+    max_age = int(current_app.config.get('PASSWORD_RESET_TOKEN_TTL_SECONDS', 3600))
+    serializer = _password_reset_serializer()
+    try:
+        payload = serializer.loads(token, max_age=max_age)
+    except (BadSignature, BadTimeSignature, SignatureExpired):
+        return None
+
+    user_id = payload.get('uid')
+    email = str(payload.get('email') or '').strip().lower()
+    pwd_sig = str(payload.get('pwd') or '').strip().lower()
+    if not user_id or not email or not pwd_sig:
+        return None
+
+    user = db.session.get(User, int(user_id))
+    if user is None or not bool(user.is_active):
+        return None
+    if str(user.email or '').strip().lower() != email:
+        return None
+
+    current_sig = hashlib.sha256(str(user.password_hash or '').encode('utf-8')).hexdigest()[:20].lower()
+    if current_sig != pwd_sig:
+        return None
+    return user
+
+
+def _dispatch_password_reset_email(email: str, reset_url: str) -> None:
+    """Best-effort local delivery: logs reset URL when SMTP is unavailable."""
+    email = str(email or '').strip().lower()
+    if not email:
+        return
+
+    from email.message import EmailMessage
+    import smtplib
+
+    smtp_host = str(current_app.config.get('MAIL_SERVER') or '').strip()
+    smtp_port = int(current_app.config.get('MAIL_PORT') or 587)
+    smtp_user = str(current_app.config.get('MAIL_USERNAME') or '').strip()
+    smtp_pass = str(current_app.config.get('MAIL_PASSWORD') or '').strip()
+    use_tls = bool(current_app.config.get('MAIL_USE_TLS', True))
+    sender = str(current_app.config.get('DEFAULT_MAIL_SENDER') or smtp_user or 'noreply@localhost').strip()
+
+    subject = 'Reset your NGO HomeSuite password'
+    body = (
+        'A password reset was requested for your account.\n\n'
+        f'Reset link: {reset_url}\n\n'
+        'If you did not request this, you can ignore this message.'
+    )
+
+    if not smtp_host:
+        current_app.logger.info('password_reset_email smtp_unconfigured reset_url=%s email=%s', reset_url, email)
+        return
+
+    message = EmailMessage()
+    message['Subject'] = subject
+    message['From'] = sender
+    message['To'] = email
+    message.set_content(body)
+
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as smtp:
+            if use_tls:
+                smtp.starttls()
+            if smtp_user and smtp_pass:
+                smtp.login(smtp_user, smtp_pass)
+            smtp.send_message(message)
+    except Exception:
+        current_app.logger.exception('password_reset_email delivery_failed reset_url=%s email=%s', reset_url, email)
 
 
 class RegistrationForm(FlaskForm):
@@ -112,9 +327,39 @@ def login():
         return redirect(url_for('main.dashboard'))
     
     form = LoginForm()
+    login_template_context = {
+        'form': form,
+        'dev_login_credentials': _dev_login_credentials(),
+        'hide_sso_options': bool(current_app.config.get('HIDE_SSO_OPTIONS', True)),
+        'oauth_provider_enabled': {
+            name: _oauth_provider_enabled(name) for name in _OAUTH_PROVIDERS
+        },
+        'support_email': str(current_app.config.get('SUPPORT_EMAIL', '')).strip(),
+        'status_page_url': str(current_app.config.get('STATUS_PAGE_URL', '')).strip(),
+        'privacy_url': str(current_app.config.get('PRIVACY_URL', '')).strip(),
+        'terms_url': str(current_app.config.get('TERMS_URL', '')).strip(),
+        'cookies_url': str(current_app.config.get('COOKIES_URL', '')).strip(),
+    }
     if form.validate_on_submit():
+        identifier = str(form.username.data or '').strip()
+        remote_addr = str(request.headers.get('X-Forwarded-For') or request.remote_addr or 'unknown').split(',')[0].strip()
+        rl_key = f"{remote_addr}:{identifier.lower()}"
+        if current_app.config.get('RATELIMIT_ENABLED', True) and _auth_rate_limited(
+            _LOGIN_ATTEMPT_BUCKETS,
+            rl_key,
+            limit=_LOGIN_RATE_LIMIT,
+            window_seconds=_LOGIN_WINDOW_SECONDS,
+        ):
+            flash('Too many login attempts. Please wait a minute and try again.', 'error')
+            return render_template('auth/login.html', **login_template_context), 429
+
         user = db.session.scalars(
-            select(User).where(User.username == form.username.data).limit(1)
+            select(User).where(
+                or_(
+                    User.username == identifier,
+                    func.lower(User.email) == identifier.lower(),
+                )
+            ).limit(1)
         ).first()
 
         if user is not None and user.locked_until is not None:
@@ -126,11 +371,19 @@ def login():
                     f'Try again in {remaining} minute(s).',
                     'error',
                 )
-                return redirect(url_for('auth.login'))
+                login_template_context.update(
+                    {
+                        'lockout_active': True,
+                        'lockout_remaining_minutes': remaining,
+                    }
+                )
+                return render_template('auth/login.html', **login_template_context)
 
         if user is None or not user.check_password(form.password.data):
+            attempts_left = None
             if user is not None:
                 user.failed_login_count = (user.failed_login_count or 0) + 1
+                attempts_left = max(_MAX_FAILED_ATTEMPTS - int(user.failed_login_count or 0), 0)
                 if user.failed_login_count >= _MAX_FAILED_ATTEMPTS:
                     user.locked_until = (
                         datetime.now(timezone.utc).replace(tzinfo=None)
@@ -138,20 +391,26 @@ def login():
                     )
                 db.session.commit()
             flash('Invalid username or password.', 'error')
-            return redirect(url_for('auth.login'))
+            if attempts_left is not None and attempts_left > 0:
+                flash(
+                    f'For security, this account will lock after {attempts_left} more failed attempt(s).',
+                    'warning',
+                )
+                login_template_context['failed_attempts_remaining'] = attempts_left
+            return render_template('auth/login.html', **login_template_context)
         
         if not user.is_active:
             flash('Your account has been deactivated. Please contact support.', 'error')
-            return redirect(url_for('auth.login'))
+            return render_template('auth/login.html', **login_template_context)
         
         otp_code = (request.form.get('otp_code') or '').strip()
         if bool(user.mfa_enabled):
             if user.is_mfa_challenge_locked():
                 flash('Verification temporarily locked after too many failed codes. Try again later.', 'error')
-                return render_template('auth/login.html', form=form, mfa_required=True)
+                return render_template('auth/login.html', mfa_required=True, **login_template_context)
             if not otp_code:
                 flash('Verification code required for this account.', 'error')
-                return render_template('auth/login.html', form=form, mfa_required=True)
+                return render_template('auth/login.html', mfa_required=True, **login_template_context)
             if not user.verify_mfa_code(otp_code):
                 user.register_mfa_challenge_failure(
                     max_attempts=_MAX_MFA_FAILED_ATTEMPTS,
@@ -159,7 +418,7 @@ def login():
                 )
                 db.session.commit()
                 flash('Invalid verification code.', 'error')
-                return render_template('auth/login.html', form=form, mfa_required=True)
+                return render_template('auth/login.html', mfa_required=True, **login_template_context)
             user.reset_mfa_challenge_failures()
 
         # Successful login — clear lockout counters and rotate session.
@@ -178,7 +437,64 @@ def login():
             return redirect(next_page)
         return redirect(url_for('main.dashboard'))
     
-    return render_template('auth/login.html', form=form)
+    return render_template('auth/login.html', **login_template_context)
+
+
+@auth_bp.route('/password/forgot', methods=['GET', 'POST'])
+def password_forgot():
+    """Request password reset link without exposing account existence."""
+    if current_user.is_authenticated:
+        return redirect(url_for('main.dashboard'))
+
+    form = ForgotPasswordForm()
+    if form.validate_on_submit():
+        remote_addr = str(request.headers.get('X-Forwarded-For') or request.remote_addr or 'unknown').split(',')[0].strip()
+        if current_app.config.get('RATELIMIT_ENABLED', True) and _auth_rate_limited(
+            _FORGOT_ATTEMPT_BUCKETS,
+            remote_addr,
+            limit=_FORGOT_RATE_LIMIT,
+            window_seconds=_FORGOT_WINDOW_SECONDS,
+        ):
+            flash('Too many reset requests. Please wait a minute and try again.', 'error')
+            return redirect(url_for('auth.password_forgot'))
+
+        email = str(form.email.data or '').strip().lower()
+        user = db.session.scalars(
+            select(User).where(func.lower(User.email) == email).limit(1)
+        ).first()
+
+        if user is not None and bool(user.is_active):
+            token = _issue_password_reset_token(user)
+            reset_url = url_for('auth.password_reset', token=token, _external=True)
+            _dispatch_password_reset_email(email, reset_url)
+
+        flash('If an account exists for that email, a reset link has been sent.', 'info')
+        return redirect(url_for('auth.login'))
+
+    return render_template('auth/password_forgot.html', form=form)
+
+
+@auth_bp.route('/password/reset/<token>', methods=['GET', 'POST'])
+def password_reset(token: str):
+    """Reset password using signed, time-limited token."""
+    if current_user.is_authenticated:
+        return redirect(url_for('main.dashboard'))
+
+    user = _resolve_user_from_password_reset_token(token)
+    if user is None:
+        flash('This password reset link is invalid or expired.', 'error')
+        return redirect(url_for('auth.password_forgot'))
+
+    form = ResetPasswordForm()
+    if form.validate_on_submit():
+        user.set_password(str(form.password.data or ''))
+        user.failed_login_count = 0
+        user.locked_until = None
+        db.session.commit()
+        flash('Your password has been reset. You can now sign in.', 'success')
+        return redirect(url_for('auth.login'))
+
+    return render_template('auth/password_reset.html', form=form)
 
 
 @auth_bp.route('/register', methods=['GET', 'POST'])
@@ -646,6 +962,15 @@ _OAUTH_PROVIDERS: dict[str, dict] = {
         'server_metadata_url': 'https://accounts.google.com/.well-known/openid-configuration',
         'client_kwargs': {'scope': 'openid email profile'},
     },
+    'microsoft': {
+        'server_metadata_url': 'https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration',
+        'client_kwargs': {'scope': 'openid email profile User.Read'},
+    },
+    'okta': {
+        # Value is overridden from app config during initialization.
+        'server_metadata_url': '',
+        'client_kwargs': {'scope': 'openid email profile'},
+    },
     'github': {
         'access_token_url': 'https://github.com/login/oauth/access_token',
         'access_token_params': None,
@@ -663,8 +988,40 @@ def _init_oauth(app) -> None:
     for name, params in _OAUTH_PROVIDERS.items():
         client_id = app.config.get(f'{name.upper()}_CLIENT_ID', '')
         client_secret = app.config.get(f'{name.upper()}_CLIENT_SECRET', '')
+        provider_params = dict(params)
+        if name == 'okta':
+            okta_metadata_url = str(app.config.get('OKTA_SERVER_METADATA_URL', '')).strip()
+            if not okta_metadata_url:
+                app.logger.info('oauth_provider=%s status=skipped reason=missing_okta_metadata_url', name)
+                continue
+            provider_params['server_metadata_url'] = okta_metadata_url
         if client_id and client_secret:
-            _oauth.register(name=name, client_id=client_id, client_secret=client_secret, **params)
+            _oauth.register(name=name, client_id=client_id, client_secret=client_secret, **provider_params)
+            app.logger.info(
+                'oauth_provider=%s status=registered client_id=%s client_secret=%s',
+                name,
+                _mask_config_value(str(client_id)),
+                _mask_config_value(str(client_secret)),
+            )
+        else:
+            app.logger.info(
+                'oauth_provider=%s status=skipped client_id=%s client_secret=%s',
+                name,
+                _mask_config_value(str(client_id)),
+                _mask_config_value(str(client_secret)),
+            )
+
+
+@auth_bp.get('/oauth/providers')
+def oauth_provider_status():
+    """Return configured/registered status for each OAuth provider.
+
+    Useful for quick backend sanity checks before testing frontend buttons.
+    """
+    return {
+        'providers': _oauth_provider_diagnostics(),
+        'host': request.host_url.rstrip('/'),
+    }, 200
 
 
 def _get_oauth_userinfo(provider_name: str, token: dict) -> tuple[str | None, str | None, str | None]:
@@ -673,7 +1030,7 @@ def _get_oauth_userinfo(provider_name: str, token: dict) -> tuple[str | None, st
     Returns (None, None, None) when the provider response cannot be parsed.
     """
     client = _oauth.create_client(provider_name)
-    if provider_name == 'google':
+    if provider_name in {'google', 'microsoft', 'okta'}:
         userinfo = token.get('userinfo') or client.userinfo()
         uid = str(userinfo.get('sub') or '')
         email = str(userinfo.get('email') or '')
@@ -696,12 +1053,23 @@ def _get_oauth_userinfo(provider_name: str, token: dict) -> tuple[str | None, st
     return (uid or None, email or None, name or '')
 
 
+def _assert_google_oauth_env() -> None:
+    """Fail fast when Google OAuth env vars are missing to avoid silent config drift."""
+    client_id = os.getenv("GOOGLE_CLIENT_ID")
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+    assert client_id, "Missing GOOGLE_CLIENT_ID"
+    assert client_secret, "Missing GOOGLE_CLIENT_SECRET"
+
+
 @auth_bp.get('/oauth/<provider>')
 def oauth_login(provider: str):
     """Redirect to OAuth provider's authorization page."""
     if provider not in _OAUTH_PROVIDERS:
         flash('Unknown OAuth provider.', 'error')
         return redirect(url_for('auth.login'))
+
+    if provider == 'google':
+        _assert_google_oauth_env()
 
     client = _oauth.create_client(provider)
     if client is None:
@@ -719,6 +1087,9 @@ def oauth_callback(provider: str):
         flash('Unknown OAuth provider.', 'error')
         return redirect(url_for('auth.login'))
 
+    if provider == 'google':
+        _assert_google_oauth_env()
+
     client = _oauth.create_client(provider)
     if client is None:
         flash(f'{provider.title()} login is not configured on this server.', 'error')
@@ -727,11 +1098,18 @@ def oauth_callback(provider: str):
     try:
         token = client.authorize_access_token()
     except Exception:
+        current_app.logger.exception('oauth_callback token_exchange_failed provider=%s', provider)
         flash('OAuth authorization failed. Please try again.', 'error')
         return redirect(url_for('auth.login'))
 
     provider_uid, email, display_name = _get_oauth_userinfo(provider, token)
     if not provider_uid or not email:
+        current_app.logger.error(
+            'oauth_callback userinfo_incomplete provider=%s provider_uid=%s email=%s',
+            provider,
+            bool(provider_uid),
+            bool(email),
+        )
         flash('Could not retrieve account information from the provider.', 'error')
         return redirect(url_for('auth.login'))
 

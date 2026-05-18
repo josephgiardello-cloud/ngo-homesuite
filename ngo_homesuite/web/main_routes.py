@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional as TypingOptional
 
-from flask import Blueprint, render_template, redirect, url_for, request, flash, send_file, current_app, Response, session, abort
+from flask import Blueprint, render_template, redirect, url_for, request, flash, send_file, current_app, Response, session, abort, jsonify
 from flask_login import login_required, current_user
 from flask_wtf import FlaskForm
 from werkzeug.exceptions import NotFound
@@ -63,9 +63,111 @@ _DONOR_IMPORT_VALID_TYPES = {'individual', 'corporate', 'foundation', 'anonymous
 _PHOTO_ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
 _PHOTO_MAX_BYTES = 5 * 1024 * 1024
 _PUBLIC_DONATION_MAX_ATTEMPTS_PER_HOUR = 3
+_UI_PROFILE_MAX_ITEMS = 10
+_UI_PROFILE_DEFAULT = {
+    "sidebar_collapsed_groups": {},
+    "favorites": [],
+    "recent": [],
+}
 
 # Track process start time for uptime calculation.
 _PROCESS_START = time.monotonic()
+
+
+def _normalize_ui_nav_item(item: object) -> dict[str, str] | None:
+    if not isinstance(item, dict):
+        return None
+    href = str(item.get("href") or "").strip()
+    if not href.startswith("/"):
+        return None
+    label = str(item.get("label") or "").strip()[:80]
+    icon = str(item.get("icon") or "").strip()[:8]
+    if not label:
+        return None
+    return {
+        "href": href,
+        "label": label,
+        "icon": icon,
+    }
+
+
+def _normalize_ui_profile(raw: object) -> dict[str, object]:
+    payload = raw if isinstance(raw, dict) else {}
+
+    collapsed_raw = payload.get("sidebar_collapsed_groups")
+    collapsed: dict[str, bool] = {}
+    if isinstance(collapsed_raw, dict):
+        for key, value in collapsed_raw.items():
+            group = str(key or "").strip().lower()
+            if not group:
+                continue
+            if len(group) > 40:
+                continue
+            collapsed[group] = bool(value)
+
+    favorites: list[dict[str, str]] = []
+    for item in list(payload.get("favorites") or []):
+        normalized = _normalize_ui_nav_item(item)
+        if normalized and normalized["href"] not in {entry["href"] for entry in favorites}:
+            favorites.append(normalized)
+            if len(favorites) >= _UI_PROFILE_MAX_ITEMS:
+                break
+
+    recent: list[dict[str, str]] = []
+    for item in list(payload.get("recent") or []):
+        normalized = _normalize_ui_nav_item(item)
+        if normalized and normalized["href"] not in {entry["href"] for entry in recent}:
+            recent.append(normalized)
+            if len(recent) >= _UI_PROFILE_MAX_ITEMS:
+                break
+
+    return {
+        "sidebar_collapsed_groups": collapsed,
+        "favorites": favorites,
+        "recent": recent,
+    }
+
+
+def _build_operational_urgency(org_id: int) -> dict[str, int]:
+    from ngo_homesuite.services.task_service import overdue_task_summary
+    from ngo_homesuite.compliance.monitoring import ComplianceMonitoringService
+    from ngo_homesuite.grants.models import GrantApprovalRequest
+
+    try:
+        tasks_summary = overdue_task_summary(org_id)
+        task_count = int(tasks_summary.get("total_overdue", 0) or 0)
+    except Exception:
+        task_count = 0
+
+    approvals_count = 0
+    if current_user.has_role("admin", "staff"):
+        approvals_count = int(
+            db.session.scalar(
+                select(func.count(GrantApprovalRequest.id)).where(
+                    GrantApprovalRequest.organization_id == org_id,
+                    GrantApprovalRequest.status.in_(["pending", "escalated"]),
+                )
+            )
+            or 0
+        )
+
+    try:
+        alerts_payload = ComplianceMonitoringService.check_grant_deadlines(org_id)
+    except Exception:
+        alerts_payload = {}
+    alerts_count = 0
+    if isinstance(alerts_payload, dict):
+        alerts_count = (
+            len(list(alerts_payload.get("critical") or []))
+            + len(list(alerts_payload.get("urgent") or []))
+            + len(list(alerts_payload.get("warning") or []))
+        )
+
+    return {
+        "tasks": max(0, task_count),
+        "approvals": max(0, approvals_count),
+        "alerts": max(0, alerts_count),
+    }
 
 
 def _resolve_event_discount_code(event_id: int, code: str) -> EventDiscountCode | None:
@@ -902,6 +1004,25 @@ def api_semantic_context():
     return {'ok': True, 'context': memory.assemble_context(task=task, limit=6, organization_id=org_id)}
 
 
+@main_bp.route('/api/ui/profile', methods=['GET', 'PATCH'])
+@login_required
+@roles_required('admin', 'staff', 'viewer')
+def ui_profile_api():
+    profile = _normalize_ui_profile(getattr(current_user, "ui_profile_json", None) or _UI_PROFILE_DEFAULT)
+
+    if request.method == 'PATCH':
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({'error': 'JSON object payload is required'}), 400
+        profile = _normalize_ui_profile(payload)
+        current_user.ui_profile_json = profile
+        db.session.commit()
+
+    org = _current_org()
+    urgency = _build_operational_urgency(org.id) if org else {'tasks': 0, 'approvals': 0, 'alerts': 0}
+    return jsonify({'profile': profile, 'urgency': urgency})
+
+
 @main_bp.route('/workflows', methods=['GET'])
 @login_required
 @roles_required('admin', 'staff', 'viewer')
@@ -1356,9 +1477,36 @@ def org_settings():
 def dashboard():
     """User dashboard with summary cards."""
 
+    selected_period = str(request.args.get('period', '30d') or '30d').strip().lower()
+    if selected_period not in {'30d', '90d', 'ytd', 'custom'}:
+        selected_period = '30d'
+
+    start_date_raw = str(request.args.get('start_date', '') or '').strip()
+    end_date_raw = str(request.args.get('end_date', '') or '').strip()
+    custom_start_dt = None
+    custom_end_dt = None
+    if selected_period == 'custom' and start_date_raw and end_date_raw:
+        try:
+            custom_start_dt = datetime.strptime(start_date_raw, '%Y-%m-%d')
+            custom_end_dt = datetime.strptime(end_date_raw, '%Y-%m-%d')
+            if custom_end_dt < custom_start_dt:
+                custom_start_dt = None
+                custom_end_dt = None
+                selected_period = '30d'
+        except ValueError:
+            custom_start_dt = None
+            custom_end_dt = None
+            selected_period = '30d'
+
     org = _current_org()
     if org:
-        summary = ReportingService().organization_dashboard_summary(org.id, recent_donations_limit=5)
+        summary = ReportingService().organization_dashboard_summary(
+            org.id,
+            recent_donations_limit=5,
+            period=selected_period,
+            start_date=custom_start_dt,
+            end_date=custom_end_dt,
+        )
         stats = {
             'organization': org,
             **summary,
@@ -1374,8 +1522,219 @@ def dashboard():
             'total_expenses': 0,
             'net_cashflow': 0,
             'total_funds': 0,
+            'donation_transaction_count': 0,
+            'avg_gift_amount': 0,
+            'recurring_active_plans': 0,
+            'recurring_monthly_commitment': 0,
             'recent_donations': [],
+            'trend_30d': {
+                'donations': 0,
+                'expenses': 0,
+                'net': 0,
+                'donations_delta_pct': 0,
+                'expenses_delta_pct': 0,
+            },
+            'trend_90d': {
+                'donations': 0,
+                'expenses': 0,
+                'net': 0,
+                'donations_delta_pct': 0,
+                'expenses_delta_pct': 0,
+            },
+            'trend_ytd': {
+                'donations': 0,
+                'expenses': 0,
+                'net': 0,
+                'donations_delta_pct': 0,
+                'expenses_delta_pct': 0,
+            },
+            'selected_period': selected_period,
+            'selected_period_label': {
+                '30d': 'Last 30 Days',
+                '90d': 'Last 90 Days',
+                'ytd': 'Year to Date',
+                'custom': 'Custom Range',
+            }.get(selected_period, 'Last 30 Days'),
+            'period_focus': {
+                'donations': 0,
+                'expenses': 0,
+                'net': 0,
+                'donations_delta_pct': 0,
+                'expenses_delta_pct': 0,
+                'net_delta_pct': 0,
+            },
+            'period_focus_series': {
+                'donations': [0, 0, 0, 0, 0, 0],
+                'expenses': [0, 0, 0, 0, 0, 0],
+            },
+            'period_comparison': {
+                'label': '90-Day Run Rate (30D Equivalent)',
+                'donations': 0,
+                'expenses': 0,
+                'net': 0,
+                'donations_delta_pct': 0,
+                'expenses_delta_pct': 0,
+                'net_delta_pct': 0,
+            },
+            'period_comparison_series': {
+                'donations': [0, 0, 0, 0, 0, 0],
+                'expenses': [0, 0, 0, 0, 0, 0],
+            },
+            'custom_range': {
+                'start_date': start_date_raw or None,
+                'end_date': end_date_raw or None,
+            },
+            'monthly_overview': {
+                'labels': [],
+                'donations': [],
+                'expenses': [],
+                'net': [],
+                'max_value': 1,
+            },
+            'category_metrics': {
+                'fundraising': {
+                    'total_donations': 0,
+                    'transactions': 0,
+                    'avg_gift': 0,
+                    'recurring_monthly_commitment': 0,
+                    'score': 0,
+                },
+                'financial_health': {
+                    'net_cashflow': 0,
+                    'expense_ratio_pct': 0,
+                    'net_margin_pct': 0,
+                    'score': 0,
+                },
+                'program_delivery': {
+                    'active_projects': 0,
+                    'active_beneficiaries': 0,
+                    'beneficiaries_per_project': 0,
+                    'score': 0,
+                },
+                'donor_engagement': {
+                    'total_donors': 0,
+                    'active_recurring_plans': 0,
+                    'recurring_penetration_pct': 0,
+                    'score': 0,
+                },
+                'operations': {
+                    'missing_donation_dates': 0,
+                    'days_since_last_donation': 0,
+                    'data_completeness_pct': 0,
+                    'score': 0,
+                },
+            },
+            'goal_progress': {
+                'fundraising_goal': 0,
+                'fundraising_progress': 0,
+                'expense_cap': 0,
+                'expense_progress': 0,
+            },
+            'donor_lifecycle': {
+                'window_days': 30,
+                'current_active_donors': 0,
+                'new_donors': 0,
+                'returning_donors': 0,
+                'retained_donors': 0,
+                'lapsed_donors': 0,
+                'reactivated_donors': 0,
+                'retention_pct': 0,
+                'lapse_pct': 0,
+            },
+            'campaign_attribution': {
+                'top_campaigns': [],
+                'attributed_amount': 0,
+                'unattributed_amount': 0,
+                'unattributed_donations': 0,
+                'coverage_pct': 0,
+            },
+            'budget_variance': {
+                'window_label': 'Last 30 Days',
+                'project_budget_total': 0,
+                'project_spent_total': 0,
+                'project_variance_total': 0,
+                'over_budget_projects': 0,
+                'top_projects': [],
+            },
+            'forecast': {
+                'month_label': datetime.utcnow().strftime('%B %Y'),
+                'days_elapsed': 0,
+                'days_in_month': 0,
+                'mtd_donations': 0,
+                'mtd_expenses': 0,
+                'donation_daily_run_rate': 0,
+                'expense_daily_run_rate': 0,
+                'projected_month_donations': 0,
+                'projected_month_expenses': 0,
+                'projected_month_net': 0,
+            },
+            'donor_cohorts': {
+                'labels': [],
+                'new': [],
+                'returning': [],
+                'retained': [],
+            },
+            'alerts': [],
+            'data_freshness': {
+                'generated_at': None,
+                'latest_donation_date': None,
+            },
+            'data_quality': {
+                'missing_donation_dates': 0,
+            },
         }
+
+    period_params: dict[str, str] = {'period': selected_period}
+    if selected_period == 'custom' and stats.get('custom_range', {}).get('start_date') and stats.get('custom_range', {}).get('end_date'):
+        period_params['start_date'] = str(stats['custom_range']['start_date'])
+        period_params['end_date'] = str(stats['custom_range']['end_date'])
+    export_url = url_for('main.dashboard_export', **period_params)
+
+    metric_map = {
+        'donor_count': {
+            'label': 'Donors',
+            'value': str(stats['donor_count']),
+            'link': url_for('main.donors_list'),
+        },
+        'beneficiary_count': {
+            'label': 'Active Beneficiaries',
+            'value': str(stats['beneficiary_count']),
+            'link': url_for('main.beneficiaries_list'),
+        },
+        'project_count': {
+            'label': 'Active Projects',
+            'value': str(stats['project_count']),
+            'link': url_for('main.projects_dashboard', **period_params),
+        },
+        'total_donations': {
+            'label': 'Total Donations',
+            'value': f"${stats['total_donations']:.2f}",
+            'link': url_for('main.donations_list', **period_params),
+        },
+        'total_budget': {
+            'label': 'Project Budget',
+            'value': f"${stats['total_budget']:.2f}",
+            'link': url_for('main.projects_dashboard', **period_params),
+        },
+        'total_expenses': {
+            'label': 'Total Expenses',
+            'value': f"${stats['total_expenses']:.2f}",
+            'link': url_for('main.expenses_list', **period_params),
+        },
+        'total_funds': {
+            'label': 'Active Funds',
+            'value': str(stats['total_funds']),
+            'link': url_for('main.funds_list'),
+        },
+    }
+    role = str(getattr(current_user, 'role', 'viewer') or 'viewer')
+    role_card_order = {
+        'admin': ['total_donations', 'total_expenses', 'total_budget', 'total_funds', 'project_count', 'donor_count', 'beneficiary_count'],
+        'staff': ['project_count', 'beneficiary_count', 'donor_count', 'total_donations', 'total_expenses', 'total_funds', 'total_budget'],
+        'volunteer': ['beneficiary_count', 'project_count', 'donor_count', 'total_donations', 'total_funds', 'total_expenses', 'total_budget'],
+        'viewer': ['donor_count', 'beneficiary_count', 'project_count', 'total_donations', 'total_budget', 'total_expenses', 'total_funds'],
+    }
+    ordered_metric_cards = [metric_map[key] for key in role_card_order.get(role, role_card_order['viewer']) if key in metric_map]
     
     ai_context = {
         'active_page': 'dashboard',
@@ -1386,7 +1745,83 @@ def dashboard():
         'project_count': stats['project_count'],
         'total_funds': stats['total_funds'],
     }
-    return render_template('dashboard.html', stats=stats, active_page='dashboard', ai_context=ai_context)
+    return render_template(
+        'dashboard.html',
+        stats=stats,
+        active_page='dashboard',
+        ai_context=ai_context,
+        metric_cards=ordered_metric_cards,
+        dashboard_role=role,
+        selected_period=selected_period,
+        selected_start_date=stats.get('custom_range', {}).get('start_date') or start_date_raw,
+        selected_end_date=stats.get('custom_range', {}).get('end_date') or end_date_raw,
+        export_url=export_url,
+        period_params=period_params,
+    )
+
+
+@main_bp.route('/dashboard/export')
+@login_required
+def dashboard_export() -> Response:
+    """Export the current dashboard snapshot as JSON."""
+    selected_period = str(request.args.get('period', '30d') or '30d').strip().lower()
+    if selected_period not in {'30d', '90d', 'ytd', 'custom'}:
+        selected_period = '30d'
+
+    start_date_raw = str(request.args.get('start_date', '') or '').strip()
+    end_date_raw = str(request.args.get('end_date', '') or '').strip()
+    custom_start_dt = None
+    custom_end_dt = None
+    if selected_period == 'custom' and start_date_raw and end_date_raw:
+        try:
+            custom_start_dt = datetime.strptime(start_date_raw, '%Y-%m-%d')
+            custom_end_dt = datetime.strptime(end_date_raw, '%Y-%m-%d')
+            if custom_end_dt < custom_start_dt:
+                custom_start_dt = None
+                custom_end_dt = None
+                selected_period = '30d'
+        except ValueError:
+            custom_start_dt = None
+            custom_end_dt = None
+            selected_period = '30d'
+
+    org = _current_org()
+    if not org:
+        return Response(
+            json.dumps({'error': 'No organization found for current user'}),
+            status=400,
+            mimetype='application/json',
+        )
+
+    summary = ReportingService().organization_dashboard_summary(
+        org.id,
+        recent_donations_limit=5,
+        period=selected_period,
+        start_date=custom_start_dt,
+        end_date=custom_end_dt,
+    )
+    payload = {
+        'organization': {
+            'id': org.id,
+            'name': org.name,
+        },
+        'filters': {
+            'period': selected_period,
+            'start_date': start_date_raw or None,
+            'end_date': end_date_raw or None,
+            'generated_at': datetime.utcnow().isoformat(timespec='seconds'),
+        },
+        'summary': summary,
+    }
+    filename = f"dashboard-snapshot-{selected_period}-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}.json"
+    return Response(
+        json.dumps(payload, default=str, indent=2),
+        status=200,
+        mimetype='application/json',
+        headers={
+            'Content-Disposition': f'attachment; filename="{filename}"',
+        },
+    )
 
 
 @main_bp.route('/activity')
@@ -1414,6 +1849,9 @@ def tony_scoring():
     if not org:
         flash('No organization found for your account.', 'error')
         return redirect(url_for('main.dashboard'))
+
+    if 'tony.tony_home' in current_app.view_functions:
+        return redirect(url_for('tony.tony_home'))
 
     return render_template(
         'tony_scoring.html',

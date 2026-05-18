@@ -183,6 +183,36 @@ ngo-homesuite/
    # Edit .env with your settings
    ```
 
+### Configure One-Click SSO Login
+
+The login page supports Google, GitHub, Microsoft, and Okta. A provider becomes clickable when its required variables are set in `.env`.
+
+Required variables per provider:
+- Google: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
+- GitHub: `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`
+- Microsoft: `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`
+- Okta: `OKTA_CLIENT_ID`, `OKTA_CLIENT_SECRET`, `OKTA_SERVER_METADATA_URL`
+
+Optional links used by the login page help/compliance area:
+- `SUPPORT_EMAIL`
+- `STATUS_PAGE_URL`
+- `PRIVACY_URL`
+- `TERMS_URL`
+- `COOKIES_URL`
+
+Use callback URLs in each provider app registration like:
+- `http://127.0.0.1:5000/auth/oauth/google/callback`
+- `http://127.0.0.1:5000/auth/oauth/github/callback`
+- `http://127.0.0.1:5000/auth/oauth/microsoft/callback`
+- `http://127.0.0.1:5000/auth/oauth/okta/callback`
+
+If you run on a different host/port, replace the base URL accordingly.
+
+Quick backend sanity check before testing buttons:
+- `GET /auth/oauth/providers`
+
+This endpoint reports each provider's configured and registered state, masked client values, and expected authorize/callback paths.
+
 ### Database Setup
 
 #### Quick Demo (SQLite)
