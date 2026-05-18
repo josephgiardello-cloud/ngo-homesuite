@@ -16,6 +16,7 @@ REQ_FILES = [
     "requirements-ai.txt",
     "requirements-cloud.txt",
 ]
+REQ_DEV_FILE = "requirements-dev.txt"
 
 
 def _normalize_name(spec: str) -> str:
@@ -47,8 +48,10 @@ def main() -> int:
     pyproject_path = root / "pyproject.toml"
     pyproject = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
     deps = pyproject.get("project", {}).get("dependencies", [])
+    dev_deps = pyproject.get("project", {}).get("optional-dependencies", {}).get("dev", [])
 
     pyproject_specs = {_normalize_name(dep): _normalize_spec(dep) for dep in deps}
+    pyproject_dev_specs = {_normalize_name(dep): _normalize_spec(dep) for dep in dev_deps}
 
     required_specs: dict[str, str] = {}
     for rel in REQ_FILES:
@@ -78,6 +81,33 @@ def main() -> int:
         if mismatched:
             print("Version/specifier drift:")
             for item in mismatched:
+                print(f"  - {item}")
+        return 1
+
+    req_dev_specs: dict[str, str] = {}
+    for spec in _iter_requirements(root / REQ_DEV_FILE):
+        name = _normalize_name(spec)
+        if name:
+            req_dev_specs[name] = _normalize_spec(spec)
+
+    dev_missing: list[str] = []
+    dev_mismatched: list[str] = []
+    for name, dev_spec in sorted(pyproject_dev_specs.items()):
+        req_spec = req_dev_specs.get(name)
+        if req_spec is None:
+            dev_missing.append(dev_spec)
+            continue
+        if req_spec != dev_spec:
+            dev_mismatched.append(f"{name}: pyproject={dev_spec} requirements-dev={req_spec}")
+
+    if dev_missing or dev_mismatched:
+        if dev_missing:
+            print("Missing from requirements-dev.txt (declared in pyproject optional dev):")
+            for item in dev_missing:
+                print(f"  - {item}")
+        if dev_mismatched:
+            print("Dev dependency version/specifier drift:")
+            for item in dev_mismatched:
                 print(f"  - {item}")
         return 1
 
