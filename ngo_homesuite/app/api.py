@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from flask import Flask
 
-from ngo_homesuite.app_factory import create_app
+from ngo_homesuite.main import create_app
 
 
 def build_api_app() -> Flask:

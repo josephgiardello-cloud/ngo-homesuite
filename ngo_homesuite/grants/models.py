@@ -157,6 +157,8 @@ class GrantBudgetTransaction(db.Model):
     reference_type = db.Column(db.String(50), nullable=True)  # expense, invoice, manual
     reference_id = db.Column(db.Integer, nullable=True)  # expense_id or similar
     created_by_user_id = db.Column(db.Integer, nullable=True)  # Optional, no FK to avoid model conflicts
+    reconciled_at = db.Column(db.DateTime, nullable=True)
+    reconciled_by_user_id = db.Column(db.Integer, nullable=True)
     created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
 
     def __repr__(self):

@@ -20,7 +20,7 @@ from io import BytesIO
 from openpyxl import Workbook, load_workbook
 
 from ngo_homesuite.models.core import (
-    Organization, Beneficiary, Project, Donation, Donor, Fund, Expense, DonationReceipt, P2PPage, Volunteer, Campaign, db
+    Organization, Beneficiary, Project, Donation, Donor, Fund, Expense, DonationReceipt, P2PPage, Volunteer, Campaign, EventDiscountCode, db
 )
 from ngo_homesuite.services.beneficiary_service import create_beneficiary, get_beneficiary, list_beneficiaries, update_beneficiary
 from ngo_homesuite.services.program_impact_service import list_cases
@@ -62,9 +62,58 @@ _DONOR_IMPORT_MAX_ROWS = 2500
 _DONOR_IMPORT_VALID_TYPES = {'individual', 'corporate', 'foundation', 'anonymous'}
 _PHOTO_ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
 _PHOTO_MAX_BYTES = 5 * 1024 * 1024
+_PUBLIC_DONATION_MAX_ATTEMPTS_PER_HOUR = 3
 
 # Track process start time for uptime calculation.
 _PROCESS_START = time.monotonic()
+
+
+def _resolve_event_discount_code(event_id: int, code: str) -> EventDiscountCode | None:
+    normalized = (code or "").strip().upper()
+    if not normalized:
+        return None
+    row = db.session.scalars(
+        select(EventDiscountCode).where(
+            EventDiscountCode.event_id == int(event_id),
+            func.upper(EventDiscountCode.code) == normalized,
+            EventDiscountCode.is_active.is_(True),
+        ).limit(1)
+    ).first()
+    if row is None:
+        return None
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if row.expires_at and row.expires_at < now:
+        return None
+    if row.usage_limit is not None and int(row.usage_count or 0) >= int(row.usage_limit):
+        return None
+    return row
+
+
+def _discount_amount(base_amount: float, discount: EventDiscountCode | None) -> float:
+    if discount is None:
+        return 0.0
+    dtype = str(discount.discount_type or "").strip().lower()
+    value = float(discount.discount_value or 0.0)
+    if value <= 0:
+        return 0.0
+    if dtype == "percentage":
+        return round(max(0.0, min(base_amount, (base_amount * value) / 100.0)), 2)
+    return round(max(0.0, min(base_amount, value)), 2)
+
+
+def _public_donation_attempts_last_hour(*, org_id: int, donor_email: str) -> int:
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1)
+    count = db.session.scalar(
+        select(func.count(Donation.id)).where(
+            Donation.organization_id == int(org_id),
+            func.lower(Donation.donor_email) == str(donor_email or "").strip().lower(),
+            Donation.payment_method == 'stripe',
+            Donation.purpose == 'Public Stripe donation',
+            Donation.created_at >= cutoff,
+        )
+    )
+    return int(count or 0)
 
 
 @main_bp.route('/health', methods=['GET'])
@@ -1088,6 +1137,33 @@ def public_donate_page():
     return render_template('public/donate.html', campaign=campaign)
 
 
+@main_bp.route('/api/events/<int:event_id>/validate-code', methods=['POST'])
+def validate_event_discount_code(event_id: int):
+    payload = request.get_json(silent=True) or {}
+    code = str(payload.get('code') or '').strip()
+    amount = float(payload.get('amount') or 0.0)
+
+    if not code:
+        return {'valid': False, 'error': 'code is required'}, 400
+    if amount <= 0:
+        return {'valid': False, 'error': 'amount must be greater than zero'}, 400
+
+    discount = _resolve_event_discount_code(event_id, code)
+    if discount is None:
+        return {'valid': False, 'error': 'Invalid or expired discount code'}, 404
+
+    discount_value = _discount_amount(amount, discount)
+    final_amount = round(max(0.0, amount - discount_value), 2)
+    return {
+        'valid': True,
+        'code': discount.code,
+        'discount_type': discount.discount_type,
+        'discount_value': float(discount.discount_value or 0.0),
+        'discount_amount': discount_value,
+        'final_amount': final_amount,
+    }, 200
+
+
 @main_bp.route('/public/donate/create-checkout', methods=['POST'])
 def public_donate_create_checkout():
     org = get_first_active_organization()
@@ -1098,7 +1174,10 @@ def public_donate_create_checkout():
     amount = float(request.form.get('amount', '0') or 0)
     donor_email = (request.form.get('email') or '').strip().lower()
     raw_campaign_id = (request.form.get('campaign_id') or '').strip()
+    raw_event_id = (request.form.get('event_id') or '').strip()
+    discount_code = (request.form.get('discount_code') or '').strip()
     campaign_id = int(raw_campaign_id) if raw_campaign_id.isdigit() else None
+    event_id = int(raw_event_id) if raw_event_id.isdigit() else None
 
     if amount <= 0:
         flash('Amount must be greater than zero.', 'error')
@@ -1106,6 +1185,21 @@ def public_donate_create_checkout():
     if not donor_email:
         flash('Email is required.', 'error')
         return redirect(url_for('main.public_donate_page'))
+    attempts_in_last_hour = _public_donation_attempts_last_hour(org_id=org.id, donor_email=donor_email)
+    if attempts_in_last_hour >= _PUBLIC_DONATION_MAX_ATTEMPTS_PER_HOUR:
+        flash('Too many donation attempts for this email. Please wait and try again later.', 'error')
+        return redirect(url_for('main.public_donate_page'))
+
+    discount = None
+    discount_amount = 0.0
+    final_amount = amount
+    if event_id is not None and discount_code:
+        discount = _resolve_event_discount_code(event_id, discount_code)
+        if discount is None:
+            flash('Invalid or expired discount code.', 'error')
+            return redirect(url_for('main.public_donate_page'))
+        discount_amount = _discount_amount(amount, discount)
+        final_amount = round(max(0.5, amount - discount_amount), 2)
 
     donor_service = DonorService()
     donor, _created = donor_service.find_or_create_by_email(
@@ -1119,14 +1213,18 @@ def public_donate_create_checkout():
     donation = DonationService().create_donation(
         org_id=org.id,
         donor_name=donor.name,
-        amount=amount,
+        amount=final_amount,
         currency='USD',
         donor_email=donor.email,
         donor_id=donor.id,
         campaign_id=campaign_id,
         payment_method='stripe',
         purpose='Public Stripe donation',
-        notes='Pending Stripe checkout',
+        notes=(
+            f'Pending Stripe checkout. Discount code {discount.code} applied: -${discount_amount:.2f}'
+            if discount is not None
+            else 'Pending Stripe checkout'
+        ),
         status='pending',
     )
 
@@ -1143,8 +1241,9 @@ def public_donate_create_checkout():
             org_id=org.id,
             donor_id=donor.id,
             campaign_id=campaign_id,
+            event_id=event_id,
             donation_id=donation.id,
-            amount_cents=int(round(amount * 100)),
+            amount_cents=int(round(final_amount * 100)),
             currency='USD',
             campaign_name=f'Donation to {campaign_slug}',
             success_url=url_for('main.public_donate_success', donation_id=donation.id, _external=True),
@@ -2611,7 +2710,7 @@ def campaign_email_workbench_page():
         overview = ReportingService().financial_overview(org.id)
 
     return render_template(
-        'reports.html',
+        'campaigns/email_workbench.html',
         total_donations=overview['total_donations'],
         total_expenses=overview['total_expenses'],
         net_total=overview['net_total'],

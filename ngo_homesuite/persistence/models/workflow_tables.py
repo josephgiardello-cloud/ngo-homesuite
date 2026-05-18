@@ -56,6 +56,7 @@ class WorkflowEventRecord(db.Model):
     aggregate_type = db.Column(db.String(120), nullable=False)
     aggregate_id = db.Column(db.String(64), nullable=False, index=True)
     actor_id = db.Column(db.String(64), nullable=False)
+    version = db.Column(db.Integer, nullable=False, default=1)
     payload_json = db.Column(db.Text, nullable=False, default="{}")
     occurred_at = db.Column(db.String(64), nullable=False, index=True)
 

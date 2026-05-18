@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ngo_homesuite.policy import enforce_error_contract
+
 DB_ENCRYPTION_KEY_ENV = "NGO_HOMESUITE_DB_KEY"
 
 
@@ -189,6 +191,21 @@ def _insert_schema_version_row(conn: sqlite3.Connection, version: int, hash_valu
         )
 
 
+def _plan_hash(applied_versions: list[int], pending: list[PlannedMigration]) -> str:
+    payload = json.dumps(
+        {
+            "applied_versions": list(applied_versions),
+            "pending": [
+                {"version": item.version, "name": item.name, "hash": item.hash}
+                for item in pending
+            ],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def plan_migrations(db_path: str | None = None, migrations_dir: Path | None = None) -> MigrationPlan:
     _guard_encrypted_db_not_supported()
     resolved_db_path = db_path or "ngo_data.db"
@@ -298,6 +315,7 @@ def _restore_backup_if_needed(db_path: str, backup_path: str | None) -> None:
     _emit_migration_event(step="rollback", status="ok", message="Backup restored", db_path=db_path, backup_path=backup_path)
 
 
+@enforce_error_contract
 def auto_migrate(db_path: str | None = None) -> None:
     _guard_encrypted_db_not_supported()
     resolved_db_path = db_path or "ngo_data.db"
@@ -314,6 +332,7 @@ def auto_migrate(db_path: str | None = None) -> None:
     try:
         conn.execute("PRAGMA foreign_keys = ON")
         _ensure_schema_version_table(conn)
+        executed_versions: list[int] = []
         for mf in migration_files:
             version = _migration_version_from_name(mf)
             _emit_migration_event(step="apply", status="start", message="Applying migration", version=version, file=mf.name)
@@ -321,15 +340,19 @@ def auto_migrate(db_path: str | None = None) -> None:
                 hash_val = hashlib.sha256(f.read()).hexdigest()
             sql = mf.read_text(encoding='utf-8')
             try:
-                if version in {12, 13, 19, 20}:
-                    if version == 12:
-                        required_tables = {"donations", "funds"}
-                    elif version == 13:
-                        required_tables = {"recurring_donation_plans"}
-                    elif version == 19:
-                        required_tables = {"users"}
-                    else:
-                        required_tables = {"donors", "campaigns"}
+                precondition_tables = {
+                    12: {"donations", "funds"},
+                    13: {"recurring_donation_plans"},
+                    19: {"users"},
+                    20: {"donors", "campaigns"},
+                    24: {"users"},
+                    26: {"campaigns", "users"},
+                    27: {"events"},
+                    28: {"campaign_email_deliveries"},
+                    29: {"users"},
+                }
+                required_tables = precondition_tables.get(version)
+                if required_tables is not None:
                     names_csv = ", ".join(f"'{name}'" for name in sorted(required_tables))
                     existing_tables = {
                         str(row[0])
@@ -345,8 +368,16 @@ def auto_migrate(db_path: str | None = None) -> None:
                                 'INSERT INTO schema_hash (version, hash, applied_at_utc) VALUES (?, ?, ?)',
                                 (version, hash_val, now_utc),
                             )
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            _emit_migration_event(
+                                step="apply",
+                                status="error",
+                                message="schema_hash insert skipped",
+                                version=version,
+                                file=mf.name,
+                                error=str(exc),
+                                classification="recoverable",
+                            )
                         conn.commit()
                         _emit_migration_event(
                             step="apply",
@@ -367,11 +398,33 @@ def auto_migrate(db_path: str | None = None) -> None:
             try:
                 conn.execute('INSERT INTO schema_hash (version, hash, applied_at_utc) VALUES (?, ?, ?)',
                              (version, hash_val, now_utc))
-            except Exception:
-                pass  # Table may not exist in early migrations
+            except Exception as exc:
+                _emit_migration_event(
+                    step="apply",
+                    status="error",
+                    message="schema_hash update skipped",
+                    version=version,
+                    file=mf.name,
+                    error=str(exc),
+                    classification="recoverable",
+                )
             conn.commit()
+            executed_versions.append(version)
             _emit_migration_event(step="apply", status="ok", message="Applied migration", version=version, file=mf.name)
             print(f"Applied migration {version} ({mf.name}) with hash {hash_val}")
+        plan_hash = _plan_hash(migration_plan.applied_versions + executed_versions, migration_plan.pending)
+        _emit_migration_event(
+            step="apply",
+            status="ok",
+            message="Migration executed",
+            event={
+                "type": "migration_executed",
+                "plan_hash": plan_hash,
+                "drift_detected": False,
+            },
+            plan_hash=plan_hash,
+            drift_detected=False,
+        )
         _emit_migration_event(step="apply", status="ok", message="All migrations applied and verified", pending_count=migration_plan.pending_count)
         print("All migrations applied and verified.")
     except Exception as exc:

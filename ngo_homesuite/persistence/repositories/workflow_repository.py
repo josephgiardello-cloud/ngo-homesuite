@@ -5,6 +5,7 @@ import json
 from ngo_homesuite.persistence.interfaces import UnitOfWorkPort
 from ngo_homesuite.models.core import db
 from ngo_homesuite.persistence.models.workflow_tables import WorkflowInstanceRecord
+from ngo_homesuite.persistence.write_context import current_context
 from ngo_homesuite.shared_kernel import redact_payload
 from ngo_homesuite.workflow_engine import WorkflowInstance
 from ngo_homesuite.workflow_engine.instance import WorkflowStatus
@@ -41,6 +42,8 @@ class WorkflowRepository:
         )
 
     def save(self, instance: WorkflowInstance, *, uow: UnitOfWorkPort | None = None) -> WorkflowInstance:
+        if not current_context.in_write_gate:
+            raise RuntimeError("Write outside WriteGate")
         self._assert_org_id(instance.org_id)
         record = WorkflowInstanceRecord.query.filter_by(instance_id=instance.instance_id).first()
         if record is not None and record.org_id != instance.org_id:

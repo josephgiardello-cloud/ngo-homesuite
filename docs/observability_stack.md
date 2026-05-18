@@ -52,3 +52,16 @@ The baseline rules alert on:
 - Set `LOKI_PUSH_URL` through deployment automation when forwarding logs to managed backends.
 - Keep alert thresholds tuned for your real traffic profile.
 - Route alerts to your incident channel/on-call destination.
+
+## Campaign Email Safety Throttling
+
+Bulk campaign sends now support built-in throttling to reduce deliverability and spam-flag risk.
+
+- `CAMPAIGN_EMAIL_THROTTLE_SECONDS` (default `0.15`): sleep applied after each recipient send attempt.
+- `CAMPAIGN_EMAIL_THROTTLE_CHUNK` (default `50`): recipient batch size before a longer pause.
+- `CAMPAIGN_EMAIL_THROTTLE_CHUNK_PAUSE_SECONDS` (default `0.5`): pause duration after each chunk.
+- `CAMPAIGN_EMAIL_MAX_PER_MINUTE` (default `240`): maximum total sends across all domains per rolling window.
+- `CAMPAIGN_EMAIL_MAX_PER_DOMAIN_PER_MINUTE` (default `120`): maximum sends per recipient domain per rolling window.
+- `CAMPAIGN_EMAIL_RATE_WINDOW_SECONDS` (default `60`): rolling window length used for the minute caps.
+
+These values can be tuned per environment to balance throughput and sender reputation.

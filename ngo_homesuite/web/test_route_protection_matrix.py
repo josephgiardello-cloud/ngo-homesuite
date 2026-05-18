@@ -23,6 +23,7 @@ ROUTE_POLICY_MANIFEST: dict[str, RoutePolicy] = {
     "/admin/compliance/drift": RoutePolicy(access="admin"),
     "/admin/compliance/grant-deadlines": RoutePolicy(access="admin"),
     "/admin/custom-fields/schema": RoutePolicy(access="admin"),
+    "/admin/grants/budget-workbench": RoutePolicy(access="admin"),
     "/admin/org": RoutePolicy(access="admin"),
     "/admin/roles": RoutePolicy(access="admin"),
     "/admin/external-comms/audit": RoutePolicy(access="admin"),
@@ -42,6 +43,9 @@ ROUTE_POLICY_MANIFEST: dict[str, RoutePolicy] = {
     "/api/v1/workflows": RoutePolicy(access="authenticated"),
     "/api/v2/activity/global": RoutePolicy(access="authenticated"),
     "/api/v2/activity/insights": RoutePolicy(access="authenticated"),
+    "/api/v2/campaigns": RoutePolicy(access="authenticated"),
+    "/api/v2/campaigns/email/click": RoutePolicy(access="tokenized_public"),
+    "/api/v2/campaigns/email/open-pixel": RoutePolicy(access="public"),
     "/api/v2/tasks/my": RoutePolicy(access="authenticated"),
         "/api/v2/tasks/reminders": RoutePolicy(access="authenticated"),
     "/api/v2/tasks/board": RoutePolicy(access="authenticated"),
@@ -58,10 +62,10 @@ ROUTE_POLICY_MANIFEST: dict[str, RoutePolicy] = {
     "/api/v2/p2p/leaderboard": RoutePolicy(access="authenticated"),
     "/api/v2/p2p/pages": RoutePolicy(access="authenticated"),
     "/api/v2/smart-groups": RoutePolicy(access="authenticated"),
-        "/api/v2/campaigns": RoutePolicy(access="authenticated"),
     "/api/v2/tasks": RoutePolicy(access="authenticated"),
     "/api/v2/tasks/overdue-summary": RoutePolicy(access="authenticated"),
     "/auth/login": RoutePolicy(access="public"),
+    "/auth/mfa/setup": RoutePolicy(access="authenticated"),
     "/auth/register": RoutePolicy(access="public"),
     "/beneficiaries": RoutePolicy(access="authenticated"),
     "/beneficiaries/new": RoutePolicy(access="authenticated"),
@@ -195,6 +199,11 @@ def test_anonymous_requests_follow_route_policy_manifest(client):
         if policy.access == "public":
             if rv.status_code != 200:
                 failures.append(f"{route} expected 200, got {rv.status_code}")
+            continue
+
+        if policy.access == "tokenized_public":
+            if rv.status_code not in (200, 400):
+                failures.append(f"{route} expected 200/400 for tokenized public endpoint, got {rv.status_code}")
             continue
 
         if policy.access == "probe":

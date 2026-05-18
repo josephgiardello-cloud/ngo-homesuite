@@ -8,7 +8,7 @@ from datetime import datetime
 import re
 from typing import Any
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, render_template, request
 from flask_login import current_user, login_required
 from sqlalchemy import func, select
 
@@ -528,6 +528,17 @@ def grant_budget_summary_route(grant_id: int):
     except GrantNotFound:
         return jsonify({"error": "Grant not found"}), 404
     return jsonify(summary), 200
+
+
+@admin_bp.get("/grants/budget-workbench")
+@login_required
+@roles_required("admin", "staff")
+def grant_budget_workbench_page():
+    """Render the grant budget workbench UI."""
+    return render_template(
+        "admin/grant_budget_workbench.html",
+        active_page="grant_budget_workbench",
+    )
 
 
 @admin_bp.get("/compliance/p2p/<int:page_id>/fraud-score")

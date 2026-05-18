@@ -17,6 +17,7 @@ from flask_migrate import Migrate
 from flask_babel import Babel, lazy_gettext as _l
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from flask_ckeditor import CKEditor
 
 from ngo_homesuite.flask_config import get_config
 from ngo_homesuite.config import get_runtime_settings
@@ -82,6 +83,7 @@ def create_app(config=None):
     db.init_app(app)
     register_rls_listeners(app)
     migrate = Migrate(app, db)
+    ckeditor = CKEditor(app)
     limiter = Limiter(
         key_func=get_remote_address,
         default_limits=[app.config.get('RATELIMIT_DEFAULT', '200 per day, 50 per hour')],
@@ -96,6 +98,8 @@ def create_app(config=None):
         return request.accept_languages.best_match(supported) or 'en'
 
     babel = Babel(app, locale_selector=select_locale)
+
+    app.extensions['ckeditor_extension'] = ckeditor
     
     # Login manager
     login_manager = LoginManager(app)

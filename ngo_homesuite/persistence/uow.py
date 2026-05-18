@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 from ngo_homesuite.models.core import db
 
 
@@ -25,3 +27,13 @@ class SqlAlchemyUnitOfWork:
 
     def rollback(self) -> None:
         db.session.rollback()
+
+    @contextmanager
+    def transaction(self):
+        try:
+            yield self
+        except Exception:
+            self.rollback()
+            raise
+        else:
+            self.commit()
