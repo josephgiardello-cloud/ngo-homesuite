@@ -3,57 +3,267 @@
 {% block title %}Funds - NGO HomeSuite{% endblock %}
 
 {% block content %}
-<h1>Funds</h1>
-<p class="text-muted">Fund allocations used by donations and expenses.</p>
+<style>
+    .funds-shell { display:grid; gap:1rem; }
+    .funds-hero {
+        border:1px solid rgba(22,128,95,0.16);
+        border-radius:20px;
+        padding:1rem 1.1rem;
+        background:
+            radial-gradient(circle at 8% 0%, rgba(22,128,95,0.15), rgba(22,128,95,0) 50%),
+            radial-gradient(circle at 94% 16%, rgba(202,138,4,0.14), rgba(202,138,4,0) 56%),
+            linear-gradient(180deg, rgba(255,255,255,0.99), rgba(248,250,252,0.96));
+        box-shadow: 0 14px 30px rgba(15,23,42,0.06);
+    }
+    .fund-kpi-grid {
+        display:grid;
+        grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+        gap:0.7rem;
+    }
+    .fund-kpi-card {
+        border:1px solid rgba(22,128,95,0.12);
+        border-radius:14px;
+        padding:0.8rem;
+        background:rgba(255,255,255,0.92);
+    }
+    .fund-kpi-label { font-size:0.78rem; color:#667085; text-transform:uppercase; letter-spacing:0.05em; }
+    .fund-kpi-value { font-size:1.2rem; font-weight:650; margin-top:0.22rem; }
+    .funds-filters {
+        border:1px solid rgba(22,128,95,0.12);
+        border-radius:16px;
+        padding:0.95rem;
+        background:linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,252,0.95));
+    }
+    .status-badge {
+        display:inline-flex;
+        align-items:center;
+        padding:0.2rem 0.6rem;
+        border-radius:999px;
+        font-size:0.82rem;
+        border:1px solid rgba(148,163,184,0.35);
+        background:rgba(255,255,255,0.9);
+    }
+    .status-badge.active {
+        border-color: rgba(22,128,95,0.25);
+        color:#166534;
+        background:rgba(22,163,74,0.1);
+    }
+    .status-badge.inactive {
+        border-color: rgba(148,163,184,0.3);
+        color:#475569;
+        background:rgba(148,163,184,0.12);
+    }
+    .sparkline-wrap {
+        width: 84px;
+        height: 30px;
+        border: 1px solid rgba(148,163,184,0.22);
+        border-radius: 8px;
+        background: rgba(248,250,252,0.8);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .sparkline-empty {
+        font-size: 0.72rem;
+        color: #94a3b8;
+    }
+</style>
 
-<div class="mb-3 mt-2">
-    <a href="{{ url_for('main.fund_create') }}" class="btn btn-primary">Add Fund</a>
-    <a href="{{ url_for('main.funds_export', file_type='csv', q=filter_q, status=filter_status) }}" class="btn btn-secondary">Export CSV</a>
-    <a href="{{ url_for('main.funds_export', file_type='xlsx', q=filter_q, status=filter_status) }}" class="btn btn-secondary">Export Excel</a>
-</div>
+<div class="funds-shell">
+    <section class="funds-hero">
+        <div class="actions-row" style="justify-content:space-between; align-items:flex-start; gap:0.8rem; margin-bottom:0.85rem;">
+            <div>
+                <h1 style="margin:0;">Funds</h1>
+                <p class="text-muted" style="margin:0.35rem 0 0;">Track fund-level inflows, outflows, and net position while managing active/inactive allocations.</p>
+            </div>
+            <div class="actions-row">
+                <a href="{{ url_for('main.fund_create') }}" class="btn btn-primary">Add Fund</a>
+                <a href="{{ url_for('main.funds_export', file_type='csv', q=filter_q, status=filter_status) }}" class="btn btn-secondary">Export CSV</a>
+                <a href="{{ url_for('main.funds_export', file_type='xlsx', q=filter_q, status=filter_status) }}" class="btn btn-secondary">Export Excel</a>
+            </div>
+        </div>
+        <div class="fund-kpi-grid">
+            <div class="fund-kpi-card"><div class="fund-kpi-label">Visible Funds</div><div class="fund-kpi-value">{{ summary.total_funds }}</div></div>
+            <div class="fund-kpi-card"><div class="fund-kpi-label">Active</div><div class="fund-kpi-value">{{ summary.active_funds }}</div></div>
+            <div class="fund-kpi-card"><div class="fund-kpi-label">Inactive</div><div class="fund-kpi-value">{{ summary.inactive_funds }}</div></div>
+            <div class="fund-kpi-card"><div class="fund-kpi-label">Total In</div><div class="fund-kpi-value">${{ '%.2f'|format(summary.total_in or 0) }}</div></div>
+            <div class="fund-kpi-card"><div class="fund-kpi-label">Total Out</div><div class="fund-kpi-value">${{ '%.2f'|format(summary.total_out or 0) }}</div></div>
+            <div class="fund-kpi-card"><div class="fund-kpi-label">Net Position</div><div class="fund-kpi-value">${{ '%.2f'|format(summary.net or 0) }}</div></div>
+        </div>
+    </section>
 
-<form method="get" class="mb-3" style="display:grid; gap:0.75rem; grid-template-columns: 1fr 220px auto; align-items:end;">
-    <div class="form-group" style="margin:0;">
-        <label for="q">Search</label>
-        <input type="text" id="q" name="q" value="{{ filter_q }}" placeholder="Fund name or description" />
+    <form method="get" class="funds-filters" style="display:grid; gap:0.75rem; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); align-items:end;">
+        <div class="form-group" style="margin:0;">
+            <label for="q">Search</label>
+            <input type="text" id="q" name="q" value="{{ filter_q }}" placeholder="Fund name or description" />
+        </div>
+        <div class="form-group" style="margin:0;">
+            <label for="status">Status</label>
+            <select id="status" name="status">
+                <option value="" {{ 'selected' if not filter_status else '' }}>All</option>
+                <option value="active" {{ 'selected' if filter_status == 'active' else '' }}>Active</option>
+                <option value="inactive" {{ 'selected' if filter_status == 'inactive' else '' }}>Inactive</option>
+            </select>
+        </div>
+        <div class="form-group" style="margin:0;">
+            <label for="has_activity">Activity</label>
+            <select id="has_activity" name="has_activity">
+                <option value="" {{ 'selected' if not filter_has_activity else '' }}>All</option>
+                <option value="with" {{ 'selected' if filter_has_activity == 'with' else '' }}>With Transactions</option>
+                <option value="without" {{ 'selected' if filter_has_activity == 'without' else '' }}>No Transactions</option>
+            </select>
+        </div>
+        <div class="form-group" style="margin:0;">
+            <label for="sort_by">Sort By</label>
+            <select id="sort_by" name="sort_by">
+                <option value="name" {{ 'selected' if filter_sort_by == 'name' else '' }}>Name</option>
+                <option value="status" {{ 'selected' if filter_sort_by == 'status' else '' }}>Status</option>
+                <option value="updated" {{ 'selected' if filter_sort_by == 'updated' else '' }}>Updated</option>
+                <option value="in" {{ 'selected' if filter_sort_by == 'in' else '' }}>Total In</option>
+                <option value="out" {{ 'selected' if filter_sort_by == 'out' else '' }}>Total Out</option>
+                <option value="net" {{ 'selected' if filter_sort_by == 'net' else '' }}>Net</option>
+                <option value="donations" {{ 'selected' if filter_sort_by == 'donations' else '' }}>Donation Count</option>
+                <option value="expenses" {{ 'selected' if filter_sort_by == 'expenses' else '' }}>Expense Count</option>
+            </select>
+        </div>
+        <div class="form-group" style="margin:0;">
+            <label for="sort_dir">Sort Direction</label>
+            <select id="sort_dir" name="sort_dir">
+                <option value="asc" {{ 'selected' if filter_sort_dir == 'asc' else '' }}>Asc</option>
+                <option value="desc" {{ 'selected' if filter_sort_dir == 'desc' else '' }}>Desc</option>
+            </select>
+        </div>
+        <div class="form-group" style="margin:0;">
+            <label for="trend_window">Trend Window</label>
+            <select id="trend_window" name="trend_window">
+                <option value="30d" {{ 'selected' if filter_trend_window == '30d' else '' }}>Last 30d</option>
+                <option value="90d" {{ 'selected' if filter_trend_window == '90d' else '' }}>Last 90d</option>
+                <option value="ytd" {{ 'selected' if filter_trend_window == 'ytd' else '' }}>YTD</option>
+                <option value="6m" {{ 'selected' if filter_trend_window == '6m' else '' }}>Last 6m</option>
+            </select>
+        </div>
+        <div class="form-group" style="margin:0;">
+            <label for="per_page">Rows / Page</label>
+            <select id="per_page" name="per_page">
+                {% for opt in per_page_options %}
+                <option value="{{ opt }}" {{ 'selected' if per_page == opt else '' }}>{{ opt }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <input type="hidden" name="page" value="1" />
+        <button type="submit" class="btn btn-primary">Apply Filters</button>
+        <a href="{{ url_for('main.funds_list') }}" class="btn btn-secondary">Reset</a>
+    </form>
+
+    {% if funds %}
+    <form id="bulk-fund-form" method="post" action="{{ url_for('main.funds_bulk_status_update') }}" class="funds-filters" style="display:grid; gap:0.75rem; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); align-items:end;">
+        {{ bulk_action_form.csrf_token }}
+        <input type="hidden" name="next_url" value="{{ request.full_path }}" />
+        <div class="form-group" style="margin:0;">
+            <label for="bulk-set-status">Bulk Status</label>
+            <select id="bulk-set-status" name="set_status">
+                <option value="active">Set Active</option>
+                <option value="inactive">Set Inactive</option>
+            </select>
+        </div>
+        <button type="submit" class="btn btn-secondary">Apply To Selected</button>
+        <div class="text-muted" style="font-size:0.85rem;">Select rows below, then apply bulk status change.</div>
+    </form>
+
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th><input type="checkbox" id="select-all-funds" aria-label="Select all funds" /></th>
+                <th>Name</th>
+                <th>Description</th>
+                <th>Status</th>
+                <th>In / Out / Net</th>
+                <th>Transactions</th>
+                <th>Trend (6mo)</th>
+                <th>Updated</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for fund in funds %}
+            {% set metrics = fund_metrics.get(fund.id, {}) %}
+            <tr>
+                <td><input type="checkbox" name="fund_ids" value="{{ fund.id }}" class="fund-select-row" form="bulk-fund-form" aria-label="Select fund {{ fund.id }}" /></td>
+                <td><strong>{{ fund.name }}</strong></td>
+                <td>{{ fund.description or '-' }}</td>
+                <td>
+                    {% if fund.is_active %}
+                    <span class="status-badge active">active</span>
+                    {% else %}
+                    <span class="status-badge inactive">inactive</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <div>In: ${{ '%.2f'|format(metrics.get('amount_in', 0)) }}</div>
+                    <div>Out: ${{ '%.2f'|format(metrics.get('amount_out', 0)) }}</div>
+                    <div><strong>Net: ${{ '%.2f'|format(metrics.get('net', 0)) }}</strong></div>
+                </td>
+                <td>
+                    <a href="{{ url_for('main.donations_list', fund_id=fund.id) }}">{{ metrics.get('donation_count', 0) }} donations</a>
+                    /
+                    <a href="{{ url_for('main.expenses_list', fund_id=fund.id) }}">{{ metrics.get('expense_count', 0) }} expenses</a>
+                </td>
+                <td>
+                    {% if metrics.get('sparkline_points') %}
+                    <span class="sparkline-wrap" title="Monthly net trend: {{ metrics.get('trend_values', []) }}">
+                        <svg width="78" height="24" viewBox="0 0 78 24" role="img" aria-label="6 month trend sparkline">
+                            <polyline fill="none" stroke="#0f766e" stroke-width="2" points="{{ metrics.get('sparkline_points') }}"></polyline>
+                        </svg>
+                    </span>
+                    {% else %}
+                    <span class="sparkline-wrap"><span class="sparkline-empty">n/a</span></span>
+                    {% endif %}
+                </td>
+                <td>{{ fund.updated_at.strftime('%Y-%m-%d') if fund.updated_at else '-' }}</td>
+                <td>
+                    <div class="actions-row">
+                        <a href="{{ url_for('main.fund_edit', fund_id=fund.id) }}" class="btn btn-secondary">Edit</a>
+                        <form method="post" action="{{ url_for('main.fund_status_update', fund_id=fund.id) }}" style="display:inline-flex;">
+                            {{ status_action_form.csrf_token }}
+                            <input type="hidden" name="fund_id" value="{{ fund.id }}" />
+                            <input type="hidden" name="next_url" value="{{ request.full_path }}" />
+                            <input type="hidden" name="set_status" value="{{ 'inactive' if fund.is_active else 'active' }}" />
+                            <button type="submit" class="btn btn-secondary">{{ 'Deactivate' if fund.is_active else 'Activate' }}</button>
+                        </form>
+                    </div>
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
     </div>
-    <div class="form-group" style="margin:0;">
-        <label for="status">Status</label>
-        <select id="status" name="status">
-            <option value="" {{ 'selected' if not filter_status else '' }}>All</option>
-            <option value="active" {{ 'selected' if filter_status == 'active' else '' }}>Active</option>
-            <option value="inactive" {{ 'selected' if filter_status == 'inactive' else '' }}>Inactive</option>
-        </select>
-    </div>
-    <button type="submit" class="btn btn-primary">Apply</button>
-</form>
 
-{% if funds %}
-<div class="table-wrap">
-<table>
-    <thead>
-        <tr>
-            <th>Name</th>
-            <th>Description</th>
-            <th>Status</th>
-            <th>Actions</th>
-        </tr>
-    </thead>
-    <tbody>
-    {% for fund in funds %}
-        <tr>
-            <td>{{ fund.name }}</td>
-            <td>{{ fund.description or '-' }}</td>
-            <td>{{ 'active' if fund.is_active else 'inactive' }}</td>
-            <td><div class="actions-row"><a href="{{ url_for('main.fund_edit', fund_id=fund.id) }}" class="btn btn-secondary">Edit</a></div></td>
-        </tr>
-    {% endfor %}
-    </tbody>
-</table>
+    <div class="actions-row" style="justify-content:flex-end; align-items:center; gap:0.6rem;">
+        {% if page > 1 %}
+        <a class="btn btn-secondary" href="{{ url_for('main.funds_list', q=filter_q, status=filter_status, has_activity=filter_has_activity, trend_window=filter_trend_window, sort_by=filter_sort_by, sort_dir=filter_sort_dir, per_page=per_page, page=page-1) }}">Previous</a>
+        {% endif %}
+        <span class="text-muted">Page {{ page }} of {{ total_pages }}</span>
+        {% if page < total_pages %}
+        <a class="btn btn-secondary" href="{{ url_for('main.funds_list', q=filter_q, status=filter_status, has_activity=filter_has_activity, trend_window=filter_trend_window, sort_by=filter_sort_by, sort_dir=filter_sort_dir, per_page=per_page, page=page+1) }}">Next</a>
+        {% endif %}
+    </div>
+    {% else %}
+    <div class="card">
+        <p>No funds matched this view. Try broadening filters or create a new fund.</p>
+    </div>
+    {% endif %}
 </div>
-{% else %}
-<div class="card">
-    <p>No funds are configured yet.</p>
-</div>
-{% endif %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const selectAll = document.getElementById('select-all-funds');
+    const rowChecks = Array.from(document.querySelectorAll('.fund-select-row'));
+    if (!selectAll || !rowChecks.length) {
+        return;
+    }
+    selectAll.addEventListener('change', function() {
+        rowChecks.forEach(function(cb) { cb.checked = selectAll.checked; });
+    });
+});
+</script>
 {% endblock %}

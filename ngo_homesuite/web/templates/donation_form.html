@@ -59,6 +59,62 @@
         </div>
     </div>
 
+    <details style="margin-top:0.8rem; border:1px dashed rgba(20,118,212,0.25); border-radius:12px; padding:0.7rem; background:rgba(248,250,252,0.72);" {{ 'open' if form.channel.data or form.campaign_id.data or form.is_anonymous.data or form.public_display_name.data or form.soft_credit_name.data or form.tribute_type.data or form.tribute_honoree_name.data or form.tribute_honoree_contact.data or form.channel.errors or form.campaign_id.errors or form.is_anonymous.errors or form.public_display_name.errors or form.soft_credit_name.errors or form.tribute_type.errors or form.tribute_honoree_name.errors or form.tribute_honoree_contact.errors else '' }}>
+        <summary style="cursor:pointer; font-weight:600;">Advanced Attribution (Optional)</summary>
+        <p class="text-muted" style="margin:0.45rem 0 0.75rem;">Use this section for campaign/source tracking, anonymity preferences, tribute gifts, and soft-credit attribution.</p>
+
+        <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));">
+            <div class="form-group {% if form.channel.errors %}error{% endif %}">
+                {{ form.channel.label }}
+                {{ form.channel() }}
+                {% for error in form.channel.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            </div>
+
+            <div class="form-group {% if form.campaign_id.errors %}error{% endif %}">
+                {{ form.campaign_id.label }}
+                {{ form.campaign_id() }}
+                {% for error in form.campaign_id.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            </div>
+
+            <div class="form-group {% if form.public_display_name.errors %}error{% endif %}">
+                {{ form.public_display_name.label }}
+                {{ form.public_display_name() }}
+                {% for error in form.public_display_name.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            </div>
+
+            <div class="form-group {% if form.soft_credit_name.errors %}error{% endif %}">
+                {{ form.soft_credit_name.label }}
+                {{ form.soft_credit_name() }}
+                {% for error in form.soft_credit_name.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            </div>
+
+            <div class="form-group {% if form.tribute_type.errors %}error{% endif %}">
+                {{ form.tribute_type.label }}
+                {{ form.tribute_type() }}
+                {% for error in form.tribute_type.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            </div>
+
+            <div class="form-group {% if form.tribute_honoree_name.errors %}error{% endif %}">
+                {{ form.tribute_honoree_name.label }}
+                {{ form.tribute_honoree_name() }}
+                {% for error in form.tribute_honoree_name.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            </div>
+
+            <div class="form-group {% if form.tribute_honoree_contact.errors %}error{% endif %}">
+                {{ form.tribute_honoree_contact.label }}
+                {{ form.tribute_honoree_contact() }}
+                {% for error in form.tribute_honoree_contact.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            </div>
+        </div>
+
+        <div class="form-group {% if form.is_anonymous.errors %}error{% endif %}" style="margin-top:0.35rem;">
+            <label style="display:flex; align-items:center; gap:0.5rem;">
+                {{ form.is_anonymous() }} {{ form.is_anonymous.label.text }}
+            </label>
+            {% for error in form.is_anonymous.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        </div>
+    </details>
+
     <div class="payment-section" data-payment-section="bank_transfer" hidden>
         <h4 style="margin-top:0;">Bank Transfer Details</h4>
         <p class="text-muted">Enter routing and account numbers for bank transfers. Only masked values are stored in the internal note.</p>

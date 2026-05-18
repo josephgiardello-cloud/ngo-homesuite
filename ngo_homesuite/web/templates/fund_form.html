@@ -3,30 +3,75 @@
 {% block title %}{{ 'Edit Fund' if is_edit else 'Add Fund' }} - NGO HomeSuite{% endblock %}
 
 {% block content %}
-<h1>{{ 'Edit Fund' if is_edit else 'Add Fund' }}</h1>
+<style>
+    .fund-form-shell { display:grid; gap:1rem; max-width:940px; }
+    .fund-form-hero {
+        border:1px solid rgba(22,128,95,0.16);
+        border-radius:18px;
+        padding:0.95rem 1rem;
+        background:
+            radial-gradient(circle at 10% 0%, rgba(22,128,95,0.14), rgba(22,128,95,0) 50%),
+            radial-gradient(circle at 95% 14%, rgba(202,138,4,0.14), rgba(202,138,4,0) 58%),
+            linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,252,0.96));
+    }
+    .fund-form-card {
+        border:1px solid rgba(22,128,95,0.12);
+        border-radius:16px;
+        padding:1rem;
+        background:linear-gradient(180deg, rgba(255,255,255,0.99), rgba(248,250,252,0.95));
+    }
+    .fund-hint-list {
+        margin:0.55rem 0 0;
+        padding-left:1rem;
+        color:#4b5563;
+        font-size:0.92rem;
+    }
+</style>
 
-<form method="post" class="mt-2">
-    {{ form.hidden_tag() }}
+<div class="fund-form-shell">
+    <section class="fund-form-hero">
+        <h1 style="margin:0;">{{ 'Edit Fund' if is_edit else 'Add Fund' }}</h1>
+        <p class="text-muted" style="margin:0.35rem 0 0;">
+            {{ 'Update allocation settings and status for this fund.' if is_edit else 'Create a fund to organize donations and expenses into clear allocation buckets.' }}
+        </p>
+    </section>
 
-    <div class="form-group {% if form.name.errors %}error{% endif %}">
-        {{ form.name.label }}
-        {{ form.name() }}
-        {% for error in form.name.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
-    </div>
+    <form method="post" class="fund-form-card">
+        {{ form.hidden_tag() }}
 
-    <div class="form-group {% if form.is_active.errors %}error{% endif %}">
-        {{ form.is_active.label }}
-        {{ form.is_active() }}
-        {% for error in form.is_active.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
-    </div>
+        <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));">
+            <div class="form-group {% if form.name.errors %}error{% endif %}">
+                {{ form.name.label }}
+                {{ form.name(placeholder='Examples: General Operating, Education Relief, Emergency Response') }}
+                {% for error in form.name.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            </div>
 
-    <div class="form-group {% if form.description.errors %}error{% endif %}">
-        {{ form.description.label }}
-        {{ form.description(rows=5) }}
-        {% for error in form.description.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
-    </div>
+            <div class="form-group {% if form.is_active.errors %}error{% endif %}">
+                {{ form.is_active.label }}
+                {{ form.is_active() }}
+                {% for error in form.is_active.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+            </div>
+        </div>
 
-    {{ form.submit(class_='btn btn-primary') }}
-    <a href="{{ url_for('main.funds_list') }}" class="btn btn-secondary">Cancel</a>
-</form>
+        <div class="form-group {% if form.description.errors %}error{% endif %}">
+            {{ form.description.label }}
+            {{ form.description(rows=5, placeholder='What this fund is for, when to use it, and any internal restrictions...') }}
+            {% for error in form.description.errors %}<div class="error-message">{{ error }}</div>{% endfor %}
+        </div>
+
+        <details style="margin-top:0.65rem; border:1px dashed rgba(22,128,95,0.22); border-radius:12px; padding:0.65rem 0.75rem; background:rgba(248,250,252,0.72);">
+            <summary style="cursor:pointer; font-weight:600;">Fund Naming Tips</summary>
+            <ul class="fund-hint-list">
+                <li>Use mission-aligned names your finance and program teams recognize.</li>
+                <li>Keep one fund per reporting bucket to avoid reconciliation confusion.</li>
+                <li>Set inactive instead of deleting when a fund is no longer in use.</li>
+            </ul>
+        </details>
+
+        <div class="actions-row" style="margin-top:0.95rem;">
+            {{ form.submit(class_='btn btn-primary') }}
+            <a href="{{ url_for('main.funds_list') }}" class="btn btn-secondary">Cancel</a>
+        </div>
+    </form>
+</div>
 {% endblock %}

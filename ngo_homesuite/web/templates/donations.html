@@ -69,9 +69,9 @@
     </section>
 
     <div class="actions-row">
-        <a href="{{ url_for('main.donations_export', file_type='csv', q=filter_q, payment_method=filter_payment_method, status=filter_status, currency=filter_currency, donor_type=filter_donor_type, start_date=filter_start_date, end_date=filter_end_date, sort_by=filter_sort_by, sort_dir=filter_sort_dir, min_amount=filter_min_amount, max_amount=filter_max_amount) }}" class="btn btn-secondary">Export CSV</a>
-        <a href="{{ url_for('main.donations_export', file_type='xlsx', q=filter_q, payment_method=filter_payment_method, status=filter_status, currency=filter_currency, donor_type=filter_donor_type, start_date=filter_start_date, end_date=filter_end_date, sort_by=filter_sort_by, sort_dir=filter_sort_dir, min_amount=filter_min_amount, max_amount=filter_max_amount) }}" class="btn btn-secondary">Export Excel</a>
-        <a href="{{ url_for('main.donations_export', file_type='iif', q=filter_q, payment_method=filter_payment_method, status=filter_status, currency=filter_currency, donor_type=filter_donor_type, start_date=filter_start_date, end_date=filter_end_date, sort_by=filter_sort_by, sort_dir=filter_sort_dir, min_amount=filter_min_amount, max_amount=filter_max_amount) }}" class="btn btn-secondary">Export QuickBooks IIF</a>
+        <a href="{{ url_for('main.donations_export', file_type='csv', q=filter_q, fund_id=filter_fund_id, payment_method=filter_payment_method, status=filter_status, channel=filter_channel, currency=filter_currency, donor_type=filter_donor_type, start_date=filter_start_date, end_date=filter_end_date, sort_by=filter_sort_by, sort_dir=filter_sort_dir, min_amount=filter_min_amount, max_amount=filter_max_amount) }}" class="btn btn-secondary">Export CSV</a>
+        <a href="{{ url_for('main.donations_export', file_type='xlsx', q=filter_q, fund_id=filter_fund_id, payment_method=filter_payment_method, status=filter_status, channel=filter_channel, currency=filter_currency, donor_type=filter_donor_type, start_date=filter_start_date, end_date=filter_end_date, sort_by=filter_sort_by, sort_dir=filter_sort_dir, min_amount=filter_min_amount, max_amount=filter_max_amount) }}" class="btn btn-secondary">Export Excel</a>
+        <a href="{{ url_for('main.donations_export', file_type='iif', q=filter_q, fund_id=filter_fund_id, payment_method=filter_payment_method, status=filter_status, channel=filter_channel, currency=filter_currency, donor_type=filter_donor_type, start_date=filter_start_date, end_date=filter_end_date, sort_by=filter_sort_by, sort_dir=filter_sort_dir, min_amount=filter_min_amount, max_amount=filter_max_amount) }}" class="btn btn-secondary">Export QuickBooks IIF</a>
     </div>
 
     <form method="get" class="filters-card" style="display:grid; gap:0.75rem; grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)); align-items:end;">
@@ -80,38 +80,11 @@
             <input type="text" id="q" name="q" value="{{ filter_q }}" placeholder="Donor, email, reference, purpose" />
         </div>
         <div class="form-group" style="margin:0;">
-            <label for="payment_method">Payment</label>
-            <select id="payment_method" name="payment_method">
-                <option value="" {{ 'selected' if not filter_payment_method else '' }}>All</option>
-                <option value="cash" {{ 'selected' if filter_payment_method == 'cash' else '' }}>Cash</option>
-                <option value="bank_transfer" {{ 'selected' if filter_payment_method == 'bank_transfer' else '' }}>Bank Transfer</option>
-                <option value="credit_card" {{ 'selected' if filter_payment_method == 'credit_card' else '' }}>Credit Card</option>
-            </select>
-        </div>
-        <div class="form-group" style="margin:0;">
             <label for="status">Status</label>
             <select id="status" name="status">
                 <option value="" {{ 'selected' if not filter_status else '' }}>All</option>
                 {% for opt in ['pending', 'received', 'processed', 'receipted', 'failed', 'refunded'] %}
                 <option value="{{ opt }}" {{ 'selected' if filter_status == opt else '' }}>{{ opt|capitalize }}</option>
-                {% endfor %}
-            </select>
-        </div>
-        <div class="form-group" style="margin:0;">
-            <label for="currency">Currency</label>
-            <select id="currency" name="currency">
-                <option value="" {{ 'selected' if not filter_currency else '' }}>All</option>
-                {% for c in available_currencies %}
-                <option value="{{ c }}" {{ 'selected' if filter_currency == c else '' }}>{{ c }}</option>
-                {% endfor %}
-            </select>
-        </div>
-        <div class="form-group" style="margin:0;">
-            <label for="donor_type">Donor Type</label>
-            <select id="donor_type" name="donor_type">
-                <option value="" {{ 'selected' if not filter_donor_type else '' }}>All</option>
-                {% for dt in donor_type_options %}
-                <option value="{{ dt }}" {{ 'selected' if filter_donor_type == dt else '' }}>{{ dt|capitalize }}</option>
                 {% endfor %}
             </select>
         </div>
@@ -131,45 +104,116 @@
             <label for="max_amount">Max Amount</label>
             <input type="number" step="0.01" id="max_amount" name="max_amount" value="{{ filter_max_amount }}" />
         </div>
-        <div class="form-group" style="margin:0;">
-            <label for="sort_by">Sort By</label>
-            <select id="sort_by" name="sort_by">
-                <option value="date" {{ 'selected' if filter_sort_by == 'date' else '' }}>Date</option>
-                <option value="amount" {{ 'selected' if filter_sort_by == 'amount' else '' }}>Amount</option>
-                <option value="donor" {{ 'selected' if filter_sort_by == 'donor' else '' }}>Donor</option>
-                <option value="status" {{ 'selected' if filter_sort_by == 'status' else '' }}>Status</option>
-            </select>
-        </div>
-        <div class="form-group" style="margin:0;">
-            <label for="sort_dir">Sort Direction</label>
-            <select id="sort_dir" name="sort_dir">
-                <option value="desc" {{ 'selected' if filter_sort_dir == 'desc' else '' }}>Desc</option>
-                <option value="asc" {{ 'selected' if filter_sort_dir == 'asc' else '' }}>Asc</option>
-            </select>
-        </div>
-        <div class="form-group" style="margin:0;">
-            <label for="per_page">Rows / Page</label>
-            <select id="per_page" name="per_page">
-                {% for opt in per_page_options %}
-                <option value="{{ opt }}" {{ 'selected' if per_page == opt else '' }}>{{ opt }}</option>
-                {% endfor %}
-            </select>
-        </div>
+
+        <details style="grid-column:1/-1; border:1px dashed rgba(20,118,212,0.2); border-radius:12px; padding:0.6rem 0.7rem; background:rgba(255,255,255,0.72);" {{ 'open' if filter_payment_method or filter_fund_id or filter_channel or filter_currency or filter_donor_type or filter_sort_by != 'date' or filter_sort_dir != 'desc' or per_page != 50 else '' }}>
+            <summary style="cursor:pointer; font-weight:600;">Advanced Filters & View Settings</summary>
+            <div style="display:grid; margin-top:0.7rem; gap:0.75rem; grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)); align-items:end;">
+                <div class="form-group" style="margin:0;">
+                    <label for="payment_method">Payment</label>
+                    <select id="payment_method" name="payment_method">
+                        <option value="" {{ 'selected' if not filter_payment_method else '' }}>All</option>
+                        <option value="cash" {{ 'selected' if filter_payment_method == 'cash' else '' }}>Cash</option>
+                        <option value="bank_transfer" {{ 'selected' if filter_payment_method == 'bank_transfer' else '' }}>Bank Transfer</option>
+                        <option value="credit_card" {{ 'selected' if filter_payment_method == 'credit_card' else '' }}>Credit Card</option>
+                    </select>
+                </div>
+                <div class="form-group" style="margin:0;">
+                    <label for="fund_id">Fund</label>
+                    <select id="fund_id" name="fund_id">
+                        <option value="" {{ 'selected' if not filter_fund_id else '' }}>All</option>
+                        {% for fund in available_funds %}
+                        <option value="{{ fund.id }}" {{ 'selected' if filter_fund_id == fund.id else '' }}>{{ fund.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group" style="margin:0;">
+                    <label for="currency">Currency</label>
+                    <select id="currency" name="currency">
+                        <option value="" {{ 'selected' if not filter_currency else '' }}>All</option>
+                        {% for c in available_currencies %}
+                        <option value="{{ c }}" {{ 'selected' if filter_currency == c else '' }}>{{ c }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group" style="margin:0;">
+                    <label for="channel">Channel</label>
+                    <select id="channel" name="channel">
+                        <option value="" {{ 'selected' if not filter_channel else '' }}>All</option>
+                        {% for ch in available_channels %}
+                        <option value="{{ ch }}" {{ 'selected' if filter_channel == ch else '' }}>{{ ch|replace('_', ' ')|title }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group" style="margin:0;">
+                    <label for="donor_type">Donor Type</label>
+                    <select id="donor_type" name="donor_type">
+                        <option value="" {{ 'selected' if not filter_donor_type else '' }}>All</option>
+                        {% for dt in donor_type_options %}
+                        <option value="{{ dt }}" {{ 'selected' if filter_donor_type == dt else '' }}>{{ dt|capitalize }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group" style="margin:0;">
+                    <label for="sort_by">Sort By</label>
+                    <select id="sort_by" name="sort_by">
+                        <option value="date" {{ 'selected' if filter_sort_by == 'date' else '' }}>Date</option>
+                        <option value="amount" {{ 'selected' if filter_sort_by == 'amount' else '' }}>Amount</option>
+                        <option value="donor" {{ 'selected' if filter_sort_by == 'donor' else '' }}>Donor</option>
+                        <option value="status" {{ 'selected' if filter_sort_by == 'status' else '' }}>Status</option>
+                    </select>
+                </div>
+                <div class="form-group" style="margin:0;">
+                    <label for="sort_dir">Sort Direction</label>
+                    <select id="sort_dir" name="sort_dir">
+                        <option value="desc" {{ 'selected' if filter_sort_dir == 'desc' else '' }}>Desc</option>
+                        <option value="asc" {{ 'selected' if filter_sort_dir == 'asc' else '' }}>Asc</option>
+                    </select>
+                </div>
+                <div class="form-group" style="margin:0;">
+                    <label for="per_page">Rows / Page</label>
+                    <select id="per_page" name="per_page">
+                        {% for opt in per_page_options %}
+                        <option value="{{ opt }}" {{ 'selected' if per_page == opt else '' }}>{{ opt }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+        </details>
+
         <input type="hidden" name="page" value="1" />
         <button type="submit" class="btn btn-primary">Apply Filters</button>
         <a class="btn btn-secondary" href="{{ url_for('main.donations_list') }}">Reset</a>
     </form>
 
     {% if donations %}
+    <form method="post" action="{{ url_for('main.donations_bulk_status_update') }}" class="filters-card" style="display:grid; gap:0.7rem; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); align-items:end;">
+        {{ bulk_action_form.csrf_token }}
+        <input type="hidden" name="next_url" value="{{ request.full_path }}" />
+        <div class="form-group" style="margin:0;">
+            <label for="bulk-status">Bulk Status</label>
+            <select id="bulk-status" name="new_status">
+                <option value="">Select status</option>
+                <option value="received">Received</option>
+                <option value="processed">Processed</option>
+                <option value="receipted">Receipted</option>
+                <option value="failed">Failed</option>
+                <option value="refunded">Refunded</option>
+            </select>
+        </div>
+        <button type="submit" class="btn btn-secondary">Apply To Selected</button>
+        <button type="submit" formaction="{{ url_for('main.donations_bulk_receipt_resend') }}" class="btn btn-secondary">Resend Receipts (Selected)</button>
+        <div class="text-muted" style="font-size:0.85rem;">Select rows below, then run bulk actions.</div>
     <div class="table-wrap">
     <table>
         <thead>
             <tr>
+                <th><input type="checkbox" id="select-all-donations" aria-label="Select all donations" /></th>
                 <th>Date</th>
                 <th>Donor</th>
                 <th>Amount</th>
                 <th>Status</th>
                 <th>Payment</th>
+                <th>Channel</th>
                 <th>Purpose</th>
                 <th>Reference</th>
                 <th>Actions</th>
@@ -178,6 +222,7 @@
         <tbody>
         {% for donation in donations %}
             <tr>
+                <td><input type="checkbox" name="donation_ids" value="{{ donation.id }}" class="donation-select-row" aria-label="Select donation {{ donation.id }}" /></td>
                 <td>{{ donation.donation_date.strftime('%Y-%m-%d') if donation.donation_date else '-' }}</td>
                 <td>
                     <strong>{{ donation.donor_name or '-' }}</strong>
@@ -186,6 +231,7 @@
                 <td>{{ donation.currency or 'USD' }} {{ '%.2f'|format(donation.amount if donation.amount is number else 0) }}</td>
                 <td><span class="status-pill">{{ donation.status|capitalize }}</span></td>
                 <td>{{ donation.payment_method or '-' }}</td>
+                <td>{{ donation.channel|replace('_', ' ')|title if donation.channel else '-' }}</td>
                 <td>{{ donation.purpose or '-' }}</td>
                 <td>{{ donation.reference_number or '-' }}</td>
                 <td>
@@ -193,15 +239,17 @@
                         <a href="{{ url_for('main.donation_receipt', donation_id=donation.id) }}" class="btn btn-secondary">PDF</a>
 
                         {% if donation_next_statuses.get(donation.id) %}
-                        {% for candidate_status in donation_next_statuses.get(donation.id, []) %}
                         <form method="post" action="{{ url_for('main.donation_status_update', donation_id=donation.id) }}" style="display:inline-flex;">
                             {{ row_action_form.csrf_token }}
                             <input type="hidden" name="donation_id" value="{{ donation.id }}" />
-                            <input type="hidden" name="new_status" value="{{ candidate_status }}" />
                             <input type="hidden" name="next_url" value="{{ request.full_path }}" />
-                            <button type="submit" class="btn btn-secondary">Mark {{ candidate_status|capitalize }}</button>
+                            <select name="new_status" aria-label="Choose next status for donation {{ donation.id }}" style="min-width:130px;">
+                                {% for candidate_status in donation_next_statuses.get(donation.id, []) %}
+                                <option value="{{ candidate_status }}">{{ candidate_status|capitalize }}</option>
+                                {% endfor %}
+                            </select>
+                            <button type="submit" class="btn btn-secondary">Update Status</button>
                         </form>
-                        {% endfor %}
                         {% endif %}
 
                         {% if donation.status in ['processed', 'receipted'] %}
@@ -219,14 +267,15 @@
         </tbody>
     </table>
     </div>
+    </form>
 
     <div class="pager">
         {% if page > 1 %}
-        <a class="btn btn-secondary" href="{{ url_for('main.donations_list', q=filter_q, payment_method=filter_payment_method, status=filter_status, currency=filter_currency, donor_type=filter_donor_type, start_date=filter_start_date, end_date=filter_end_date, sort_by=filter_sort_by, sort_dir=filter_sort_dir, min_amount=filter_min_amount, max_amount=filter_max_amount, per_page=per_page, page=page-1) }}">Previous</a>
+        <a class="btn btn-secondary" href="{{ url_for('main.donations_list', q=filter_q, fund_id=filter_fund_id, payment_method=filter_payment_method, status=filter_status, channel=filter_channel, currency=filter_currency, donor_type=filter_donor_type, start_date=filter_start_date, end_date=filter_end_date, sort_by=filter_sort_by, sort_dir=filter_sort_dir, min_amount=filter_min_amount, max_amount=filter_max_amount, per_page=per_page, page=page-1) }}">Previous</a>
         {% endif %}
         <span class="text-muted">Page {{ page }} of {{ total_pages }}</span>
         {% if page < total_pages %}
-        <a class="btn btn-secondary" href="{{ url_for('main.donations_list', q=filter_q, payment_method=filter_payment_method, status=filter_status, currency=filter_currency, donor_type=filter_donor_type, start_date=filter_start_date, end_date=filter_end_date, sort_by=filter_sort_by, sort_dir=filter_sort_dir, min_amount=filter_min_amount, max_amount=filter_max_amount, per_page=per_page, page=page+1) }}">Next</a>
+        <a class="btn btn-secondary" href="{{ url_for('main.donations_list', q=filter_q, fund_id=filter_fund_id, payment_method=filter_payment_method, status=filter_status, channel=filter_channel, currency=filter_currency, donor_type=filter_donor_type, start_date=filter_start_date, end_date=filter_end_date, sort_by=filter_sort_by, sort_dir=filter_sort_dir, min_amount=filter_min_amount, max_amount=filter_max_amount, per_page=per_page, page=page+1) }}">Next</a>
         {% endif %}
     </div>
     {% else %}
@@ -235,4 +284,16 @@
     </div>
     {% endif %}
 </div>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const selectAll = document.getElementById('select-all-donations');
+    const rowChecks = Array.from(document.querySelectorAll('.donation-select-row'));
+    if (!selectAll || !rowChecks.length) {
+        return;
+    }
+    selectAll.addEventListener('change', function() {
+        rowChecks.forEach(function(cb) { cb.checked = selectAll.checked; });
+    });
+});
+</script>
 {% endblock %}
