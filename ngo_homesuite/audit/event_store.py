@@ -3,12 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
+from collections import defaultdict
 
 import json
+from sqlalchemy import func
 
 from ngo_homesuite.models.core import db
 from ngo_homesuite.persistence.models.workflow_tables import WorkflowEventRecord
-from ngo_homesuite.persistence.write_context import current_context
+from ngo_homesuite.persistence.base_repository import enforce_write_gate
 from ngo_homesuite.shared_kernel import redact_payload
 
 
@@ -46,19 +48,23 @@ class InMemoryEventStore:
 
 
 class DbEventStore:
-    """DB-backed append-only event store for workflow runtime events."""
+    """DB-backed append-only event store for workflow runtime events.
+    
+    All writes must go through WriteGate. This is enforced at method entry.
+    """
 
     @staticmethod
     def _assert_org_id(org_id: str) -> None:
         if not str(org_id).strip():
             raise PermissionError("Tenant isolation requires non-empty org_id")
 
+    @enforce_write_gate
     def append(self, event: AuditEvent) -> None:
         self.append_batch([event])
 
+    @enforce_write_gate
     def append_batch(self, events: list[AuditEvent], *, tx: Any | None = None) -> None:
-        if not current_context.in_write_gate:
-            raise RuntimeError("Write outside WriteGate")
+        self._validate_batch(events)
         records = [
             WorkflowEventRecord(
                 event_id=event.event_id,
@@ -76,6 +82,73 @@ class DbEventStore:
         db.session.add_all(records)
         if tx is None:
             db.session.commit()
+
+    def _validate_batch(self, events: list[AuditEvent]) -> None:
+        if not events:
+            return
+
+        event_ids: list[str] = []
+        versions_by_aggregate: dict[tuple[str, str], list[int]] = defaultdict(list)
+        idempotency_keys: list[tuple[str, str, str, str]] = []
+
+        for event in events:
+            self._assert_org_id(event.org_id)
+            event_ids.append(event.event_id)
+
+            version = int(event.version or 0)
+            if version < 1:
+                raise ValueError(f"Event version must be >= 1 for event_id={event.event_id}")
+            versions_by_aggregate[(event.org_id, event.aggregate_id)].append(version)
+
+            payload = event.payload if isinstance(event.payload, dict) else {}
+            key = payload.get("_idempotency_key")
+            if isinstance(key, str) and key.strip():
+                idempotency_keys.append((event.org_id, event.aggregate_id, event.event_type, key.strip()))
+
+        if len(event_ids) != len(set(event_ids)):
+            raise ValueError("Duplicate event_id in append_batch payload")
+
+        existing_ids = {
+            row[0]
+            for row in db.session.query(WorkflowEventRecord.event_id)
+            .filter(WorkflowEventRecord.event_id.in_(event_ids))
+            .all()
+        }
+        if existing_ids:
+            raise ValueError(f"Duplicate event_id already exists: {sorted(existing_ids)}")
+
+        for (org_id, aggregate_id), versions in versions_by_aggregate.items():
+            max_version, count_events = (
+                db.session.query(
+                    func.max(WorkflowEventRecord.version),
+                    func.count(WorkflowEventRecord.event_id),
+                )
+                .filter_by(org_id=org_id, aggregate_id=aggregate_id)
+                .one()
+            )
+            baseline_version = max(int(max_version or 0), int(count_events or 0))
+            expected = list(range(baseline_version + 1, baseline_version + 1 + len(versions)))
+            if versions != expected:
+                raise ValueError(
+                    f"Version sequence violation for aggregate={aggregate_id}: expected {expected}, got {versions}"
+                )
+
+        for org_id, aggregate_id, event_type, key in idempotency_keys:
+            existing = (
+                WorkflowEventRecord.query.filter_by(
+                    org_id=org_id,
+                    aggregate_id=aggregate_id,
+                    event_type=event_type,
+                )
+                .order_by(WorkflowEventRecord.occurred_at.asc())
+                .all()
+            )
+            for record in existing:
+                payload = json.loads(record.payload_json or "{}")
+                if payload.get("_idempotency_key") == key:
+                    raise ValueError(
+                        f"Duplicate idempotency key for aggregate={aggregate_id}, event_type={event_type}, key={key}"
+                    )
 
     def list_events(
         self,

@@ -27,6 +27,9 @@ def test_workflow_write_boundary_is_orchestrated_through_write_gate() -> None:
     assert "WorkflowWriteHandler" in gate_text
     assert "append_batch(result.events" in gate_text
     assert "version=1" in state_machine_text
+    assert "version=int(saved.version or 1)" in gate_text
+    assert "Version sequence violation" in store_text
+    assert "Duplicate idempotency key" in store_text
     assert "event_emitter=collector" in gate_text
     
     # New BaseRepository enforcement
