@@ -518,6 +518,7 @@ def grants_search_alert_acknowledge(alert_id: int):
 
 @v2_bp.route("/grants/opportunities/<int:opportunity_id>/compliance-guidance", methods=["POST"])
 @login_required
+@roles_required("admin", "staff", "viewer")
 def grants_opportunity_compliance_guidance(opportunity_id: int):
     data = request.get_json(silent=True) or {}
     proposal_text = str(data.get("proposal_text") or "").strip() or None
@@ -538,6 +539,7 @@ def grants_opportunity_compliance_guidance(opportunity_id: int):
 
 @v2_bp.route("/grants/opportunities/<int:opportunity_id>/draft-assist", methods=["POST"])
 @login_required
+@roles_required("admin", "staff", "viewer")
 def grants_opportunity_draft_assist(opportunity_id: int):
     data = request.get_json(silent=True) or {}
     amount_requested = data.get("amount_requested")
@@ -569,6 +571,7 @@ def grants_opportunity_draft_assist(opportunity_id: int):
 
 @v2_bp.route("/grants/opportunities/<int:opportunity_id>/guidelines/ingest", methods=["POST"])
 @login_required
+@roles_required("admin", "staff", "viewer")
 def grants_opportunity_guideline_ingest(opportunity_id: int):
     source_name = None
     guideline_text = None
@@ -605,6 +608,7 @@ def grants_opportunity_guideline_ingest(opportunity_id: int):
 
 @v2_bp.route("/grants/opportunities/<int:opportunity_id>/draft-assist/save", methods=["POST"])
 @login_required
+@roles_required("admin", "staff", "viewer")
 def grants_opportunity_draft_assist_save(opportunity_id: int):
     data = request.get_json(silent=True) or {}
     amount_requested = data.get("amount_requested")

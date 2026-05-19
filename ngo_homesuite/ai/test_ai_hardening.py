@@ -82,6 +82,7 @@ def app():
         APEX_API_TOKEN = None
         APEX_MODEL = "llama3.2"
         APEX_TENANT_ID = "ngo-test"
+        ROLES_REQUIRING_2FA = []
 
     flask_app = create_app(_TestCfg)
     return flask_app

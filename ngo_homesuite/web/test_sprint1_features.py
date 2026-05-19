@@ -20,6 +20,7 @@ from ngo_homesuite.models.core import (
     Project,
     RecurringDonationPlan,
     Task,
+    User,
     db,
 )
 
@@ -28,6 +29,7 @@ from ngo_homesuite.models.core import (
 def app():
     class _TestCfg(TestingConfig):
         SECRET_KEY = "test-secret"
+        ROLES_REQUIRING_2FA = []
 
     return create_app(_TestCfg)
 
@@ -38,6 +40,28 @@ def client(app):
 
 
 def _login_admin(client):
+    with client.application.app_context():
+        org = Organization.query.filter_by(is_active=True).first()
+        assert org is not None
+        admin = User.query.filter_by(username="admin").first()
+        if admin is None:
+            admin = User(
+                username="admin",
+                email="admin@test.local",
+                role="admin",
+                is_active=True,
+                organization_id=org.id,
+            )
+            admin.set_password("admin123!")
+            db.session.add(admin)
+            db.session.commit()
+        elif admin.organization_id is None:
+            admin.organization_id = org.id
+            admin.role = "admin"
+            admin.is_active = True
+            admin.set_password("admin123!")
+            db.session.commit()
+
     rv = client.post(
         "/auth/login",
         data={"username": "admin", "password": "admin123!"},

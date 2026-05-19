@@ -9,6 +9,7 @@ from ngo_homesuite.persistence.models.workflow_tables import WorkflowDefinitionR
 
 @pytest.fixture(scope="module")
 def app(shared_test_app):
+    shared_test_app.config["ROLES_REQUIRING_2FA"] = []
     return shared_test_app
 
 

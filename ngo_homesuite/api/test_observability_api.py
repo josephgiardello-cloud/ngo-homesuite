@@ -12,6 +12,7 @@ def app():
     class _TestCfg(TestingConfig):
         COPILOT_ENABLED = True
         METRICS_ENABLED = True
+        ROLES_REQUIRING_2FA = []
 
     return create_app(_TestCfg)
 

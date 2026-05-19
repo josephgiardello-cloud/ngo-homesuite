@@ -94,6 +94,7 @@ ROUTE_POLICY_MANIFEST: dict[str, RoutePolicy] = {
     "/funds/new": RoutePolicy(access="authenticated"),
     "/give": RoutePolicy(access="public"),
     "/grants/": RoutePolicy(access="authenticated"),
+        "/grants/alerts": RoutePolicy(access="authenticated"),
     "/grants/pipeline": RoutePolicy(access="authenticated"),
     "/grants/workbench": RoutePolicy(access="authenticated"),
     "/health": RoutePolicy(access="public"),

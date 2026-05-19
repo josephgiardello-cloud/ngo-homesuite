@@ -183,7 +183,7 @@ class TestProjectWithBoost:
             c = Campaign.query.filter_by(name='ProjTestCampaign').first()
             o = db.session.get(Organization, c.organization_id)
             with pytest.raises(ValueError):
-                project_with_conversion_boost(c.id, o.id, -100.0)
+                project_with_conversion_boost(c.id, o.id, -100.1)
 
 
 class TestProjectionApiEndpoint:
@@ -196,11 +196,22 @@ class TestProjectionApiEndpoint:
     def _make_staff(self, app, username='proj_staff_user'):
         """Create a staff user (staff is in roles_required for projection endpoint)."""
         with app.app_context():
+            org = Organization.query.filter_by(name='ProjTestOrg').first()
+            assert org is not None
             u = User.query.filter_by(username=username).first()
             if u is None:
-                u = User(username=username, email=f'{username}@test.local', role='staff', is_active=True)
+                u = User(
+                    username=username,
+                    email=f'{username}@test.local',
+                    role='staff',
+                    is_active=True,
+                    organization_id=org.id,
+                )
                 u.set_password('Staff1234!')
                 db.session.add(u)
+                db.session.commit()
+            elif u.organization_id is None:
+                u.organization_id = org.id
                 db.session.commit()
             return u.id
 

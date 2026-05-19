@@ -119,14 +119,12 @@ class TestRequireStepUpAuthDecorator:
 
         with patch('ngo_homesuite.web.auth_routes.is_step_up_verified', return_value=False), \
              patch('ngo_homesuite.web.auth_routes.current_user') as mock_user, \
-             patch('ngo_homesuite.web.auth_routes.request') as mock_request, \
-             patch('ngo_homesuite.web.auth_routes.SecurityAuditService'):
+               patch('ngo_homesuite.audit.security_events.SecurityAuditService.log_event'):
             mock_user.is_authenticated = True
             mock_user.id = 1
-            mock_request.endpoint = 'test.protected'
             from flask import Flask
             app = Flask(__name__)
-            with app.app_context():
+            with app.test_request_context('/test/protected'):
                 result = protected_view()
                 assert result[1] == 403
                 data = result[0].get_json()
