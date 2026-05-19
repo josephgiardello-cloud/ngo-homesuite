@@ -31,6 +31,37 @@ def _login_admin(client):
     assert rv.status_code in (302, 303)
 
 
+def _ensure_user(app, username: str, email: str, role: str, password: str, org_id: int) -> None:
+    with app.app_context():
+        user = User.query.filter_by(username=username).first()
+        if user is None:
+            user = User(
+                username=username,
+                email=email,
+                role=role,
+                is_active=True,
+                organization_id=org_id,
+            )
+            user.set_password(password)
+            db.session.add(user)
+        else:
+            user.email = email
+            user.role = role
+            user.is_active = True
+            user.organization_id = org_id
+            user.set_password(password)
+        db.session.commit()
+
+
+def _login_user(client, username: str, password: str) -> None:
+    rv = client.post(
+        "/auth/login",
+        data={"username": username, "password": password},
+        follow_redirects=False,
+    )
+    assert rv.status_code in (302, 303)
+
+
 def test_v2_grant_advance_and_disbursement_contract(client, app):
     _login_admin(client)
 
@@ -133,6 +164,51 @@ def test_v2_grant_advance_and_disbursement_contract(client, app):
     assert isinstance(restricted_payload.get("grants"), list)
     assert restricted_payload.get("total_awarded", 0) >= 1000
     assert restricted_payload.get("total_disbursed", 0) >= 500
+
+
+def test_v2_grant_detail_blocks_cross_tenant_access_without_leaking_payload(client, app):
+    with app.app_context():
+        org_a = Organization.query.filter_by(slug="release-lane-org-a").first()
+        if org_a is None:
+            org_a = Organization(name="Release Lane Org A", slug="release-lane-org-a", is_active=True)
+            db.session.add(org_a)
+            db.session.flush()
+
+        org_b = Organization.query.filter_by(slug="release-lane-org-b").first()
+        if org_b is None:
+            org_b = Organization(name="Release Lane Org B", slug="release-lane-org-b", is_active=True)
+            db.session.add(org_b)
+            db.session.flush()
+
+        org_a_id = int(org_a.id)
+        org_b_id = int(org_b.id)
+        db.session.commit()
+
+    _ensure_user(app, "rl_tenant_a", "rl_tenant_a@test.local", "staff", "ReleaseLane123!", org_a_id)
+    _ensure_user(app, "rl_tenant_b", "rl_tenant_b@test.local", "staff", "ReleaseLane123!", org_b_id)
+
+    _login_user(client, "rl_tenant_b", "ReleaseLane123!")
+    created = client.post(
+        "/api/v2/grants",
+        json={
+            "title": "Org B Private Grant",
+            "funder_name": "Release Lane Foundation",
+            "amount_requested": 7500,
+        },
+    )
+    assert created.status_code == 201
+    grant_id = created.get_json()["id"]
+
+    client.post("/auth/logout")
+    _login_user(client, "rl_tenant_a", "ReleaseLane123!")
+
+    blocked = client.get(f"/api/v2/grants/{grant_id}")
+    assert blocked.status_code == 404
+    assert blocked.get_json() == {"error": "not found"}
+
+    listed = client.get("/api/v2/grants")
+    assert listed.status_code == 200
+    assert all(item["id"] != grant_id for item in listed.get_json())
 
 
 def test_v2_grant_opportunity_search_and_compliance_guidance_contract(client, app):

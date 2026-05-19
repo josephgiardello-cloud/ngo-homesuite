@@ -32,31 +32,17 @@ def require_role(*roles: str):
 
 def login() -> dict[str, Any]:
     # Local import avoids circular dependency with auth.models
-    from .models import verify_password
+    from .models import authenticate_user
 
     for attempt in range(MAX_LOGIN_ATTEMPTS):
         username = prompt_non_empty("Username: ")
         password = getpass.getpass("Password: ")
 
-        def op(_conn: Any, cur: Any):
-            cur.execute(
-                "SELECT id, username, password_salt, password_hash, role FROM users WHERE username = ?",
-                (username,),
-            )
-            return cur.fetchone()
-
-        row = run_db(op)
-        if not row:
-            print("Invalid username or password.")
+        try:
+            return authenticate_user(username=username, password=password)
+        except ValueError as exc:
+            print(str(exc))
             time.sleep(LOGIN_BACKOFF_BASE_SECONDS * (2**attempt))
             continue
-
-        user_id, uname, salt_hex, hash_hex, role = row
-        if not verify_password(password, salt_hex, hash_hex):
-            print("Invalid username or password.")
-            time.sleep(LOGIN_BACKOFF_BASE_SECONDS * (2**attempt))
-            continue
-
-        return {"id": int(user_id), "username": str(uname), "role": str(role)}
 
     raise AuthError("Too many failed login attempts")

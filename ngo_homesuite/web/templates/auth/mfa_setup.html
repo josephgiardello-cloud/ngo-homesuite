@@ -143,6 +143,17 @@
 
         <div class="setup-actions mb-2">
             <button class="btn btn-primary" id="generateMfaBtn" type="button">Generate QR and recovery codes</button>
+            <input
+                id="confirmCodeInput"
+                type="text"
+                inputmode="numeric"
+                autocomplete="one-time-code"
+                maxlength="12"
+                placeholder="Enter 6-digit authenticator code"
+                class="form-control"
+                style="max-width: 15rem;"
+            >
+            <button class="btn btn-success" id="confirmMfaBtn" type="button">Confirm and enable</button>
             <button class="btn btn-outline-primary" id="rotateBackupCodesBtn" type="button">Regenerate backup codes</button>
             <button class="btn btn-outline-secondary" id="downloadBackupCodesBtn" type="button" disabled>Download backup codes</button>
             <button class="btn btn-secondary" id="copyUriBtn" type="button" disabled>Copy provisioning URI</button>
@@ -168,7 +179,7 @@
             <div class="card" style="width:100%;margin-bottom:0;">
                 <div style="font-weight:700;margin-bottom:0.25rem;">Next step</div>
                 <p class="text-muted" style="margin:0;">
-                    After scanning, go back to the login page and enter the 6-digit code from your authenticator app.
+                    After scanning, go back to the login page and enter a 6-digit authenticator code. Backup recovery codes are 8 characters.
                 </p>
             </div>
 
@@ -181,6 +192,8 @@
 <script>
 (function () {
     const generateBtn = document.getElementById('generateMfaBtn');
+    const confirmBtn = document.getElementById('confirmMfaBtn');
+    const confirmCodeInput = document.getElementById('confirmCodeInput');
     const rotateBackupCodesBtn = document.getElementById('rotateBackupCodesBtn');
     const downloadBackupCodesBtn = document.getElementById('downloadBackupCodesBtn');
     const copyUriBtn = document.getElementById('copyUriBtn');
@@ -252,6 +265,41 @@
         }
     });
 
+    confirmBtn.addEventListener('click', async function () {
+        const code = (confirmCodeInput.value || '').trim();
+        if (!code) {
+            setStatus('Enter the 6-digit authenticator code first.', true);
+            confirmCodeInput.focus();
+            return;
+        }
+
+        confirmBtn.classList.add('is-loading');
+        setStatus('Confirming code and enabling MFA...', false);
+        try {
+            const response = await fetch('/auth/mfa/confirm', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ code }),
+            });
+            const payload = await response.json();
+            if (!response.ok) {
+                if (payload && payload.error === 'mfa_secret_stale_reenroll_required') {
+                    throw new Error('Your previous MFA secret is outdated. Click "Generate QR and recovery codes", re-scan, then enter the new 6-digit code.');
+                }
+                throw new Error(payload.error || 'Unable to confirm MFA code');
+            }
+            confirmCodeInput.value = '';
+            setStatus('MFA is now enabled. Redirecting to dashboard...', false);
+            setTimeout(function () {
+                window.location.href = '/dashboard';
+            }, 700);
+        } catch (error) {
+            setStatus(error.message || 'Unable to confirm MFA code.', true);
+        } finally {
+            confirmBtn.classList.remove('is-loading');
+        }
+    });
+
     copyUriBtn.addEventListener('click', async function () {
         if (!uriBox.value) {
             return;
@@ -265,19 +313,38 @@
     });
 
     rotateBackupCodesBtn.addEventListener('click', async function () {
+        const code = (confirmCodeInput.value || '').trim();
+        const requestBody = code ? { code: code } : {};
         rotateBackupCodesBtn.classList.add('is-loading');
         setStatus('Regenerating backup codes...', false);
         try {
-            const response = await fetch('/auth/2fa/backup-codes', {
+            let response = await fetch('/auth/2fa/backup-codes', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: '{}',
+                body: JSON.stringify(requestBody),
             });
-            const payload = await response.json();
+            let payload = await response.json();
+
+            // Compatibility fallback: some sessions reject backup-code rotation
+            // with code-required/invalid errors. Reuse enrollment endpoint to
+            // regenerate and return fresh backup codes.
+            if (!response.ok && response.status === 400) {
+                response = await fetch('/auth/mfa/enroll', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: '{}',
+                });
+                payload = await response.json();
+            }
+
             if (!response.ok) {
+                if (payload && payload.error === 'code is required') {
+                    throw new Error('Enter your current 6-digit authenticator code, then click Regenerate backup codes.');
+                }
                 throw new Error(payload.error || 'Unable to rotate backup codes');
             }
             renderRecoveryCodes(payload.backup_codes || []);
+            confirmCodeInput.value = '';
             setStatus('Backup codes regenerated. Replace any previously stored codes.', false);
         } catch (error) {
             setStatus(error.message || 'Unable to rotate backup codes.', true);

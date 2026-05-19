@@ -14,6 +14,8 @@ DEFAULT_DB_PATH = "data/homesuite.db"
 DEFAULT_BACKUP_DIR = "backups"
 DEFAULT_DATABASE_URL = "sqlite:///ngo_homesuite.db"
 ALLOW_SQLITE_IN_PRODUCTION_ENV = "NGO_HOMESUITE_ALLOW_SQLITE_IN_PRODUCTION"
+DEMO_ADMIN_PASSWORD_DEFAULT = "admin123!"
+PRODUCTION_PLACEHOLDER_VALUES = {"__REPLACE_AT_DEPLOY__"}
 DEFAULT_CONFIG_CANDIDATES = (
     "ngo-homesuite.yaml",
     "ngo_homesuite.yaml",
@@ -234,6 +236,13 @@ def _split_csv(value: str | None) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def _contains_placeholder_value(value: str | None) -> bool:
+    if not value:
+        return False
+    normalized = str(value).strip()
+    return any(placeholder in normalized for placeholder in PRODUCTION_PLACEHOLDER_VALUES)
+
+
 def _read_yaml_config() -> dict[str, Any]:
     explicit = os.environ.get("NGO_HOMESUITE_CONFIG")
     candidate_paths: list[Path] = []
@@ -405,7 +414,7 @@ def load_runtime_settings() -> RuntimeSettings:
         "require_backup_before_migrate": _parse_bool(os.environ.get("NGO_HOMESUITE_REQUIRE_BACKUP_BEFORE_MIGRATE"), True),
         "migration_backup_warn_only": _parse_bool(os.environ.get("NGO_HOMESUITE_MIGRATION_BACKUP_WARN_ONLY"), False),
         "allow_compat_mode": _parse_bool(os.environ.get("NGO_HOMESUITE_ALLOW_COMPAT_MODE"), False),
-        "demo_admin_password": os.environ.get("NGO_DEMO_ADMIN_PASSWORD", "admin123!"),
+        "demo_admin_password": os.environ.get("NGO_DEMO_ADMIN_PASSWORD", DEMO_ADMIN_PASSWORD_DEFAULT),
         "enable_demo_seed": _parse_bool(os.environ.get("NGO_HOMESUITE_ENABLE_DEMO_SEED"), False),
     }
 
@@ -433,6 +442,14 @@ def load_runtime_settings() -> RuntimeSettings:
             raise RuntimeError(
                 "Invalid runtime configuration: production requires DATABASE_URL or DATABASE_URL_FILE to be explicitly set"
             )
+        if _contains_placeholder_value(settings.secret_key):
+            raise RuntimeError(
+                "Invalid runtime configuration: production secret key must not use deploy-time placeholder values"
+            )
+        if _contains_placeholder_value(settings.database_url):
+            raise RuntimeError(
+                "Invalid runtime configuration: production database URL must not use deploy-time placeholder values"
+            )
         if (
             settings.database_backend == "sqlite"
             and not _parse_bool(os.environ.get(ALLOW_SQLITE_IN_PRODUCTION_ENV), False)
@@ -448,6 +465,10 @@ def load_runtime_settings() -> RuntimeSettings:
         if _parse_bool(os.environ.get("SHOW_DEV_LOGIN_CREDENTIALS"), False):
             raise RuntimeError(
                 "Invalid runtime configuration: production must not enable SHOW_DEV_LOGIN_CREDENTIALS"
+            )
+        if settings.enable_demo_seed:
+            raise RuntimeError(
+                "Invalid runtime configuration: production must not enable NGO_HOMESUITE_ENABLE_DEMO_SEED or demo credentials"
             )
         oauth_redirect_base = str(os.environ.get("OAUTH_REDIRECT_BASE") or "").strip()
         if oauth_redirect_base and not oauth_redirect_base.startswith("https://"):

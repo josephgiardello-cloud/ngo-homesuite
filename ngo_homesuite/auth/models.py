@@ -268,6 +268,28 @@ def verify_password(password: str, expected_hash: str) -> tuple[bool, bool]:
     except VerifyMismatchError:
         return False, False
 
+
+def authenticate_user(username: str, password: str, ip_address: str | None = None) -> dict[str, Any]:
+    normalized_username = str(username).strip()
+    if not normalized_username:
+        raise ValueError("Invalid username or password.")
+
+    def op(conn: Any, cur: Any) -> dict[str, Any]:
+        login_user(conn=conn, cur=cur, username=normalized_username, password=password, ip_address=ip_address)
+        cur.execute("SELECT rowid, username, role FROM users WHERE username = ?", (normalized_username,))
+        row = cur.fetchone()
+        if not row:
+            raise AuthError("Authenticated user could not be loaded.")
+
+        user_id, resolved_username, role = row
+        return {
+            "id": int(user_id),
+            "username": str(resolved_username),
+            "role": str(role),
+        }
+
+    return run_db(op)
+
 # --- User Creation ---
 def create_user(conn: sqlite3.Connection, cur: sqlite3.Cursor, username: str, password: str, role: str) -> None:
     role = role.strip().lower()

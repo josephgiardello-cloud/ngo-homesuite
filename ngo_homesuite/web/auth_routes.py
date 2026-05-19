@@ -656,9 +656,20 @@ def mfa_enroll():
     try:
         secret = current_user.ensure_mfa_secret()
         provisioning_uri = current_user.mfa_provisioning_uri()
-    except RuntimeError:
-        current_app.logger.exception('mfa_enrollment_unavailable user_id=%s', int(current_user.id or 0))
-        return {'error': 'mfa_encryption_unavailable'}, 503
+    except RuntimeError as exc:
+        # Recover from stale encrypted MFA material after local key rotations by
+        # resetting enrollment state and issuing a fresh secret.
+        if 'Stored MFA secret could not be decrypted' in str(exc):
+            current_app.logger.warning('mfa_secret_stale_reenroll user_id=%s', int(current_user.id or 0))
+            current_user.mfa_totp_secret = None
+            current_user.mfa_enabled = False
+            current_user.mfa_backup_codes_json = []
+            db.session.flush()
+            secret = current_user.ensure_mfa_secret()
+            provisioning_uri = current_user.mfa_provisioning_uri()
+        else:
+            current_app.logger.exception('mfa_enrollment_unavailable user_id=%s', int(current_user.id or 0))
+            return {'error': 'mfa_encryption_unavailable'}, 503
     backup_codes = current_user.generate_mfa_backup_codes()
     db.session.commit()
     return {
@@ -682,7 +693,10 @@ def mfa_confirm():
         return {'error': 'mfa enrollment has not been initialized'}, 400
     try:
         mfa_valid = current_user.verify_mfa_code(code)
-    except RuntimeError:
+    except RuntimeError as exc:
+        if 'Stored MFA secret could not be decrypted' in str(exc):
+            current_app.logger.warning('mfa_secret_stale_confirm user_id=%s', int(current_user.id or 0))
+            return {'error': 'mfa_secret_stale_reenroll_required'}, 409
         current_app.logger.exception('mfa_verification_unavailable user_id=%s', int(current_user.id or 0))
         return {'error': 'mfa_encryption_unavailable'}, 503
     if not mfa_valid:

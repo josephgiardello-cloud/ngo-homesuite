@@ -11,6 +11,7 @@ Use this checklist before production deployment.
 - If using SQLCipher, store `NGO_HOMESUITE_DB_KEY` in a secret manager.
 - Document key recovery and rotation steps.
 - Disable any emergency fallback flags after incident recovery.
+- Run the security release lane: CI secret scan, `pip-audit`, Bandit, AI/auth hardening tests, and archive the release evidence bundle.
 
 ## Database and Migrations
 
@@ -30,6 +31,7 @@ Use this checklist before production deployment.
 - Verify org scoping on all list/search/report endpoints.
 - Verify AI/RAG retrieval context is tenant-scoped.
 - Run cross-tenant negative tests for mutating endpoints.
+- Run the tenant isolation release lane: cross-tenant route tests, API runtime tenant-boundary tests, and AI tenant-scoping checks.
 
 ## Reliability and Operations
 
@@ -45,6 +47,7 @@ Use this checklist before production deployment.
 - Forward application logs to centralized storage (for example ELK/Azure Monitor).
 - Expose and scrape metrics endpoint for alerting.
 - Alert on migration failures, repeated DB lock errors, and key integrity checks.
+- Run the observability release lane: request-ID propagation tests, metrics endpoint assertions, and monitoring alert-rule validation.
 
 ## UX and Workflow Validation
 

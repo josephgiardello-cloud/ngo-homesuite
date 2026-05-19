@@ -1,0 +1,32 @@
+{% extends 'base.html' %}
+{% block title %}Calendar and Deadlines · NGO HomeSuite{% endblock %}
+{% block content %}
+<section class="card p-4">
+    <h1 class="h3 mb-2">Calendar and Deadlines</h1>
+    <p class="text-muted mb-4">Track upcoming due dates, assignments, and milestone checkpoints across fundraising, programs, and operations.</p>
+
+    <div class="row g-3">
+        <div class="col-12 col-lg-4">
+            <div class="border rounded p-3 h-100 bg-light-subtle">
+                <h2 class="h6 mb-2">Task Work Queue</h2>
+                <p class="small mb-3">Review overdue and upcoming tasks across teams.</p>
+                <a class="btn btn-primary btn-sm" href="{{ url_for('main.task_board') }}">Open Task Board</a>
+            </div>
+        </div>
+        <div class="col-12 col-lg-4">
+            <div class="border rounded p-3 h-100 bg-light-subtle">
+                <h2 class="h6 mb-2">Grant and Compliance Signals</h2>
+                <p class="small mb-3">Use the executive dashboard alerts to spot deadline risk quickly.</p>
+                <a class="btn btn-outline-primary btn-sm" href="{{ url_for('main.dashboard') }}">View Dashboard Alerts</a>
+            </div>
+        </div>
+        <div class="col-12 col-lg-4">
+            <div class="border rounded p-3 h-100 bg-light-subtle">
+                <h2 class="h6 mb-2">Field Intake Follow-ups</h2>
+                <p class="small mb-3">Coordinate commitments captured by mobile intake workflows.</p>
+                <a class="btn btn-outline-primary btn-sm" href="{{ url_for('main.mobile_intake') }}">Open Mobile Intake</a>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

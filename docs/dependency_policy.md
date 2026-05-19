@@ -1,4 +1,4 @@
-# Dependency Update Policy
+﻿# Dependency Update Policy
 
 ## Goals
 
@@ -30,3 +30,9 @@ These must stay aligned.
 - Every dependency bump must pass full test suite.
 - For major version bumps, include a short risk note in PR description.
 - Update changelog/release notes when dependency changes are operationally significant.
+
+
+## Security Auditing
+
+- CI runs pip-audit to check for known vulnerabilities in the dependency tree.
+

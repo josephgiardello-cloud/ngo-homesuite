@@ -99,5 +99,45 @@ def test_create_user_and_verify(monkeypatch):
         except Exception as e:
             print(f"Could not delete temp DB: {e}")
 
+
+def test_authenticate_user_returns_identity(monkeypatch):
+    monkeypatch.setattr(models, "_check_pwned", lambda *a, **kw: False)
+    monkeypatch.setattr(models, "audit", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        models,
+        "ARGON2_PH",
+        PasswordHasher(time_cost=2, memory_cost=19456, parallelism=1, hash_len=16, salt_len=8, type=Type.ID),
+    )
+
+    with tempfile.NamedTemporaryFile(suffix='.sqlite3', delete=False) as tf:
+        db_path = tf.name
+    try:
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """)
+        conn.commit()
+        models.create_user(conn, cur, "testuser", "SuperSecurePassword123!", "admin")
+        monkeypatch.setattr(models, "run_db", lambda op: op(conn, conn.cursor()))
+
+        user = models.authenticate_user("testuser", "SuperSecurePassword123!")
+
+        assert user["username"] == "testuser"
+        assert user["role"] == "admin"
+        assert isinstance(user["id"], int)
+        conn.close()
+    finally:
+        try:
+            os.unlink(db_path)
+        except Exception as e:
+            print(f"Could not delete temp DB: {e}")
+
 if __name__ == "__main__":
     test_create_user_and_verify()

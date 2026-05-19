@@ -4761,6 +4761,28 @@ def help():
     return render_template('help.html', active_page='help')
 
 
+@main_bp.route('/calendar-deadlines')
+@login_required
+def calendar_deadlines_page():
+    """Calendar and deadlines workspace."""
+    return render_template('calendar_deadlines.html', active_page='calendar_deadlines')
+
+
+@main_bp.route('/integrations-hub')
+@login_required
+@roles_required('admin', 'staff')
+def integrations_hub_page():
+    """Operational integrations workspace."""
+    return render_template('integrations_hub.html', active_page='integrations_hub')
+
+
+@main_bp.route('/ai-assistant-hub')
+@login_required
+def ai_assistant_hub_page():
+    """AI assistant launcher and guardrails reference."""
+    return render_template('ai_assistant_hub.html', active_page='ai_assistant_hub')
+
+
 # ---------------------------------------------------------------------------
 # Beneficiary Management UI
 # ---------------------------------------------------------------------------
