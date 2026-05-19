@@ -11,20 +11,69 @@ Core entities:
 
 import hashlib
 import hmac
+import os
 import re
 import secrets
+from base64 import urlsafe_b64encode
 from datetime import datetime, timedelta, timezone
 import bcrypt
+from flask import current_app, has_app_context
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError, VerificationError
+from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy import event, text
 from sqlalchemy.dialects.sqlite import JSON
 import pyotp
 
 db = SQLAlchemy()
 password_hasher = PasswordHasher()
+_MFA_SECRET_PREFIX = "enc:"
+
+
+def _mfa_fernet() -> Fernet | None:
+    raw_key = None
+    if has_app_context():
+        raw_key = current_app.config.get("MFA_TOTP_ENCRYPTION_KEY")
+    if not raw_key:
+        raw_key = os.environ.get("MFA_TOTP_ENCRYPTION_KEY")
+    if not raw_key and has_app_context():
+        raw_key = current_app.config.get("SECRET_KEY")
+    if not raw_key:
+        raw_key = os.environ.get("SECRET_KEY") or os.environ.get("FLASK_SECRET_KEY")
+    if not raw_key:
+        return None
+    digest = hashlib.sha256(str(raw_key).encode("utf-8")).digest()
+    return Fernet(urlsafe_b64encode(digest))
+
+
+def _encrypt_mfa_secret(secret: str) -> str:
+    if not secret:
+        return ""
+    if secret.startswith(_MFA_SECRET_PREFIX):
+        return secret
+    fernet = _mfa_fernet()
+    if fernet is None:
+        raise RuntimeError("MFA secret encryption key is not configured")
+    token = fernet.encrypt(secret.encode("utf-8")).decode("utf-8")
+    return f"{_MFA_SECRET_PREFIX}{token}"
+
+
+def _decrypt_mfa_secret(stored_secret: str | None) -> str | None:
+    if not stored_secret:
+        return None
+    fernet = _mfa_fernet()
+    if fernet is None:
+        raise RuntimeError("MFA secret encryption key is not configured")
+    text = str(stored_secret)
+    if not text.startswith(_MFA_SECRET_PREFIX):
+        return text
+    token = text[len(_MFA_SECRET_PREFIX):]
+    try:
+        return fernet.decrypt(token.encode("utf-8")).decode("utf-8")
+    except (InvalidToken, ValueError):
+        raise RuntimeError("Stored MFA secret could not be decrypted")
 
 def _utcnow_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -75,7 +124,7 @@ class User(UserMixin, db.Model):
 
     # Multi-factor authentication (TOTP + one-time backup codes)
     mfa_enabled = db.Column(db.Boolean, default=False, nullable=False)
-    mfa_totp_secret = db.Column(db.String(64), nullable=True)
+    mfa_totp_secret = db.Column(db.String(255), nullable=True)
     mfa_backup_codes_json = db.Column(JSON, nullable=True)
     mfa_failed_attempts = db.Column(db.Integer, default=0, nullable=False)
     mfa_attempt_window_started_at = db.Column(db.DateTime, nullable=True)
@@ -121,9 +170,16 @@ class User(UserMixin, db.Model):
 
     def ensure_mfa_secret(self) -> str:
         """Create and persist a TOTP secret if the user does not already have one."""
-        if not self.mfa_totp_secret:
-            self.mfa_totp_secret = pyotp.random_base32()
-        return self.mfa_totp_secret
+        current_secret = _decrypt_mfa_secret(self.mfa_totp_secret)
+        if not current_secret:
+            current_secret = pyotp.random_base32()
+            self.mfa_totp_secret = _encrypt_mfa_secret(current_secret)
+            return current_secret
+
+        # Opportunistically migrate legacy plaintext values to encrypted-at-rest.
+        if self.mfa_totp_secret and not str(self.mfa_totp_secret).startswith(_MFA_SECRET_PREFIX):
+            self.mfa_totp_secret = _encrypt_mfa_secret(current_secret)
+        return current_secret
 
     def mfa_provisioning_uri(self, issuer_name: str = 'NGO HomeSuite') -> str:
         """Return otpauth provisioning URI for authenticator apps."""
@@ -172,9 +228,10 @@ class User(UserMixin, db.Model):
         if not raw:
             return False
 
-        if self.mfa_totp_secret:
+        resolved_secret = _decrypt_mfa_secret(self.mfa_totp_secret)
+        if resolved_secret:
             try:
-                if pyotp.TOTP(self.mfa_totp_secret).verify(raw, valid_window=valid_window):
+                if pyotp.TOTP(resolved_secret).verify(raw, valid_window=valid_window):
                     return True
             except Exception:
                 pass

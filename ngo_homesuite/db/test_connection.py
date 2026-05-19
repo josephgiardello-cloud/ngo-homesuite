@@ -28,12 +28,10 @@ def temp_db_file():
         pass
 
 
+@pytest.mark.sqlcipher
 def test_connect_db_and_schema_hash(temp_db_file):
     # Should create and connect to a new DB, set up schema hash
-    try:
-        import pysqlcipher3  # noqa: F401
-    except ImportError:
-        pytest.skip("SQLCipher not installed; skipping test.")
+    pytest.importorskip("pysqlcipher3")
     conn = connection.connect_db_at(temp_db_file)
     assert isinstance(conn, sqlite3.Connection)
     # Should create metadata table and set schema hash

@@ -368,7 +368,7 @@ def load_runtime_settings() -> RuntimeSettings:
         "rate_limit_enabled": _parse_bool(os.environ.get("RATE_LIMIT_ENABLED"), True),
         "ratelimit_default": os.environ.get("RATELIMIT_DEFAULT", "200 per day, 50 per hour"),
         "permanent_session_lifetime_seconds": int(os.environ.get("PERMANENT_SESSION_LIFETIME", "2592000")),
-        "session_cookie_secure": _parse_bool(os.environ.get("SESSION_COOKIE_SECURE"), False),
+        "session_cookie_secure": _parse_bool(os.environ.get("SESSION_COOKIE_SECURE"), True),
         "session_cookie_httponly": _parse_bool(os.environ.get("SESSION_COOKIE_HTTPONLY"), True),
         "session_cookie_samesite": os.environ.get("SESSION_COOKIE_SAMESITE", "Lax"),
         "session_store_backend": os.environ.get("SESSION_STORE_BACKEND", "cookie"),

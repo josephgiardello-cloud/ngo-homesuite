@@ -310,6 +310,140 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /api/v2/campaigns/{campaignId}/emails/send:
+    post:
+      operationId: postV2CampaignEmailsSend
+      summary: Send or schedule campaign bulk email delivery
+      tags: [CampaignsV2]
+      parameters:
+        - in: path
+          name: campaignId
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                subject:
+                  type: string
+                body:
+                  type: string
+                audience:
+                  type: object
+                  additionalProperties: true
+                compliance:
+                  type: object
+                  additionalProperties: true
+              required: [subject, body]
+      responses:
+        '200':
+          description: Campaign email send accepted and processed
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Campaign not found
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /api/v2/campaigns/{campaignId}/emails/preview:
+    post:
+      operationId: postV2CampaignEmailsPreview
+      summary: Preview campaign email recipients and personalization data
+      tags: [CampaignsV2]
+      parameters:
+        - in: path
+          name: campaignId
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                subject:
+                  type: string
+                body:
+                  type: string
+                audience:
+                  type: object
+                  additionalProperties: true
+              required: [subject, body]
+      responses:
+        '200':
+          description: Email preview payload
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Campaign not found
+  /api/v2/campaigns/email/unsubscribe:
+    get:
+      operationId: getV2CampaignEmailUnsubscribe
+      summary: Process signed unsubscribe links from campaign emails
+      tags: [CampaignsV2Public]
+      responses:
+        '200':
+          description: HTML unsubscribe confirmation
+          content:
+            text/html:
+              schema:
+                type: string
+        '400':
+          description: Invalid or expired unsubscribe link
+        '404':
+          description: Campaign not found
+  /api/v2/campaigns/email/click:
+    get:
+      operationId: getV2CampaignEmailClick
+      summary: Record tracked click event and redirect
+      tags: [CampaignsV2Public]
+      responses:
+        '302':
+          description: Redirect to tracked target URL
+        '400':
+          description: Invalid or expired tracking token
+        '404':
+          description: Tracking record not found
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /api/v2/campaigns/email/open-pixel:
+    get:
+      operationId: getV2CampaignEmailOpenPixel
+      summary: Record tracked open event and return transparent pixel
+      tags: [CampaignsV2Public]
+      responses:
+        '200':
+          description: 1x1 GIF tracking pixel
+          content:
+            image/gif:
+              schema:
+                type: string
+                format: binary
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /ai/copilot/chat:
     post:
       operationId: postCopilotChat
@@ -541,6 +675,12 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
     Forbidden:
       description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    TooManyRequests:
+      description: Request rate limit exceeded
       content:
         application/json:
           schema:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 
@@ -747,6 +748,8 @@ def test_donations_page_handles_malformed_amount_rows(client, app):
 
 def test_donations_export_iif_returns_payload(client, app):
     _login_admin(client)
+    with client.session_transaction() as sess:
+        sess["_step_up_verified_at"] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
 
     with app.app_context():
         org = Organization.query.filter_by(is_active=True).first()

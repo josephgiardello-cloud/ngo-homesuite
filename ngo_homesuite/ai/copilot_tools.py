@@ -319,14 +319,22 @@ class CopilotToolRegistry:
         table_names = set(inspector.get_table_names())
         metrics = {"interactions": 0, "pledges": 0, "events": 0}
 
+        static_queries = {
+            "interactions": "SELECT COUNT(*) FROM interactions WHERE donor_id = :donor_id",
+            "pledges": "SELECT COUNT(*) FROM pledges WHERE donor_id = :donor_id",
+            "registrations": "SELECT COUNT(*) FROM registrations WHERE donor_id = :donor_id",
+        }
+
         def _query_count(table_name: str) -> int:
+            query = static_queries.get(table_name)
+            if not query:
+                return 0
             params: dict[str, Any] = {"donor_id": donor_id}
-            sql = f"SELECT COUNT(*) FROM {table_name} WHERE donor_id = :donor_id"
             columns = {str(col.get("name")) for col in inspector.get_columns(table_name)}
             if "organization_id" in columns:
-                sql += " AND organization_id = :org_id"
+                query += " AND organization_id = :org_id"
                 params["org_id"] = org_id
-            row = db.session.execute(text(sql), params).scalar()
+            row = db.session.execute(text(query), params).scalar()
             return int(row or 0)
 
         if "interactions" in table_names:

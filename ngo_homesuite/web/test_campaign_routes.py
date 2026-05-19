@@ -1000,6 +1000,31 @@ def test_campaign_send_email_requires_human_authorization_for_non_ai_message(cli
     assert "outbound external communication" in (payload.get("warning") or "")
 
 
+def test_campaign_send_email_rate_limited_returns_429(client, app, monkeypatch):
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "Rate Limited Send Campaign"})
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+
+    monkeypatch.setattr("ngo_homesuite.web.v2_routes._campaign_send_limited", lambda _campaign_id: (True, 7))
+
+    rv = client.post(
+        f"/api/v2/campaigns/{campaign_id}/emails/send",
+        json={
+            "subject": "Rate limited",
+            "body": "Hello {name}",
+            "audience": {},
+            "compliance": _human_authorization_payload(),
+        },
+    )
+
+    assert rv.status_code == 429
+    payload = rv.get_json() or {}
+    assert "rate limit" in str(payload.get("error") or "").lower()
+    assert int(payload.get("retry_after_sec") or 0) == 7
+    assert rv.headers.get("Retry-After") == "7"
+
+
 def test_campaign_send_email_internal_details_allows_confirmed_human_in_loop(client, app):
     _login_admin(client)
     create_rv = client.post("/api/v2/campaigns", json={"name": "Internal Detail HITL Campaign"})

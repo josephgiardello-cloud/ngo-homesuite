@@ -2,7 +2,7 @@
 funder/scheduled reports, and admin UX routes."""
 from __future__ import annotations
 
-from datetime import date, datetime, UTC
+from datetime import date, datetime, UTC, timezone
 
 import pytest
 
@@ -11,7 +11,12 @@ from ngo_homesuite.models.core import Beneficiary, ExternalCommunicationAuthoriz
 
 @pytest.fixture(scope="module")
 def app(shared_test_app):
-    return shared_test_app
+    original_roles_requiring_2fa = shared_test_app.config.get("ROLES_REQUIRING_2FA")
+    shared_test_app.config["ROLES_REQUIRING_2FA"] = []
+    try:
+        yield shared_test_app
+    finally:
+        shared_test_app.config["ROLES_REQUIRING_2FA"] = original_roles_requiring_2fa
 
 
 @pytest.fixture()
@@ -20,7 +25,10 @@ def client(app):
 
 
 def _login(client, username: str, password: str) -> None:
-    client.post("/auth/login", data={"username": username, "password": password})
+    rv = client.post("/auth/login", data={"username": username, "password": password}, follow_redirects=False)
+    assert rv.status_code in (302, 303)
+    with client.session_transaction() as sess:
+        sess["_step_up_verified_at"] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
 
 
 def _ensure_user(app, username: str, email: str, role: str, password: str):
@@ -42,10 +50,14 @@ def _ensure_user(app, username: str, email: str, role: str, password: str):
             )
             user.set_password(password)
             db.session.add(user)
-            db.session.commit()
-        elif user.organization_id is None:
-            user.organization_id = org.id
-            db.session.commit()
+        else:
+            user.email = email
+            user.role = role
+            user.is_active = True
+            if user.organization_id is None:
+                user.organization_id = org.id
+            user.set_password(password)
+        db.session.commit()
 
         return user.organization_id
 

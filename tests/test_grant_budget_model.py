@@ -15,15 +15,18 @@ from flask import json
 from flask_login import current_user
 from sqlalchemy import select
 
-from ngo_homesuite.app_factory import create_app
-from ngo_homesuite.flask_config import TestingConfig
 from ngo_homesuite.models.core import db, User, Organization
 from ngo_homesuite.grants.models import Grant, GrantBudgetLine, GrantExpenseAllocation
 
 
 @pytest.fixture(scope="module")
-def app():
-    return create_app(TestingConfig)
+def app(shared_test_app):
+    original_roles_requiring_2fa = shared_test_app.config.get("ROLES_REQUIRING_2FA")
+    shared_test_app.config["ROLES_REQUIRING_2FA"] = []
+    try:
+        yield shared_test_app
+    finally:
+        shared_test_app.config["ROLES_REQUIRING_2FA"] = original_roles_requiring_2fa
 
 
 @pytest.fixture()

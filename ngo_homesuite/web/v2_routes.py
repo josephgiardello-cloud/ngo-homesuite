@@ -34,6 +34,9 @@ _PHOTO_MAX_BYTES = 5 * 1024 * 1024
 _TRACKING_MAX_REQUESTS_PER_WINDOW = 10
 _TRACKING_RATE_WINDOW_SECONDS = 60.0
 _TRACKING_REQUESTS_BY_IP: dict[str, deque[float]] = defaultdict(deque)
+_CAMPAIGN_SEND_MAX_REQUESTS_PER_WINDOW = 8
+_CAMPAIGN_SEND_RATE_WINDOW_SECONDS = 60.0
+_CAMPAIGN_SEND_REQUESTS_BY_KEY: dict[str, deque[float]] = defaultdict(deque)
 _TRACKING_PIXEL = (
     b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01\x00\x00\x00\x00,"
     b"\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;"
@@ -78,6 +81,22 @@ def _tracking_request_args() -> tuple[int, int, int, int, str]:
     issued_at = int(request.args.get("ts", "0") or 0)
     signature = str(request.args.get("sig", "") or "").strip()
     return campaign_id, donor_id, delivery_id, issued_at, signature
+
+
+def _campaign_send_limited(campaign_id: int) -> tuple[bool, int]:
+    actor_id = int(getattr(current_user, "id", 0) or 0)
+    org_id = int(getattr(current_user, "organization_id", 0) or 0)
+    key = f"{org_id}:{actor_id}:{int(campaign_id)}"
+    now = time.monotonic()
+    cutoff = now - _CAMPAIGN_SEND_RATE_WINDOW_SECONDS
+    bucket = _CAMPAIGN_SEND_REQUESTS_BY_KEY[key]
+    while bucket and bucket[0] <= cutoff:
+        bucket.popleft()
+    if len(bucket) >= _CAMPAIGN_SEND_MAX_REQUESTS_PER_WINDOW:
+        retry_after = max(1, int((bucket[0] + _CAMPAIGN_SEND_RATE_WINDOW_SECONDS) - now))
+        return True, retry_after
+    bucket.append(now)
+    return False, 0
 
 
 def _parse_iso_date(value: str) -> date:
@@ -1531,6 +1550,16 @@ def campaign_send_emails_route(campaign_id: int):
                 "required_permission": "can_authorize_external_comms",
             }
         ), 403
+
+    limited, retry_after = _campaign_send_limited(campaign_id)
+    if limited:
+        response = jsonify({
+            "error": "Rate limit exceeded for campaign email send. Please retry shortly.",
+            "retry_after_sec": retry_after,
+        })
+        response.status_code = 429
+        response.headers["Retry-After"] = str(retry_after)
+        return response
 
     data = _json_or_400(["subject", "body"])
     hitl_metadata, hitl_error = _human_in_the_loop_metadata(data)

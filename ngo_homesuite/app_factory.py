@@ -15,6 +15,7 @@ from flask import Flask, g, request, session, url_for
 from flask_login import LoginManager, current_user
 from flask_migrate import Migrate
 from flask_babel import Babel, lazy_gettext as _l
+from flask_wtf.csrf import CSRFProtect
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_ckeditor import CKEditor
@@ -65,6 +66,21 @@ def create_app(config=None):
     if config is None:
         config = get_config()
     app.config.from_object(config)
+
+    app.config.setdefault('WTF_CSRF_CHECK_DEFAULT', False)
+    csrf = CSRFProtect()
+    csrf.init_app(app)
+
+    @app.before_request
+    def enforce_csrf_for_browser_forms():
+        if not bool(app.config.get('WTF_CSRF_ENABLED', True)):
+            return None
+        if request.method not in {'POST', 'PUT', 'PATCH', 'DELETE'}:
+            return None
+        content_type = str(request.content_type or '').lower()
+        if 'application/x-www-form-urlencoded' in content_type or 'multipart/form-data' in content_type:
+            csrf.protect()
+        return None
 
     if app.config.get('SESSION_STORE_BACKEND') == 'redis' and app.config.get('REDIS_URL'):
         try:

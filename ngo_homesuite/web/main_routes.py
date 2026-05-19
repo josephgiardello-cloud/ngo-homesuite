@@ -50,6 +50,7 @@ from ngo_homesuite.services.opinionated_workflows import (
     run_program_tracking_impact_workflow,
 )
 from sqlalchemy import func, select
+from ngo_homesuite.web.auth_routes import require_step_up_auth
 from ngo_homesuite.web.rbac import roles_required
 from ngo_homesuite.utils.receipt_pdf import generate_receipt_pdf_bytes
 from ngo_homesuite.compliance.evidence_pack import build_compliance_evidence
@@ -2062,6 +2063,7 @@ def dashboard():
 
 @main_bp.route('/dashboard/export')
 @login_required
+@require_step_up_auth
 def dashboard_export() -> Response:
     """Export the current dashboard snapshot as JSON."""
     selected_period = str(request.args.get('period', '30d') or '30d').strip().lower()
@@ -2890,6 +2892,7 @@ def donor_detail(donor_id: int):
 
 @main_bp.route('/donors/export/<string:file_type>')
 @login_required
+@require_step_up_auth
 def donors_export(file_type: str):
     org = _current_org()
     if not org:
@@ -3778,6 +3781,7 @@ def donations_bulk_receipt_resend():
 
 @main_bp.route('/donations/export/<string:file_type>')
 @login_required
+@require_step_up_auth
 def donations_export(file_type: str):
     org = _current_org()
     if not org:

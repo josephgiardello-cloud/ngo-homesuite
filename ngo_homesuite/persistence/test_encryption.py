@@ -232,16 +232,40 @@ class TestDatabaseVerification:
         finally:
             os.unlink(db_path)
 
+    @pytest.mark.sqlcipher
     def test_verify_encrypted_database_with_wrong_key(self):
         """
         **Scenario**: Try to verify encrypted DB with wrong key.
         
         **Assertions**: Encryption detected, key rejected.
         """
-        # This test would require creating an encrypted database,
-        # which requires sqlcipher to be installed.
-        # Placeholder for now.
-        pytest.skip("Requires sqlcipher package")
+        sqlcipher = pytest.importorskip("pysqlcipher3.dbapi2")
+        key = EncryptionKeyManager.generate_key()
+        wrong_key = EncryptionKeyManager.generate_key()
+
+        with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as f:
+            db_path = f.name
+
+        try:
+            conn = sqlcipher.connect(db_path)
+            cur = conn.cursor()
+            cur.execute(f"PRAGMA key = \"x'{key}'\"")
+            cur.execute("CREATE TABLE secret_data (id INTEGER PRIMARY KEY, value TEXT)")
+            cur.execute("INSERT INTO secret_data (value) VALUES ('sensitive')")
+            conn.commit()
+            cur.close()
+            conn.close()
+
+            wrong_conn = sqlcipher.connect(db_path)
+            wrong_cur = wrong_conn.cursor()
+            wrong_cur.execute(f"PRAGMA key = \"x'{wrong_key}'\"")
+            with pytest.raises(Exception):
+                wrong_cur.execute("SELECT count(*) FROM secret_data")
+                wrong_cur.fetchone()
+            wrong_cur.close()
+            wrong_conn.close()
+        finally:
+            os.unlink(db_path)
 
 
 class TestKeyRotationFramework:

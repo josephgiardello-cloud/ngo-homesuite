@@ -321,3 +321,62 @@ def test_v1_audit_events_cross_tenant_access_is_blocked(client, app):
 
     assert blocked.status_code == 403
     assert "another tenant" in blocked.get_json()["error"]
+
+
+def test_v1_workflow_event_failure_returns_structured_semantics(client, app):
+    _ensure_user(app, "v2_semantics_admin", "v2_semantics_admin@test.local", "admin", "v2_semantics_admin_pass_123")
+    _login(client, "v2_semantics_admin", "v2_semantics_admin_pass_123")
+
+    with app.app_context():
+        org = Organization.query.filter_by(is_active=True).first()
+        assert org is not None
+        org_id = str(org.id)
+
+    missing = client.post(
+        "/api/v1/workflows/instances/wfi-does-not-exist/events",
+        json={
+            "org_id": org_id,
+            "event_type": "intake_submit",
+            "payload": {"case_id": "MISSING-001"},
+        },
+    )
+
+    assert missing.status_code == 404
+    payload = missing.get_json()
+    assert payload["execution_error"]["code"] == "not_found"
+    assert payload["execution_error"]["classification"] == "domain"
+    assert payload["execution_error"]["retryable"] is False
+
+
+def test_v1_workflow_instance_execution_audit_endpoint(client, app):
+    _ensure_user(app, "v2_exec_admin", "v2_exec_admin@test.local", "admin", "v2_exec_admin_pass_123")
+    _login(client, "v2_exec_admin", "v2_exec_admin_pass_123")
+
+    with app.app_context():
+        org = Organization.query.filter_by(is_active=True).first()
+        assert org is not None
+        org_id = str(org.id)
+
+    create_instance = client.post(
+        "/api/v1/workflows/instances",
+        json={"org_id": org_id, "workflow_type": "case_intake"},
+    )
+    assert create_instance.status_code == 200
+    instance_id = create_instance.get_json()["instance"]["instance_id"]
+
+    submit = client.post(
+        f"/api/v1/workflows/instances/{instance_id}/events",
+        json={
+            "org_id": org_id,
+            "event_type": "intake_submit",
+            "payload": {"case_id": "EXEC-001"},
+        },
+    )
+    assert submit.status_code == 200
+
+    executions = client.get(f"/api/v1/workflows/instances/{instance_id}/executions?org_id={org_id}")
+    assert executions.status_code == 200
+    body = executions.get_json()
+    assert body["instance_id"] == instance_id
+    assert any(item["event_type"] == "workflow_command_started" for item in body["executions"])
+    assert any(item["event_type"] == "workflow_command_completed" for item in body["executions"])

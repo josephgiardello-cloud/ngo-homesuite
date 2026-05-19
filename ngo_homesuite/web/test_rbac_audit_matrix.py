@@ -15,6 +15,7 @@ INDUSTRY STANDARDS APPLIED:
 
 import pytest
 from collections.abc import Iterable
+from datetime import datetime, timezone
 from typing import NamedTuple
 from uuid import uuid4
 from flask import Flask
@@ -302,6 +303,7 @@ class TestRbacAuditMatrix:
         with client.session_transaction() as sess:
             sess["_user_id"] = str(admin_user.id)
             sess["_fresh"] = True
+            sess["_step_up_verified_at"] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         
         # Admin changes role
         resp = client.patch(
@@ -421,6 +423,7 @@ class TestSecureBootstrapFlow:
         with client.session_transaction() as sess:
             sess["_user_id"] = str(admin_user.id)
             sess["_fresh"] = True
+            sess["_step_up_verified_at"] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         
         # Attempt to demote self
         resp = client.patch(
@@ -442,6 +445,7 @@ class TestSecureBootstrapFlow:
         with client.session_transaction() as sess:
             sess["_user_id"] = str(admin_user.id)
             sess["_fresh"] = True
+            sess["_step_up_verified_at"] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         
         # Attempt to delete self (last admin)
         resp = client.delete(
