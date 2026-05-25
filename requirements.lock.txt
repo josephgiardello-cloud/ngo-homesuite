@@ -1,4 +1,4 @@
-﻿alembic==1.14.0
+alembic==1.14.0
 annotated-types==0.7.0
 anyio==4.13.0
 appdirs==1.4.4
@@ -89,7 +89,7 @@ pyasn1==0.6.3
 pyasn1_modules==0.4.2
 pycparser==2.23
 pycryptodomex==3.23.0
-pydantic==2.9.2
+pydantic==2.13.4
 pydantic_core==2.23.4
 Pygments==2.19.2
 PyJWT==2.10.1
