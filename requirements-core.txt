@@ -15,7 +15,7 @@ PyYAML==6.0.3
 # Database
 SQLAlchemy==2.0.36
 alembic==1.14.0
-greenlet==3.3.0
+greenlet==3.5.1
 
 # Forms and validation
 WTForms==3.1.2
