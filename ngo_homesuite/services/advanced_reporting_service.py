@@ -5,7 +5,7 @@ Covers:
 - SYBUNT (Some Year But Unfortunately Not This year) donor segments
 - 360° supporter timeline — all touchpoints for a single donor
 - Pipeline/funnel snapshots for grants and memberships
-- Scheduled report stubs
+- Scheduled report CRUD and next-run orchestration
 """
 from __future__ import annotations
 

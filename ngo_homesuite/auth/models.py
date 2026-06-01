@@ -219,21 +219,9 @@ def _enforce_password_policy(username: str, password: str, role: str = None) -> 
     user_inputs = [username]
     if role:
         user_inputs.append(role)
-    # --- Async/caching stub for zxcvbn ---
-    # For high-volume environments, consider using an async or cached version of zxcvbn.
-    # Example stub:
-    # async def zxcvbn_async(password, user_inputs=None):
-    #     # Implement async or cache logic here
-    #     return zxcvbn(password, user_inputs=user_inputs)
     score = zxcvbn(password, user_inputs=user_inputs)['score']
     if score < 4:
         raise ValueError("Password is too weak. Try a longer or more complex phrase.")
-    # --- Async/caching stub for HIBP ---
-    # For high-volume environments, consider using an async or cached version of the HIBP check.
-    # Example stub:
-    # async def check_pwned_async(password, username=None, role=None, cur=None):
-    #     # Implement async or cache logic here
-    #     return _check_pwned(password, username, role, cur=cur)
     pwned_result = _check_pwned(password, username, role)
     if pwned_result is True:
         audit("password.pwned_breach", entity_type="user", details={"username": username, "role": role})
@@ -242,7 +230,6 @@ def _enforce_password_policy(username: str, password: str, role: str = None) -> 
         audit("password.pwned_api_error", entity_type="user", details={"username": username, "role": role, "error": "HIBP unavailable, uniform error"})
         # Fail open: allow creation, but log error and alert admin if repeated failures
         _alert_admin_hibp_failure()
-        pass
 
 # --- Password Verification ---
 def verify_password(password: str, expected_hash: str) -> tuple[bool, bool]:
@@ -453,58 +440,42 @@ def _check_pwned(password: str, username: str = None, role: str = None, retries:
         _alert_admin_hibp_failure(cur)
         return "hibp_unavailable"
 
-def _alert_admin_hibp_failure():
-    """
-    Alert admin if repeated HIBP failures occur. This is a placeholder for real alerting (email, etc).
-    """
-    # Use DB-persisted failure count if available
-    # Accepts optional cur for DB context, avoids circular import
+def _alert_admin_hibp_failure(cur: sqlite3.Cursor | None = None) -> None:
+    """Emit a security alert when HIBP failures cross the configured threshold."""
     from .alerting import alert_security_event
-    count = 0
-    if hasattr(_alert_admin_hibp_failure, "cur") and _alert_admin_hibp_failure.cur is not None:
-        cur = _alert_admin_hibp_failure.cur
-        count = _get_hibp_failure_count(cur)
-        if count >= _HIBP_FAILURE_THRESHOLD:
-            alert_security_event(
-                "hibp_repeated_failure",
-                {
-                    "failure_count": count,
-                    "message": "Repeated HIBP API failures detected. Password breach checks are not functioning."
-                },
-            )
-            _reset_hibp_failure_count(cur)
-    elif hasattr(_alert_admin_hibp_failure, "cur"):
-        pass
-    elif hasattr(_alert_admin_hibp_failure, "conn") and _alert_admin_hibp_failure.conn is not None:
-        cur = _alert_admin_hibp_failure.conn.cursor()
-        count = _get_hibp_failure_count(cur)
-        if count >= _HIBP_FAILURE_THRESHOLD:
-            alert_security_event(
-                "hibp_repeated_failure",
-                {
-                    "failure_count": count,
-                    "message": "Repeated HIBP API failures detected. Password breach checks are not functioning."
-                },
-            )
-            _reset_hibp_failure_count(cur)
-    else:
-        # No cursor provided, try to get one if possible
+
+    active_cur = cur
+    conn = None
+    if active_cur is None:
         try:
             from ..db.connection import get_db
+
             conn = get_db()
-            cur = conn.cursor()
-            count = _get_hibp_failure_count(cur)
-            if count >= _HIBP_FAILURE_THRESHOLD:
-                alert_security_event(
-                    "hibp_repeated_failure",
-                    {
-                        "failure_count": count,
-                        "message": "Repeated HIBP API failures detected. Password breach checks are not functioning."
-                    },
-                )
-                _reset_hibp_failure_count(cur)
+            active_cur = conn.cursor()
         except Exception:
-            pass
+            return
+
+    try:
+        count = _get_hibp_failure_count(active_cur)
+        if count < _HIBP_FAILURE_THRESHOLD:
+            return
+        alert_security_event(
+            "hibp_repeated_failure",
+            {
+                "failure_count": count,
+                "threshold": _HIBP_FAILURE_THRESHOLD,
+                "message": "Repeated HIBP API failures detected. Password breach checks are not functioning.",
+            },
+        )
+        _reset_hibp_failure_count(active_cur)
+        if conn is not None:
+            conn.commit()
+    except Exception:
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
 def ensure_admin_user(
     conn: sqlite3.Connection,
     cur: sqlite3.Cursor,

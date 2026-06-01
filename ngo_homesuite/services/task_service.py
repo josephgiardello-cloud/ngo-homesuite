@@ -6,7 +6,7 @@ from donation/grant/workflow triggers.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional
 
 from sqlalchemy import select
@@ -19,6 +19,27 @@ logger = logging.getLogger(__name__)
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _coerce_datetime(value) -> Optional[datetime]:
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        normalized = value
+    elif isinstance(value, str):
+        try:
+            normalized = datetime.fromisoformat(value)
+        except ValueError:
+            try:
+                normalized = datetime.combine(date.fromisoformat(value), datetime.min.time())
+            except ValueError:
+                return None
+    else:
+        return value
+
+    if normalized.tzinfo is not None:
+        normalized = normalized.astimezone(timezone.utc).replace(tzinfo=None)
+    return normalized
 
 
 # ---------------------------------------------------------------------------
@@ -36,10 +57,12 @@ def create_task(
     project_id: Optional[int] = None,
     task_type: str = "general",
     priority: str = "medium",
+    reminder_channel: str = "email",
     due_date: Optional[datetime] = None,
     description: Optional[str] = None,
     notes: Optional[str] = None,
 ) -> Task:
+    due_date = _coerce_datetime(due_date)
     task = Task(
         organization_id=organization_id,
         title=title,
@@ -50,6 +73,7 @@ def create_task(
         project_id=project_id,
         task_type=task_type,
         priority=priority,
+        reminder_channel=reminder_channel,
         due_date=due_date,
         description=description,
         notes=notes,
@@ -127,10 +151,12 @@ def update_task(task_id: int, organization_id: int, **fields) -> Task:
         raise NotFound()
     allowed = {
         "title", "description", "task_type", "priority", "status",
-        "due_date", "assigned_to_id", "notes",
+        "due_date", "assigned_to_id", "notes", "reminder_channel",
     }
     for k, v in fields.items():
         if k in allowed:
+            if k == "due_date":
+                v = _coerce_datetime(v)
             setattr(task, k, v)
     if fields.get("status") == "done" and not task.completed_at:
         task.completed_at = _utcnow()

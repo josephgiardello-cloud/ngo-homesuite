@@ -1030,6 +1030,8 @@ def test_donation_row_status_update_and_receipt_resend_actions(client, app):
 
 def test_expenses_export_iif_returns_payload(client, app):
     _login_admin(client)
+    with client.session_transaction() as sess:
+        sess["_step_up_verified_at"] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
 
     with app.app_context():
         org = Organization.query.filter_by(is_active=True).first()
@@ -1054,6 +1056,8 @@ def test_expenses_export_iif_returns_payload(client, app):
 
 def test_projects_page_and_exports_render(client, app):
     _login_admin(client)
+    with client.session_transaction() as sess:
+        sess["_step_up_verified_at"] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
 
     with app.app_context():
         org = Organization.query.filter_by(is_active=True).first()
