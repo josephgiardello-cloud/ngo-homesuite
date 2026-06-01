@@ -248,6 +248,7 @@ def create_app(config=None):
     from ngo_homesuite.web.program_routes import program_bp
     from ngo_homesuite.web.smart_groups_routes import smart_groups_bp
     from ngo_homesuite.web.p2p_routes import p2p_bp
+    from ngo_homesuite.web.events_routes import events_bp
     from ngo_homesuite.web.integrations_routes import integrations_bp
     from ngo_homesuite.web.reporting_routes import reporting_bp
     from ngo_homesuite.web.admin_routes import admin_bp
@@ -284,6 +285,7 @@ def create_app(config=None):
     app.register_blueprint(program_bp)
     app.register_blueprint(smart_groups_bp)
     app.register_blueprint(p2p_bp)
+    app.register_blueprint(events_bp)
     app.register_blueprint(integrations_bp)
     app.register_blueprint(reporting_bp)
     app.register_blueprint(admin_bp)

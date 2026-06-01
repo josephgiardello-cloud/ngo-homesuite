@@ -54,8 +54,57 @@ def _ensure_email_tables() -> None:
     db.session.commit()
 
 
+def _ensure_event_tables() -> None:
+    db.session.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                description TEXT,
+                start_date TEXT,
+                end_date TEXT,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                deleted_at TEXT DEFAULT NULL
+            )
+            """
+        )
+    )
+    db.session.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS registrations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id INTEGER REFERENCES events(id) ON DELETE CASCADE,
+                donor_id INTEGER REFERENCES donors(id) ON DELETE SET NULL,
+                registered_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                deleted_at TEXT DEFAULT NULL
+            )
+            """
+        )
+    )
+    db.session.commit()
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _event_columns() -> set[str]:
+    rows = db.session.execute(text("PRAGMA table_info(events)")).mappings().all()
+    return {str(row.get("name") or "") for row in rows if row.get("name")}
+
+
+def _events_select_clause() -> str:
+    columns = ["id", "name", "description", "start_date", "end_date", "created_at", "updated_at", "deleted_at"]
+    available = _event_columns()
+    if "location" in available:
+        columns.insert(4, "location")
+    if "updated_by" in available:
+        columns.append("updated_by")
+    return ", ".join(columns)
 
 
 def _parse_event_time(raw: Any) -> datetime | None:
@@ -76,28 +125,33 @@ def _parse_event_time(raw: Any) -> datetime | None:
 
 
 def get_event(event_id: int) -> dict[str, Any] | None:
+    _ensure_event_tables()
     row = db.session.execute(
         text(
             """
-            SELECT id, name, description, start_date, end_date
+            SELECT {columns}
             FROM events
             WHERE id = :event_id AND deleted_at IS NULL
-            """
+            """.format(columns=_events_select_clause())
         ),
         {"event_id": int(event_id)},
     ).mappings().first()
     if row is None:
         return None
+    start_value = row.get("start_datetime") or row.get("start_date")
     return {
         "id": int(row["id"]),
-        "title": str(row["name"] or "Event"),
-        "description": row["description"],
-        "start_date": row["start_date"],
-        "end_date": row["end_date"],
+        "title": str(row.get("title") or row.get("name") or "Event"),
+        "description": row.get("description"),
+        "start_datetime": start_value,
+        "start_date": row.get("start_date"),
+        "end_date": row.get("end_date"),
+        "location": row.get("location"),
     }
 
 
 def _attendee_emails(event_id: int) -> list[tuple[str, str]]:
+    _ensure_event_tables()
     rows = db.session.execute(
         text(
             """
@@ -165,6 +219,7 @@ def process_email_opt_out(token: str) -> bool:
 
 def send_event_reminder(event_id: int, attendee_email: str, attendee_name: str) -> bool:
     """Send a reminder email with up to _MAX_SEND_ATTEMPTS attempts and exponential backoff."""
+    _ensure_event_tables()
     event = get_event(event_id)
     if event is None:
         return False
