@@ -25,6 +25,7 @@ from ngo_homesuite.grants.facade import GrantsFacade
 from ngo_homesuite.grants.exceptions import GrantApprovalError, GrantNotFound, InvalidGrantTransition
 from ngo_homesuite.models.core import CampaignEmailDelivery, Donor, Grant, User, db
 
+from ngo_homesuite.web.auth_routes import require_step_up_auth
 from ngo_homesuite.web.rbac import roles_required
 
 v2_bp = Blueprint("v2", __name__, url_prefix="/api/v2")
@@ -803,6 +804,26 @@ def task_reminder_candidates():
     limit = request.args.get("limit", 25, type=int)
     payload = recommend_task_reminders(_org_id(), limit=max(1, min(limit, 200)))
     return jsonify(payload)
+
+
+@v2_bp.route("/task-assignees", methods=["GET"])
+@login_required
+@roles_required("admin", "staff")
+def task_assignees():
+    from ngo_homesuite.models.core import User
+
+    users = list(db.session.scalars(select(User).where(User.organization_id == _org_id()).order_by(User.created_at.asc())))
+    return jsonify([
+        {
+            "id": user.id,
+            "username": user.username,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "role": user.role,
+            "is_active": user.is_active,
+        }
+        for user in users
+    ])
 
 
 def _task_labels(org_id: int, tasks) -> dict[str, dict[int, str]]:
@@ -1627,6 +1648,29 @@ def campaign_preview_emails_route(campaign_id: int):
     return jsonify(payload), 200
 
 
+@v2_bp.route("/campaigns/<int:campaign_id>/emails/deliverability", methods=["POST"])
+@login_required
+@roles_required("admin", "staff")
+def campaign_email_deliverability_route(campaign_id: int):
+    """Run deliverability preflight checks for campaign email content and audience."""
+    from ngo_homesuite.services.campaign_email_service import campaign_email_deliverability_report
+
+    data = request.get_json(silent=True) or {}
+    try:
+        payload = campaign_email_deliverability_report(
+            _org_id(),
+            campaign_id,
+            subject=str(data.get("subject") or ""),
+            body=str(data.get("body") or ""),
+            audience=data.get("audience") if isinstance(data.get("audience"), dict) else {},
+        )
+    except LookupError:
+        return jsonify({"error": "Campaign not found"}), 404
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(payload), 200
+
+
 @v2_bp.route("/campaigns/<int:campaign_id>/emails/ai-draft", methods=["POST"])
 @login_required
 @roles_required("admin", "staff")
@@ -1651,6 +1695,152 @@ def campaign_ai_draft_route(campaign_id: int):
     return jsonify(payload), 200
 
 
+@v2_bp.route("/campaigns/<int:campaign_id>/emails/automation/sequence", methods=["POST"])
+@login_required
+@roles_required("admin", "staff")
+def campaign_email_automation_sequence_route(campaign_id: int):
+    """Schedule a multi-step campaign drip sequence using existing scheduled-batch infrastructure."""
+    from ngo_homesuite.services.campaign_email_service import schedule_campaign_email_sequence
+
+    actor_role = str(getattr(current_user, "role", "") or "").strip().lower()
+    actor_granted = bool(getattr(current_user, "can_authorize_external_comms", False))
+    if actor_role != "admin" and not actor_granted:
+        return jsonify(
+            {
+                "error": "User is not authorized for outbound external communications.",
+                "required_permission": "can_authorize_external_comms",
+            }
+        ), 403
+
+    data = _json_or_400(["subject", "body"])
+    hitl_metadata, hitl_error = _human_in_the_loop_metadata(data)
+    if hitl_error:
+        return jsonify({
+            "error": hitl_error,
+            "warning": "All outbound external communication requires explicit human authorization.",
+            "human_in_the_loop_required": True,
+        }), 400
+
+    try:
+        step_count = int(data.get("step_count", 3))
+        cadence_days = int(data.get("cadence_days", 7))
+    except (TypeError, ValueError):
+        return jsonify({"error": "step_count and cadence_days must be integers"}), 400
+
+    if step_count <= 0:
+        return jsonify({"error": "step_count must be at least 1"}), 400
+    if cadence_days <= 0:
+        return jsonify({"error": "cadence_days must be at least 1"}), 400
+
+    scheduled_start = None
+    scheduled_at_raw = data.get("start_at")
+    if scheduled_at_raw:
+        from datetime import datetime as _dt
+        try:
+            scheduled_start = _dt.fromisoformat(str(scheduled_at_raw).replace("Z", "+00:00")).replace(tzinfo=None)
+        except (TypeError, ValueError):
+            return jsonify({"error": "start_at must be an ISO datetime"}), 400
+
+    audience_payload = data.get("audience") if isinstance(data.get("audience"), dict) else {}
+    audience_payload = dict(audience_payload)
+    audience_payload["_human_in_the_loop"] = hitl_metadata
+
+    try:
+        payload = schedule_campaign_email_sequence(
+            _org_id(),
+            campaign_id,
+            created_by_user_id=int(getattr(current_user, "id", 0) or 0),
+            created_by_username=str(getattr(current_user, "username", "") or ""),
+            created_by_role=str(getattr(current_user, "role", "") or ""),
+            subject=str(data.get("subject") or ""),
+            body=str(data.get("body") or ""),
+            audience=audience_payload,
+            human_authorization=hitl_metadata,
+            step_count=step_count,
+            cadence_days=cadence_days,
+            start_at=scheduled_start,
+        )
+    except LookupError:
+        return jsonify({"error": "Campaign not found"}), 404
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify(payload), 200
+
+
+@v2_bp.route("/campaigns/<int:campaign_id>/emails/automation/templates", methods=["GET"])
+@login_required
+@roles_required("admin", "staff")
+def campaign_email_automation_templates_route(campaign_id: int):
+    """List built-in automation templates available for a campaign."""
+    from ngo_homesuite.services.campaign_email_service import campaign_email_automation_templates
+    from ngo_homesuite.services.campaign_service import get_campaign
+
+    campaign = get_campaign(campaign_id, _org_id())
+    if campaign is None:
+        return jsonify({"error": "Campaign not found"}), 404
+    return jsonify(campaign_email_automation_templates(campaign)), 200
+
+
+@v2_bp.route("/campaigns/<int:campaign_id>/emails/automation/templates/<string:template_key>/instantiate", methods=["POST"])
+@login_required
+@roles_required("admin", "staff")
+def campaign_email_automation_template_instantiate_route(campaign_id: int, template_key: str):
+    """Instantiate and schedule a built-in campaign automation template."""
+    from ngo_homesuite.services.campaign_email_service import instantiate_campaign_email_automation_template
+
+    actor_role = str(getattr(current_user, "role", "") or "").strip().lower()
+    actor_granted = bool(getattr(current_user, "can_authorize_external_comms", False))
+    if actor_role != "admin" and not actor_granted:
+        return jsonify(
+            {
+                "error": "User is not authorized for outbound external communications.",
+                "required_permission": "can_authorize_external_comms",
+            }
+        ), 403
+
+    data = request.get_json(silent=True) or {}
+    hitl_metadata, hitl_error = _human_in_the_loop_metadata(data)
+    if hitl_error:
+        return jsonify({
+            "error": hitl_error,
+            "warning": "All outbound external communication requires explicit human authorization.",
+            "human_in_the_loop_required": True,
+        }), 400
+
+    scheduled_start = None
+    scheduled_at_raw = data.get("start_at")
+    if scheduled_at_raw:
+        from datetime import datetime as _dt
+        try:
+            scheduled_start = _dt.fromisoformat(str(scheduled_at_raw).replace("Z", "+00:00")).replace(tzinfo=None)
+        except (TypeError, ValueError):
+            return jsonify({"error": "start_at must be an ISO datetime"}), 400
+
+    audience_payload = data.get("audience") if isinstance(data.get("audience"), dict) else {}
+    audience_payload = dict(audience_payload)
+    audience_payload["_human_in_the_loop"] = hitl_metadata
+
+    try:
+        payload = instantiate_campaign_email_automation_template(
+            _org_id(),
+            campaign_id,
+            template_key=str(template_key or ""),
+            created_by_user_id=int(getattr(current_user, "id", 0) or 0),
+            created_by_username=str(getattr(current_user, "username", "") or ""),
+            created_by_role=str(getattr(current_user, "role", "") or ""),
+            audience=audience_payload,
+            human_authorization=hitl_metadata,
+            start_at=scheduled_start,
+        )
+    except LookupError:
+        return jsonify({"error": "Campaign not found"}), 404
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify(payload), 200
+
+
 @v2_bp.route("/campaigns/<int:campaign_id>/emails/analytics", methods=["GET"])
 @login_required
 @roles_required("admin", "staff")
@@ -1660,6 +1850,26 @@ def campaign_email_analytics_route(campaign_id: int):
 
     try:
         payload = campaign_email_analytics(_org_id(), campaign_id)
+    except LookupError:
+        return jsonify({"error": "Campaign not found"}), 404
+    return jsonify(payload), 200
+
+
+@v2_bp.route("/campaigns/<int:campaign_id>/emails/attribution", methods=["GET"])
+@login_required
+@roles_required("admin", "staff")
+def campaign_email_attribution_route(campaign_id: int):
+    """Return donation attribution metrics influenced by campaign email touches."""
+    from ngo_homesuite.services.campaign_email_service import campaign_email_attribution
+
+    window_raw = request.args.get("window_days", "30")
+    try:
+        window_days = int(window_raw)
+    except (TypeError, ValueError):
+        return jsonify({"error": "window_days must be an integer"}), 400
+
+    try:
+        payload = campaign_email_attribution(_org_id(), campaign_id, window_days=window_days)
     except LookupError:
         return jsonify({"error": "Campaign not found"}), 404
     return jsonify(payload), 200
@@ -1730,6 +1940,69 @@ def campaign_email_segments_create_route():
         payload["members"] = members[:preview_limit]
 
     return jsonify(payload), 201
+
+
+@v2_bp.patch("/campaigns/email/segments/<int:segment_id>")
+@login_required
+@roles_required("admin", "staff")
+def campaign_email_segments_update_route(segment_id: int):
+    """Update an existing saved campaign email segment."""
+    from werkzeug.exceptions import NotFound
+
+    from ngo_homesuite.services.smart_groups_service import evaluate_group, update_group
+
+    data = request.get_json(silent=True) or {}
+    name = str(data.get("name") or "").strip() if "name" in data else None
+    description = str(data.get("description") or "") if "description" in data else None
+    rules = data.get("rules") if "rules" in data else None
+    include_preview = bool(data.get("include_preview", False))
+
+    try:
+        group = update_group(
+            int(segment_id),
+            _org_id(),
+            name=name,
+            description=description,
+            rules=rules,
+        )
+    except NotFound:
+        return jsonify({"error": "Segment not found"}), 404
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"error": "A segment with this name already exists."}), 409
+
+    payload = {
+        "id": int(group.id),
+        "name": str(group.name or ""),
+        "description": str(group.description or ""),
+        "last_count": int(group.last_count or 0),
+        "last_evaluated_at": group.last_evaluated_at.isoformat() if group.last_evaluated_at else None,
+    }
+    if include_preview:
+        members = evaluate_group(int(group.id), _org_id())
+        payload["count"] = int(len(members))
+        payload["members"] = members[:50]
+
+    return jsonify(payload), 200
+
+
+@v2_bp.delete("/campaigns/email/segments/<int:segment_id>")
+@login_required
+@roles_required("admin", "staff")
+@require_step_up_auth
+def campaign_email_segments_delete_route(segment_id: int):
+    """Delete a saved campaign email segment."""
+    from werkzeug.exceptions import NotFound
+
+    from ngo_homesuite.services.smart_groups_service import delete_group
+
+    try:
+        delete_group(int(segment_id), _org_id())
+    except NotFound:
+        return jsonify({"error": "Segment not found"}), 404
+    return jsonify({"deleted": True, "segment_id": int(segment_id)}), 200
 
 
 @v2_bp.get("/campaigns/email/segments/<int:segment_id>/preview")

@@ -47,6 +47,8 @@ def _login_admin(client):
         follow_redirects=False,
     )
     assert rv.status_code in (302, 303)
+    with client.session_transaction() as sess:
+        sess["_step_up_verified_at"] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
 
 
 def _login_staff(client):
@@ -620,6 +622,75 @@ def test_campaign_email_preview_returns_quality_hints_and_samples(client, app):
     assert payload["sample_preview"][0]["recipient_email"] == "preview@example.org"
 
 
+def test_campaign_email_deliverability_endpoint_returns_policy_checks(client, app):
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "Deliverability Check Campaign"})
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+    org_id = _admin_org_id(app)
+
+    with app.app_context():
+        donor = Donor(
+            organization_id=org_id,
+            name="Deliverability Donor",
+            email="deliverability@example.org",
+            donor_type="individual",
+        )
+        db.session.add(donor)
+        db.session.commit()
+        donor_id = int(donor.id)
+
+    rv = client.post(
+        f"/api/v2/campaigns/{campaign_id}/emails/deliverability",
+        json={
+            "subject": "Deliverability preview",
+            "body": "Hello {name}, support {campaign_name}.",
+            "audience": {"donor_ids": [donor_id]},
+        },
+    )
+    assert rv.status_code == 200
+    payload = rv.get_json() or {}
+    assert payload.get("campaign_id") == campaign_id
+    assert isinstance(payload.get("checks"), list)
+    assert int(payload.get("total_recipients") or 0) == 1
+
+
+def test_campaign_send_email_blocks_when_sender_domain_violates_policy(client, app, monkeypatch):
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "Sender Domain Policy Campaign"})
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+    org_id = _admin_org_id(app)
+
+    with app.app_context():
+        donor = Donor(
+            organization_id=org_id,
+            name="Sender Policy Donor",
+            email="sender-policy@example.org",
+            donor_type="individual",
+        )
+        db.session.add(donor)
+        db.session.commit()
+        donor_id = int(donor.id)
+
+        monkeypatch.setitem(app.config, "CAMPAIGN_EMAIL_ALLOWED_SENDER_DOMAINS", "approved.org")
+        monkeypatch.setitem(app.config, "DEFAULT_MAIL_SENDER", "mailer@unapproved.org")
+        monkeypatch.setitem(app.config, "CAMPAIGN_EMAIL_ENFORCE_PRECHECKS", True)
+
+    rv = client.post(
+        f"/api/v2/campaigns/{campaign_id}/emails/send",
+        json={
+            "subject": "Policy violation check",
+            "body": "Hello {name}, support {campaign_name}.",
+            "audience": {"donor_ids": [donor_id]},
+            "compliance": _human_authorization_payload(),
+        },
+    )
+    assert rv.status_code == 400
+    payload = rv.get_json() or {}
+    assert "deliverability precheck failed" in str(payload.get("error") or "")
+
+
 def test_campaign_ai_draft_uses_fallback_when_ai_unavailable(client, app):
     _login_staff(client)
     create_rv = client.post("/api/v2/campaigns", json={"name": "AI Draft Campaign"})
@@ -953,6 +1024,156 @@ def test_campaign_email_segment_quick_create_rejects_duplicate_name(client):
     assert "already exists" in str(payload.get("error") or "")
 
 
+def test_campaign_email_segment_update_endpoint_renames_segment(client):
+    _login_admin(client)
+    segment_name = f"Segment Rename Source {int(time.time())}"
+
+    create_rv = client.post(
+        "/api/v2/campaigns/email/segments",
+        json={
+            "name": segment_name,
+            "rules": [{"field": "gift_count", "op": "gte", "value": 1}],
+        },
+    )
+    assert create_rv.status_code == 201
+    segment_id = int((create_rv.get_json() or {}).get("id"))
+
+    rename_rv = client.patch(
+        f"/api/v2/campaigns/email/segments/{segment_id}",
+        json={"name": f"Segment Rename Target {int(time.time())}"},
+    )
+    assert rename_rv.status_code == 200
+    payload = rename_rv.get_json() or {}
+    assert int(payload.get("id") or 0) == segment_id
+    assert "Segment Rename Target" in str(payload.get("name") or "")
+
+
+def test_campaign_email_segment_delete_endpoint_removes_segment(client):
+    _login_admin(client)
+    create_rv = client.post(
+        "/api/v2/campaigns/email/segments",
+        json={
+            "name": f"Segment Delete {int(time.time())}",
+            "rules": [{"field": "gift_count", "op": "gte", "value": 1}],
+        },
+    )
+    assert create_rv.status_code == 201
+    segment_id = int((create_rv.get_json() or {}).get("id"))
+
+    delete_rv = client.delete(f"/api/v2/campaigns/email/segments/{segment_id}")
+    assert delete_rv.status_code == 200
+    body = delete_rv.get_json() or {}
+    assert body.get("deleted") is True
+
+    preview_rv = client.get(f"/api/v2/campaigns/email/segments/{segment_id}/preview")
+    assert preview_rv.status_code == 404
+
+
+def test_campaign_email_attribution_endpoint_returns_influenced_metrics(client, app):
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "Attribution Metrics Campaign"})
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+    org_id = _admin_org_id(app)
+
+    with app.app_context():
+        donor = Donor(
+            organization_id=org_id,
+            name="Attribution Donor",
+            email="attribution@example.org",
+            donor_type="individual",
+        )
+        db.session.add(donor)
+        db.session.flush()
+
+        sent_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=2)
+        batch = CampaignEmailBatch(
+            organization_id=org_id,
+            campaign_id=campaign_id,
+            created_by_user_id=1,
+            subject="Attribution touch",
+            body="Hello {name}",
+            status="sent",
+            total_recipients=1,
+            sent_count=1,
+            failed_count=0,
+            sent_at=sent_at,
+        )
+        db.session.add(batch)
+        db.session.flush()
+
+        db.session.add(
+            CampaignEmailDelivery(
+                batch_id=batch.id,
+                organization_id=org_id,
+                campaign_id=campaign_id,
+                donor_id=donor.id,
+                recipient_email=donor.email,
+                delivery_status="sent",
+                sent_at=sent_at,
+            )
+        )
+        db.session.add(
+            Donation(
+                organization_id=org_id,
+                campaign_id=campaign_id,
+                donor_id=donor.id,
+                donor_name=donor.name,
+                donor_email=donor.email,
+                amount=180.0,
+                currency="USD",
+                status="received",
+                donation_date=sent_at + timedelta(days=1),
+            )
+        )
+        db.session.commit()
+
+    rv = client.get(f"/api/v2/campaigns/{campaign_id}/emails/attribution", query_string={"window_days": 30})
+    assert rv.status_code == 200
+    payload = rv.get_json() or {}
+    assert int(payload.get("influenced_donations") or 0) >= 1
+    assert float(payload.get("influenced_revenue") or 0.0) >= 180.0
+    assert int(payload.get("influenced_donor_count") or 0) >= 1
+
+
+def test_campaign_email_automation_templates_and_instantiate_route(client, app):
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "Template Automation Campaign"})
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+    org_id = _admin_org_id(app)
+
+    with app.app_context():
+        donor = Donor(
+            organization_id=org_id,
+            name="Template Recipient",
+            email="template-sequence@example.org",
+            donor_type="individual",
+        )
+        db.session.add(donor)
+        db.session.commit()
+        donor_id = int(donor.id)
+
+    templates_rv = client.get(f"/api/v2/campaigns/{campaign_id}/emails/automation/templates")
+    assert templates_rv.status_code == 200
+    templates = templates_rv.get_json() or []
+    assert isinstance(templates, list)
+    assert any(str(item.get("key") or "") == "welcome_nurture" for item in templates)
+
+    instantiate_rv = client.post(
+        f"/api/v2/campaigns/{campaign_id}/emails/automation/templates/welcome_nurture/instantiate",
+        json={
+            "audience": {"donor_ids": [donor_id]},
+            "compliance": _human_authorization_payload(),
+        },
+    )
+    assert instantiate_rv.status_code == 200
+    payload = instantiate_rv.get_json() or {}
+    assert payload.get("template_key") == "welcome_nurture"
+    assert int(payload.get("step_count") or 0) >= 1
+    assert isinstance(payload.get("batches"), list)
+
+
 def test_campaign_send_email_ai_assisted_requires_human_in_loop_confirmation(client):
     _login_admin(client)
     create_rv = client.post("/api/v2/campaigns", json={"name": "AI HITL Guardrail Campaign"})
@@ -1126,6 +1347,75 @@ def test_campaign_send_email_can_be_scheduled_without_immediate_delivery(client,
         assert batch.status == "scheduled"
         assert batch.scheduled_at is not None
         assert int(batch.total_recipients) == 1
+
+
+def test_campaign_email_automation_sequence_schedules_multiple_batches(client, app):
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "Automation Sequence Campaign"})
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+    org_id = _admin_org_id(app)
+
+    with app.app_context():
+        donor = Donor(
+            organization_id=org_id,
+            name="Automation Donor",
+            email="automation-donor@example.org",
+            donor_type="individual",
+        )
+        db.session.add(donor)
+        db.session.commit()
+        donor_id = int(donor.id)
+
+    rv = client.post(
+        f"/api/v2/campaigns/{campaign_id}/emails/automation/sequence",
+        json={
+            "subject": "Automation touchpoint",
+            "body": "Hello {name}, this is an automation sequence for {campaign_name}.",
+            "audience": {"donor_ids": [donor_id]},
+            "step_count": 3,
+            "cadence_days": 5,
+            "compliance": _human_authorization_payload(),
+        },
+    )
+    assert rv.status_code == 200
+    payload = rv.get_json() or {}
+    assert payload.get("automation") == "drip_sequence"
+    assert int(payload.get("step_count") or 0) == 3
+    batches = payload.get("batches") or []
+    assert len(batches) == 3
+
+    with app.app_context():
+        rows = list(
+            db.session.scalars(
+                db.select(CampaignEmailBatch).where(CampaignEmailBatch.campaign_id == campaign_id)
+            )
+        )
+        assert len(rows) >= 3
+        statuses = {str(row.status) for row in rows}
+        assert "scheduled" in statuses
+
+
+def test_campaign_email_automation_sequence_validates_step_count(client):
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "Automation Validation Campaign"})
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+
+    rv = client.post(
+        f"/api/v2/campaigns/{campaign_id}/emails/automation/sequence",
+        json={
+            "subject": "Validation",
+            "body": "Hello {name}",
+            "audience": {},
+            "step_count": 0,
+            "cadence_days": 3,
+            "compliance": _human_authorization_payload(),
+        },
+    )
+    assert rv.status_code == 400
+    payload = rv.get_json() or {}
+    assert "step_count" in str(payload.get("error") or "")
 
 
 def test_campaign_unsubscribe_creates_opt_out_and_suppresses_future_send(client, app):
