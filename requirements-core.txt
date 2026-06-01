@@ -9,7 +9,7 @@ Flask-Babel==4.0.0
 Flask-Limiter==4.1.1
 Flask-Session==0.8.0
 APScheduler==3.11.2
-Pydantic==2.9.2
+Pydantic==2.13.4
 PyYAML==6.0.3
 
 # Database
