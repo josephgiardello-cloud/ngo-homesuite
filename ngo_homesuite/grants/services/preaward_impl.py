@@ -5,7 +5,7 @@ import json
 from typing import Optional
 
 from flask import current_app, has_app_context
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from ngo_homesuite.db.utils import audit
 from ngo_homesuite.models.core import Grant, GrantOpportunity, GrantProposal, db
@@ -136,6 +136,10 @@ def search_applicable_opportunities(
     stmt = select(GrantOpportunity).where(
         GrantOpportunity.organization_id == int(organization_id),
         GrantOpportunity.status.in_(status_values),
+    )
+    today = date.today()
+    stmt = stmt.where(
+        or_(GrantOpportunity.deadline.is_(None), GrantOpportunity.deadline >= today)
     )
     if deadline_before is not None:
         stmt = stmt.where(GrantOpportunity.deadline.is_not(None), GrantOpportunity.deadline <= deadline_before)

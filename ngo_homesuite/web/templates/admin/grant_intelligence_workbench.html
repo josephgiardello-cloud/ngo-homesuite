@@ -1,0 +1,299 @@
+{% extends 'base.html' %}
+{% block title %}Grant Intelligence Workbench{% endblock %}
+{% block content %}
+<style>
+  .grant-intel-shell {
+    display: grid;
+    gap: 1rem;
+  }
+  .grant-intel-hero {
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    padding: 1.5rem;
+    background:
+      radial-gradient(circle at top right, rgba(96, 165, 250, 0.18), transparent 30%),
+      radial-gradient(circle at bottom left, rgba(16, 185, 129, 0.15), transparent 28%),
+      linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.95));
+    color: #f4cf69;
+    box-shadow: 0 20px 60px rgba(15, 23, 42, 0.18);
+  }
+  .grant-intel-hero h1 {
+    color: #f6d675;
+  }
+  .grant-intel-hero p {
+    color: #f8e4a4;
+  }
+  .grant-intel-hero h1,
+  .grant-intel-hero p {
+    margin: 0;
+  }
+  .grant-intel-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1rem;
+  }
+  .grant-intel-card {
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 1rem;
+    background: var(--surface);
+  }
+  .grant-intel-card h2,
+  .grant-intel-card h3 {
+    margin-top: 0;
+  }
+  .grant-intel-inputs {
+    display: grid;
+    gap: 0.75rem;
+  }
+  .grant-intel-inputs input,
+  .grant-intel-inputs textarea {
+    width: 100%;
+  }
+  .grant-intel-results {
+    display: grid;
+    gap: 0.75rem;
+  }
+  .grant-opportunity {
+    border: 1px solid var(--border-soft);
+    border-radius: 16px;
+    padding: 0.9rem;
+    background: rgba(255, 255, 255, 0.55);
+  }
+  .grant-opportunity strong {
+    display: block;
+    margin-bottom: 0.25rem;
+  }
+  .grant-summary {
+    margin-top: 0.65rem;
+    font-size: 0.92rem;
+    line-height: 1.45;
+    color: var(--text);
+  }
+  .grant-metric-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+  }
+  .grant-metric-pill {
+    border-radius: 999px;
+    padding: 0.35rem 0.7rem;
+    background: rgba(15, 23, 42, 0.08);
+    font-size: 0.9rem;
+  }
+  .grant-empty {
+    border: 1px dashed var(--border);
+    border-radius: 16px;
+    padding: 1rem;
+    color: var(--text-muted);
+  }
+</style>
+
+<section class="page-header grant-intel-hero">
+  <h1>Grant Intelligence Workbench</h1>
+  <p>Find live opportunities, review eligibility language, and verify readiness before an application moves forward.</p>
+</section>
+
+<section class="grant-intel-grid">
+  <article class="grant-intel-card">
+    <h2>Discover Grants</h2>
+    <div class="grant-intel-inputs">
+      <input id="searchQuery" class="form-control" placeholder="Search terms, funder, program, or purpose" />
+      <textarea id="searchProfile" class="form-control" rows="4" placeholder="Describe your organization, mission, service area, and target award"></textarea>
+      <input id="searchAmount" type="number" min="0" step="0.01" class="form-control" placeholder="Requested amount" />
+      <button id="searchBtn" class="btn btn-primary" type="button">Find applicable grants</button>
+    </div>
+  </article>
+
+  <article class="grant-intel-card">
+    <h2>Verify Readiness</h2>
+    <div class="grant-intel-inputs">
+      <input id="readinessGrantId" type="number" min="1" class="form-control" placeholder="Grant ID to review" />
+      <button id="readinessSeedBtn" class="btn btn-secondary" type="button">Create demo grant ID</button>
+      <button id="readinessBtn" class="btn btn-outline-primary" type="button">Run AI readiness review</button>
+    </div>
+  </article>
+</section>
+
+<section class="grant-intel-card">
+  <h2>Opportunity Matches</h2>
+  <div id="opportunityResults" class="grant-intel-results grant-empty">Search for opportunities to see matches here.</div>
+</section>
+
+<section class="grant-intel-card">
+  <h2>Readiness Report</h2>
+  <pre id="readinessOutput" class="grant-empty" style="white-space:pre-wrap; margin:0;">Select a grant ID to inspect.</pre>
+</section>
+
+<script>
+(function () {
+  const resultsBox = document.getElementById('opportunityResults');
+  const readinessBox = document.getElementById('readinessOutput');
+
+  function renderOpportunity(item) {
+    const lines = [];
+    lines.push('<div class="grant-opportunity">');
+    lines.push('<strong>' + escapeHtml(item.title || 'Untitled opportunity') + '</strong>');
+    lines.push('<div>' + escapeHtml(item.funder_name || 'Unknown funder') + '</div>');
+    if (item.program_name) {
+      lines.push('<div>' + escapeHtml(item.program_name) + '</div>');
+    }
+    if (item.deadline) {
+      lines.push('<div>Deadline: ' + escapeHtml(item.deadline) + '</div>');
+    }
+    lines.push('<div class="grant-metric-row">');
+    lines.push('<span class="grant-metric-pill">Fit score ' + escapeHtml(String(item.applicability_score ?? 0)) + '</span>');
+    if (item.amount_min || item.amount_max) {
+      lines.push('<span class="grant-metric-pill">Amount range ' + escapeHtml([item.amount_min, item.amount_max].filter(Boolean).join(' - ')) + '</span>');
+    }
+    lines.push('</div>');
+    if (item.summary) {
+      lines.push('<div class="grant-summary"><strong style="display:inline;">Summary:</strong> ' + escapeHtml(String(item.summary).slice(0, 420)) + '</div>');
+    }
+    if (Array.isArray(item.match_reasons) && item.match_reasons.length) {
+      lines.push('<ul style="margin:0.75rem 0 0 1rem;">');
+      item.match_reasons.forEach(reason => lines.push('<li>' + escapeHtml(reason) + '</li>'));
+      lines.push('</ul>');
+    }
+    if (item.external_url) {
+      lines.push('<div style="margin-top:0.75rem;"><a href="' + escapeHtml(item.external_url) + '" target="_blank" rel="noreferrer">Open source listing</a></div>');
+    }
+    lines.push('</div>');
+    return lines.join('');
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  async function searchOpportunities() {
+    const params = new URLSearchParams();
+    const query = document.getElementById('searchQuery').value.trim();
+    const profile = document.getElementById('searchProfile').value.trim();
+    const amount = document.getElementById('searchAmount').value.trim();
+    if (query) params.set('q', query);
+    if (profile) params.set('applicant_profile', profile);
+    if (amount) params.set('requested_amount', amount);
+    const limitFromPage = (document.getElementById('searchBtn').dataset.limit || '').trim();
+    params.set('limit', limitFromPage || '12');
+
+    resultsBox.classList.remove('grant-empty');
+    resultsBox.textContent = 'Searching...';
+
+    const resp = await fetch('/admin/grants/opportunities/search?' + params.toString(), { credentials: 'same-origin' });
+    const payload = await resp.json();
+    if (!resp.ok) {
+      resultsBox.classList.add('grant-empty');
+      resultsBox.textContent = payload.error || 'Search failed.';
+      return;
+    }
+
+    const items = payload.results || [];
+    if (!items.length) {
+      resultsBox.classList.add('grant-empty');
+      resultsBox.textContent = payload.warning || 'No matches found for the current profile. Try broader terms or remove requested amount.';
+      return;
+    }
+
+    resultsBox.classList.remove('grant-empty');
+    resultsBox.innerHTML = items.map(renderOpportunity).join('');
+  }
+
+  function hydrateFromUrlAndSearch() {
+    const qs = new URLSearchParams(window.location.search || '');
+    const shouldAutoSearch = (qs.get('auto_search') || '').trim() === '1';
+    if (!shouldAutoSearch) {
+      return;
+    }
+
+    const q = (qs.get('q') || '').trim();
+    const profile = (qs.get('applicant_profile') || '').trim();
+    const requested = (qs.get('requested_amount') || '').trim();
+    const limit = (qs.get('limit') || '').trim();
+
+    if (q) {
+      document.getElementById('searchQuery').value = q;
+    }
+    if (profile) {
+      document.getElementById('searchProfile').value = profile;
+    }
+    if (requested) {
+      document.getElementById('searchAmount').value = requested;
+    }
+
+    if (limit) {
+      // Keep local default behavior but preserve caller-provided limit if present.
+      const searchBtn = document.getElementById('searchBtn');
+      searchBtn.dataset.limit = limit;
+    }
+
+    searchOpportunities().catch(() => {
+      resultsBox.classList.add('grant-empty');
+      resultsBox.textContent = 'Unable to load opportunities right now. Please retry.';
+    });
+  }
+
+  async function runReadiness() {
+    const grantId = String(document.getElementById('readinessGrantId').value || '').trim();
+    if (!grantId) {
+      readinessBox.textContent = 'Enter a grant ID first.';
+      return;
+    }
+
+    readinessBox.textContent = 'Running readiness review...';
+    const resp = await fetch('/admin/compliance/grant/' + grantId + '/readiness', { credentials: 'same-origin' });
+    const payload = await resp.json();
+    readinessBox.textContent = JSON.stringify(payload, null, 2);
+  }
+
+  async function seedDemoGrant() {
+    readinessBox.textContent = 'Creating demo grant...';
+    const resp = await fetch('/admin/grants/demo-seed', {
+      method: 'POST',
+      credentials: 'same-origin'
+    });
+    const payload = await resp.json();
+    if (!resp.ok) {
+      readinessBox.textContent = payload.error || 'Unable to create demo grant.';
+      return;
+    }
+    const grantId = payload.grant_id;
+    document.getElementById('readinessGrantId').value = String(grantId || '');
+    readinessBox.textContent = 'Ready. Using Grant ID ' + String(grantId) + ' (' + String(payload.title || 'Grant') + '). Click "Run AI readiness review".';
+  }
+
+  async function loadInternalGrants() {
+    try {
+      const resp = await fetch('/admin/grants/list', { credentials: 'same-origin' });
+      if (!resp.ok) {
+        return;
+      }
+      const payload = await resp.json();
+      const items = Array.isArray(payload.results) ? payload.results : [];
+      if (!items.length) {
+        readinessBox.textContent = 'No internal grants yet. Create one in Grants Workbench, then run Readiness using its Grant ID.';
+        return;
+      }
+
+      const first = items[0];
+      document.getElementById('readinessGrantId').value = String(first.id);
+      readinessBox.textContent = 'Ready. Defaulting to Grant ID ' + String(first.id) + ' (' + String(first.title || 'Untitled Grant') + '). Click "Run AI readiness review".';
+    } catch (error) {
+      // Keep existing message if grant list cannot be loaded.
+    }
+  }
+
+  document.getElementById('searchBtn').addEventListener('click', searchOpportunities);
+  document.getElementById('readinessSeedBtn').addEventListener('click', seedDemoGrant);
+  document.getElementById('readinessBtn').addEventListener('click', runReadiness);
+  loadInternalGrants();
+  hydrateFromUrlAndSearch();
+})();
+</script>
+{% endblock %}
