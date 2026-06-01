@@ -89,3 +89,11 @@ dmypy.json
 
 # IDEs - Local .ctags_associations
 .ctags_associations
+
+# Root debug output artifacts (relocated under artifacts/debug_outputs/)
+/.pytest_auth_out.txt
+/results.txt
+/sidebar_raw.txt
+/test_output.txt
+/test_results.txt
+/traceback_fragment.txt

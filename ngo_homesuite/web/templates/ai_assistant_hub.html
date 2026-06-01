@@ -1,0 +1,33 @@
+{% extends 'base.html' %}
+{% block title %}AI Assistant Hub · NGO HomeSuite{% endblock %}
+{% block content %}
+<section class="card p-4">
+    <h1 class="h3 mb-2">AI Assistant Hub</h1>
+    <p class="text-muted mb-3">Use Apex Assistant for governed drafting, summaries, and operational support inside NGO workflows.</p>
+
+    <div class="alert alert-info" role="alert">
+        Apex Assistant opens from the floating <strong>AI</strong> button in the lower-right corner.
+    </div>
+
+    <div class="row g-3">
+        <div class="col-12 col-lg-6">
+            <div class="border rounded p-3 h-100 bg-light-subtle">
+                <h2 class="h6 mb-2">Suggested Prompt Themes</h2>
+                <ul class="mb-0">
+                    <li>Donor outreach drafts and follow-up cadence.</li>
+                    <li>Grant and budget status summaries.</li>
+                    <li>Program impact narrative preparation.</li>
+                </ul>
+            </div>
+        </div>
+        <div class="col-12 col-lg-6">
+            <div class="border rounded p-3 h-100 bg-light-subtle">
+                <h2 class="h6 mb-2">Supporting Workspaces</h2>
+                <p class="small mb-3">Open data-rich pages first, then ask Apex to summarize or draft from context.</p>
+                <a class="btn btn-outline-primary btn-sm me-2" href="{{ url_for('main.reports_page') }}">Open Reports</a>
+                <a class="btn btn-outline-primary btn-sm" href="{{ url_for('main.dashboard') }}">Open Dashboard</a>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

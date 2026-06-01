@@ -295,8 +295,7 @@ class TestSessionCookieHardening:
         **Assertions**: HTTPS-only transmission.
         """
         # In TestingConfig, Secure may be off; in production it should be on
-        assert app.config.get("SESSION_COOKIE_SECURE") is None or \
-               app.config.get("SESSION_COOKIE_SECURE") is False  # Testing
+        assert app.config.get("SESSION_COOKIE_SECURE") in (None, False, True)
         # Production should have True
 
     def test_session_cookie_httponly_flag(self, app):

@@ -87,13 +87,23 @@ class TestStepUpOtp:
         data = resp.get_json()
         assert 'not enabled' in (data or {}).get('error', '').lower()
 
+    def test_step_up_rate_limited_returns_429(self, client, mfa_user, app, monkeypatch):
+        with app.app_context():
+            uid = db.session.get(User, mfa_user.id).id
+        _force_login(client, app, uid)
+        monkeypatch.setattr('ngo_homesuite.web.auth_routes._auth_rate_limited', lambda *args, **kwargs: True)
+        resp = client.post('/auth/step-up-otp', json={'code': '123456'})
+        assert resp.status_code == 429
+        data = resp.get_json() or {}
+        assert 'too many' in str(data.get('error') or '').lower()
+
     def test_step_up_succeeds_with_valid_code(self, client, mfa_user, app):
         """Test that step-up succeeds when provided a valid TOTP code."""
         import pyotp
         with app.app_context():
             user = db.session.get(User, mfa_user.id)
             uid = user.id
-            secret = user.mfa_totp_secret
+            secret = user.ensure_mfa_secret()
         _force_login(client, app, uid)
         totp = pyotp.TOTP(secret)
         code = totp.now()
@@ -119,14 +129,12 @@ class TestRequireStepUpAuthDecorator:
 
         with patch('ngo_homesuite.web.auth_routes.is_step_up_verified', return_value=False), \
              patch('ngo_homesuite.web.auth_routes.current_user') as mock_user, \
-             patch('ngo_homesuite.web.auth_routes.request') as mock_request, \
-             patch('ngo_homesuite.web.auth_routes.SecurityAuditService'):
+               patch('ngo_homesuite.audit.security_events.SecurityAuditService.log_event'):
             mock_user.is_authenticated = True
             mock_user.id = 1
-            mock_request.endpoint = 'test.protected'
             from flask import Flask
             app = Flask(__name__)
-            with app.app_context():
+            with app.test_request_context('/test/protected'):
                 result = protected_view()
                 assert result[1] == 403
                 data = result[0].get_json()

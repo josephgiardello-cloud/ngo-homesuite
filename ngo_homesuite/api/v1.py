@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import func, select
 
 from ngo_homesuite.app.container import AppContainer
+from ngo_homesuite.app.write_gate import WriteGateExecutionError
 from ngo_homesuite.models.core import Campaign, Donation, Donor, db
 from ngo_homesuite.observability import InMemoryMetrics
 from ngo_homesuite.shared_kernel import redact_payload
@@ -82,8 +83,13 @@ def create_workflow_instance():
         _enforce_user_org_access(body.org_id)
     except PermissionError as exc:
         return {"error": str(exc)}, 403
-
-    instance = _container().create_workflow_instance(org_id=body.org_id, workflow_type=body.workflow_type)
+    try:
+        instance = _container().create_workflow_instance(org_id=body.org_id, workflow_type=body.workflow_type)
+    except WriteGateExecutionError as exc:
+        return {
+            "error": str(exc),
+            "execution_error": exc.to_dict(),
+        }, exc.http_status
     return {
         "ok": True,
         "instance": {
@@ -130,8 +136,11 @@ def apply_workflow_event(instance_id: str):
         )
     except PermissionError as exc:
         return {"error": str(exc)}, 403
-    except (KeyError, ValueError, RuntimeError) as exc:
-        return {"error": str(exc)}, 400
+    except WriteGateExecutionError as exc:
+        return {
+            "error": str(exc),
+            "execution_error": exc.to_dict(),
+        }, exc.http_status
 
     return {
         "ok": True,
@@ -239,6 +248,7 @@ def metrics_snapshot():
 @login_required
 def list_audit_events():
     org_id = str(request.args.get("org_id", "")).strip()
+    include_control = str(request.args.get("include_control", "")).strip().lower() in {"1", "true", "yes"}
     if not org_id:
         return {"error": "org_id query parameter is required."}, 400
     try:
@@ -246,6 +256,8 @@ def list_audit_events():
     except PermissionError as exc:
         return {"error": str(exc)}, 403
     events = _container().event_store.list_events(org_id=org_id)
+    if not include_control:
+        events = [event for event in events if event.aggregate_type != "workflow_command"]
     return {
         "ok": True,
         "events": [
@@ -261,4 +273,43 @@ def list_audit_events():
             }
             for event in events
         ],
+    }
+
+
+@api_v1_bp.get("/workflows/instances/<instance_id>/executions")
+@login_required
+def list_workflow_instance_executions(instance_id: str):
+    org_id = str(request.args.get("org_id", "")).strip()
+    if not org_id:
+        return {"error": "org_id query parameter is required."}, 400
+    try:
+        _enforce_user_org_access(org_id)
+    except PermissionError as exc:
+        return {"error": str(exc)}, 403
+
+    events = _container().event_store.list_events(org_id=org_id)
+    execution_events: list[dict] = []
+    for event in events:
+        if event.aggregate_type != "workflow_command":
+            continue
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        if str(payload.get("instance_id", "")) != str(instance_id):
+            continue
+        execution_events.append(
+            {
+                "execution_id": event.aggregate_id,
+                "event_type": event.event_type,
+                "occurred_at": event.occurred_at,
+                "action": payload.get("action"),
+                "result": payload.get("result"),
+                "retryable": ((payload.get("error") or {}).get("retryable") if isinstance(payload.get("error"), dict) else None),
+                "error": payload.get("error"),
+            }
+        )
+
+    return {
+        "ok": True,
+        "instance_id": instance_id,
+        "org_id": org_id,
+        "executions": execution_events,
     }

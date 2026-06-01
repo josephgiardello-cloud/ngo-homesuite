@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Donate</title>
+  <style>
+    body { margin: 0; font-family: "Segoe UI", Tahoma, sans-serif; background: #f8fafc; color: #0f172a; }
+    .wrap { max-width: 720px; margin: 0 auto; padding: 0.8rem; }
+    .card { border: 1px solid #d9e2ef; border-radius: 14px; background: #fff; padding: 0.95rem; }
+    .title { margin: 0 0 0.2rem; font-size: 1.22rem; }
+    .sub { margin: 0 0 0.8rem; color: #475569; font-size: 0.92rem; }
+    .row { display: grid; gap: 0.6rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .row3 { display: grid; gap: 0.6rem; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    @media (max-width: 720px) { .row, .row3 { grid-template-columns: minmax(0, 1fr); } }
+    label { display: block; font-size: 0.82rem; font-weight: 600; margin-bottom: 0.22rem; color: #334155; }
+    input, select { width: 100%; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 10px; padding: 0.5rem 0.55rem; font-size: 0.95rem; }
+    .amount-preset { border: 1px solid #93c5fd; border-radius: 999px; background: #eff6ff; color: #1d4ed8; padding: 0.25rem 0.6rem; font-weight: 600; cursor: pointer; }
+    .amount-preset:hover { background: #dbeafe; }
+    .presets { display: flex; gap: 0.35rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+    details { border: 1px dashed #cbd5e1; border-radius: 10px; padding: 0.55rem; }
+    summary { cursor: pointer; font-weight: 600; }
+    .footer { display: flex; justify-content: space-between; gap: 0.55rem; align-items: center; margin-top: 0.75rem; }
+    .hint { margin: 0; font-size: 0.8rem; color: #64748b; }
+    .btn { border: 0; border-radius: 10px; padding: 0.54rem 0.9rem; background: #1d4ed8; color: #fff; font-weight: 700; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <form action="/public/donate/create-checkout" method="POST" class="card">
+      <h1 class="title">Donate</h1>
+      <p class="sub">Secure hosted giving checkout.</p>
+
+      <label>Amount (USD)</label>
+      <div class="presets">
+        <button type="button" class="amount-preset" data-amount="25">$25</button>
+        <button type="button" class="amount-preset" data-amount="50">$50</button>
+        <button type="button" class="amount-preset" data-amount="100">$100</button>
+      </div>
+      <input id="donateAmount" type="number" step="0.01" min="1" name="amount" required placeholder="75.00" />
+
+      <div class="row" style="margin-top:0.6rem;">
+        <div>
+          <label>Name</label>
+          <input type="text" name="donor_name" maxlength="160" placeholder="Jane Supporter" />
+        </div>
+        <div>
+          <label>Email</label>
+          <input type="email" name="email" required placeholder="jane@example.org" />
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:0.6rem;">
+        <div>
+          <label>Campaign</label>
+          <select name="campaign_id">
+            <option value="">General organization support</option>
+            {% for c in campaigns %}
+            <option value="{{ c.id }}" {{ 'selected' if campaign and c.id == campaign.id else '' }}>{{ c.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label>Fund</label>
+          <select name="fund_id">
+            <option value="">General / none</option>
+            {% for fund in funds %}
+            <option value="{{ fund.id }}">{{ fund.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <input type="text" name="purpose" maxlength="200" placeholder="Purpose (optional)" style="margin-top:0.6rem;" />
+
+      <details style="margin-top:0.65rem;">
+        <summary>Tribute Gift</summary>
+        <div class="row3" style="margin-top:0.55rem;">
+          <div>
+            <label>Type</label>
+            <select name="tribute_type">
+              <option value="">None</option>
+              <option value="in_honor_of">In Honor Of</option>
+              <option value="in_memory_of">In Memory Of</option>
+            </select>
+          </div>
+          <div>
+            <label>Honoree Name</label>
+            <input type="text" name="tribute_honoree_name" maxlength="200" />
+          </div>
+          <div>
+            <label>Honoree Contact</label>
+            <input type="text" name="tribute_honoree_contact" maxlength="255" />
+          </div>
+        </div>
+      </details>
+
+      <div class="footer">
+        <p class="hint">Powered by Stripe</p>
+        <button class="btn" type="submit">Donate with Stripe</button>
+      </div>
+    </form>
+  </div>
+
+  <script>
+  (function () {
+    const amountInput = document.getElementById('donateAmount');
+    document.querySelectorAll('.amount-preset').forEach((btn) => {
+      btn.addEventListener('click', function () {
+        const value = Number(this.getAttribute('data-amount') || 0);
+        if (value > 0) amountInput.value = value.toFixed(2);
+      });
+    });
+  })();
+  </script>
+</body>
+</html>

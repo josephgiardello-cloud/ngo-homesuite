@@ -1168,13 +1168,16 @@ def migrate_schema(conn: Any, cur: Any) -> None:
         return
     except Exception as delegated_exc:
         allow_legacy_fallback = os.getenv("NGO_HOMESUITE_ALLOW_LEGACY_SCHEMA_FALLBACK", "0").lower() in {"1", "true", "yes", "on"}
-        if not allow_legacy_fallback:
+        legacy_fallback_enabled = os.getenv("LEGACY_FALLBACK_ENABLED", "0").lower() in {"1", "true", "yes", "on"}
+        if not (allow_legacy_fallback and legacy_fallback_enabled):
             raise RuntimeError(
                 "Delegated migration failed and legacy fallback is disabled. "
-                "Set NGO_HOMESUITE_ALLOW_LEGACY_SCHEMA_FALLBACK=1 only for emergency recovery."
+                "Set NGO_HOMESUITE_ALLOW_LEGACY_SCHEMA_FALLBACK=1 and LEGACY_FALLBACK_ENABLED=1 only for emergency recovery."
             ) from delegated_exc
         print(
-            f"[MIGRATION] Delegation fallback failed: {delegated_exc}. Running legacy migration path because NGO_HOMESUITE_ALLOW_LEGACY_SCHEMA_FALLBACK is enabled.",
+            "[MIGRATION][WARN] Delegation fallback failed: "
+            f"{delegated_exc}. Running legacy migration path because both "
+            "NGO_HOMESUITE_ALLOW_LEGACY_SCHEMA_FALLBACK and LEGACY_FALLBACK_ENABLED are enabled.",
             file=sys.stderr,
         )
 

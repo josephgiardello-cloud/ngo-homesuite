@@ -20,6 +20,8 @@ def client(app):
 
 def _login(client, username: str, password: str) -> None:
     client.post("/auth/login", data={"username": username, "password": password})
+    with client.session_transaction() as sess:
+        sess["_step_up_verified_at"] = datetime.now(UTC).replace(tzinfo=None).isoformat()
 
 
 def _logout(client) -> None:

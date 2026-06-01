@@ -12,6 +12,7 @@ from flask import Blueprint, jsonify, render_template, request
 from flask_login import current_user, login_required
 from sqlalchemy import func, select
 
+from ngo_homesuite.web.auth_routes import require_step_up_auth
 from ngo_homesuite.web.rbac import roles_required
 
 
@@ -162,6 +163,7 @@ ALLOWED_ROLES = {"admin", "staff", "volunteer", "viewer"}
 @admin_bp.patch("/users/<int:user_id>/role")
 @login_required
 @roles_required("admin")
+@require_step_up_auth
 def update_user_role_route(user_id: int):
     """Update a user's role within the org.
 
@@ -183,14 +185,40 @@ def update_user_role_route(user_id: int):
     if user is None:
         return jsonify({"error": "not found"}), 404
 
+    previous_role = str(user.role or "").strip().lower()
     user.role = new_role
     db.session.commit()
+
+    # Best-effort security audit: role changes are sensitive admin operations.
+    try:
+        from ngo_homesuite.audit.security_events import SecurityAuditService, SecurityEventType
+
+        SecurityAuditService.log_event(
+            event_type=SecurityEventType.ROLE_ASSIGNED,
+            action=f"user_role_changed_{previous_role}_to_{new_role}",
+            result="success",
+            resource_type="user",
+            resource_id=user.id,
+            resource_org_id=user.organization_id,
+            payload={
+                "target_user_id": user.id,
+                "target_username": user.username,
+                "previous_role": previous_role,
+                "new_role": new_role,
+                "changed_by_user_id": current_user.id,
+            },
+        )
+    except Exception:
+        # Do not fail the role-change operation if audit persistence is unavailable.
+        pass
+
     return jsonify({"id": user.id, "username": user.username, "role": user.role})
 
 
 @admin_bp.patch("/users/<int:user_id>/status")
 @login_required
 @roles_required("admin")
+@require_step_up_auth
 def update_user_status_route(user_id: int):
     """Activate or deactivate a user.
 
@@ -218,6 +246,7 @@ def update_user_status_route(user_id: int):
 @admin_bp.patch("/users/<int:user_id>/permissions")
 @login_required
 @roles_required("admin")
+@require_step_up_auth
 def update_user_permissions_route(user_id: int):
     """Update fine-grained permission flags for a user in the same org.
 
@@ -336,6 +365,7 @@ def list_external_comms_audit_route():
 @admin_bp.delete("/users/<int:user_id>")
 @login_required
 @roles_required("admin")
+@require_step_up_auth
 def remove_org_user_route(user_id: int):
     """Remove a user from the org (sets organization_id to null and deactivates).
 
@@ -385,6 +415,7 @@ def get_org_route():
 @admin_bp.patch("/org")
 @login_required
 @roles_required("admin")
+@require_step_up_auth
 def update_org_route():
     """Update org-level settings."""
     from ngo_homesuite.models.core import Organization, db
@@ -418,6 +449,7 @@ def get_custom_fields_schema_route():
 @admin_bp.put("/custom-fields/schema")
 @login_required
 @roles_required("admin")
+@require_step_up_auth
 def put_custom_fields_schema_route():
     from ngo_homesuite.models.core import Organization, db
 

@@ -15,10 +15,11 @@ from flask import Flask, g, request, session, url_for
 from flask_login import LoginManager, current_user
 from flask_migrate import Migrate
 from flask_babel import Babel, lazy_gettext as _l
+from flask_wtf.csrf import CSRFProtect
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_ckeditor import CKEditor
-from sqlalchemy import inspect as sa_inspect, text as sa_text
+from sqlalchemy import inspect as sa_inspect
 
 from ngo_homesuite.flask_config import get_config
 from ngo_homesuite.config import get_runtime_settings
@@ -65,6 +66,21 @@ def create_app(config=None):
     if config is None:
         config = get_config()
     app.config.from_object(config)
+
+    app.config.setdefault('WTF_CSRF_CHECK_DEFAULT', False)
+    csrf = CSRFProtect()
+    csrf.init_app(app)
+
+    @app.before_request
+    def enforce_csrf_for_browser_forms():
+        if not bool(app.config.get('WTF_CSRF_ENABLED', True)):
+            return None
+        if request.method not in {'POST', 'PUT', 'PATCH', 'DELETE'}:
+            return None
+        content_type = str(request.content_type or '').lower()
+        if 'application/x-www-form-urlencoded' in content_type or 'multipart/form-data' in content_type:
+            csrf.protect()
+        return None
 
     if app.config.get('SESSION_STORE_BACKEND') == 'redis' and app.config.get('REDIS_URL'):
         try:
@@ -113,107 +129,75 @@ def create_app(config=None):
         """Load user from database by ID."""
         return db.session.get(User, int(user_id))
 
-    def _ensure_donor_crm_columns() -> None:
-        """Backfill donor CRM columns for existing SQLite DBs without full SQL migration files."""
+    def _legacy_sqlite_backfill_report() -> dict[str, list[str]]:
+        """Return missing legacy columns so operators can migrate explicitly."""
         engine = db.engine
         if engine.dialect.name != 'sqlite':
-            return
+            return {}
 
         inspector = sa_inspect(engine)
-        if 'donors' not in inspector.get_table_names():
+        tables = set(inspector.get_table_names())
+        expected: dict[str, set[str]] = {
+            'donors': {
+                'salutation',
+                'preferred_name',
+                'status',
+                'address',
+                'city',
+                'country',
+                'postal_code',
+                'preferred_contact_method',
+                'communication_opt_in',
+                'employer',
+                'source',
+            },
+            'donations': {
+                'campaign_id',
+                'version_id',
+                'channel',
+                'is_anonymous',
+                'public_display_name',
+                'tribute_type',
+                'tribute_honoree_name',
+                'tribute_honoree_contact',
+                'soft_credit_name',
+                'created_at',
+                'updated_at',
+            },
+            'p2p_pages': {
+                'match_ratio',
+                'match_cap_amount',
+                'challenge_goal_amount',
+                'challenge_end_date',
+                'automation_contact_email',
+            },
+        }
+        report: dict[str, list[str]] = {}
+        for table_name, expected_columns in expected.items():
+            if table_name not in tables:
+                continue
+            existing_columns = {col['name'] for col in inspector.get_columns(table_name)}
+            missing = sorted(expected_columns - existing_columns)
+            if missing:
+                report[table_name] = missing
+        return report
+
+    def _report_legacy_sqlite_schema_gaps() -> None:
+        report = _legacy_sqlite_backfill_report()
+        if not report:
             return
-
-        existing_columns = {col['name'] for col in inspector.get_columns('donors')}
-        statements = [
-            ('salutation', "ALTER TABLE donors ADD COLUMN salutation TEXT"),
-            ('preferred_name', "ALTER TABLE donors ADD COLUMN preferred_name TEXT"),
-            ('status', "ALTER TABLE donors ADD COLUMN status TEXT NOT NULL DEFAULT 'active'"),
-            ('address', "ALTER TABLE donors ADD COLUMN address TEXT"),
-            ('city', "ALTER TABLE donors ADD COLUMN city TEXT"),
-            ('country', "ALTER TABLE donors ADD COLUMN country TEXT"),
-            ('postal_code', "ALTER TABLE donors ADD COLUMN postal_code TEXT"),
-            ('preferred_contact_method', "ALTER TABLE donors ADD COLUMN preferred_contact_method TEXT NOT NULL DEFAULT 'email'"),
-            ('communication_opt_in', "ALTER TABLE donors ADD COLUMN communication_opt_in INTEGER NOT NULL DEFAULT 1"),
-            ('employer', "ALTER TABLE donors ADD COLUMN employer TEXT"),
-            ('source', "ALTER TABLE donors ADD COLUMN source TEXT"),
-        ]
-
-        with engine.begin() as conn:
-            for column_name, statement in statements:
-                if column_name not in existing_columns:
-                    conn.execute(sa_text(statement))
-                    app.logger.info('Added donor compatibility column: %s', column_name)
-
-    def _ensure_donation_columns() -> None:
-        """Backfill donation columns for existing SQLite DBs missing newer schema fields."""
-        engine = db.engine
-        if engine.dialect.name != 'sqlite':
-            return
-
-        inspector = sa_inspect(engine)
-        if 'donations' not in inspector.get_table_names():
-            return
-
-        existing_columns = {col['name'] for col in inspector.get_columns('donations')}
-        statements = [
-            ('campaign_id', "ALTER TABLE donations ADD COLUMN campaign_id INTEGER"),
-            ('version_id', "ALTER TABLE donations ADD COLUMN version_id INTEGER NOT NULL DEFAULT 0"),
-            ('channel', "ALTER TABLE donations ADD COLUMN channel TEXT"),
-            ('is_anonymous', "ALTER TABLE donations ADD COLUMN is_anonymous INTEGER NOT NULL DEFAULT 0"),
-            ('public_display_name', "ALTER TABLE donations ADD COLUMN public_display_name TEXT"),
-            ('tribute_type', "ALTER TABLE donations ADD COLUMN tribute_type TEXT"),
-            ('tribute_honoree_name', "ALTER TABLE donations ADD COLUMN tribute_honoree_name TEXT"),
-            ('tribute_honoree_contact', "ALTER TABLE donations ADD COLUMN tribute_honoree_contact TEXT"),
-            ('soft_credit_name', "ALTER TABLE donations ADD COLUMN soft_credit_name TEXT"),
-            ('created_at', "ALTER TABLE donations ADD COLUMN created_at DATETIME"),
-            ('updated_at', "ALTER TABLE donations ADD COLUMN updated_at DATETIME"),
-        ]
-
-        with engine.begin() as conn:
-            for column_name, statement in statements:
-                if column_name not in existing_columns:
-                    conn.execute(sa_text(statement))
-                    app.logger.info('Added donation compatibility column: %s', column_name)
-
-            # Backfill timestamp defaults where compatibility columns were newly introduced.
-            if 'created_at' not in existing_columns:
-                conn.execute(sa_text("UPDATE donations SET created_at = COALESCE(created_at, donation_date)"))
-            if 'updated_at' not in existing_columns:
-                conn.execute(sa_text("UPDATE donations SET updated_at = COALESCE(updated_at, donation_date, created_at)"))
-
-    def _ensure_p2p_columns() -> None:
-        """Backfill P2P page columns for existing SQLite DBs missing advanced fundraiser settings."""
-        engine = db.engine
-        if engine.dialect.name != 'sqlite':
-            return
-
-        inspector = sa_inspect(engine)
-        if 'p2p_pages' not in inspector.get_table_names():
-            return
-
-        existing_columns = {col['name'] for col in inspector.get_columns('p2p_pages')}
-        statements = [
-            ('match_ratio', "ALTER TABLE p2p_pages ADD COLUMN match_ratio FLOAT NOT NULL DEFAULT 0"),
-            ('match_cap_amount', "ALTER TABLE p2p_pages ADD COLUMN match_cap_amount FLOAT NOT NULL DEFAULT 0"),
-            ('challenge_goal_amount', "ALTER TABLE p2p_pages ADD COLUMN challenge_goal_amount FLOAT NOT NULL DEFAULT 0"),
-            ('challenge_end_date', "ALTER TABLE p2p_pages ADD COLUMN challenge_end_date DATE"),
-            ('automation_contact_email', "ALTER TABLE p2p_pages ADD COLUMN automation_contact_email TEXT"),
-        ]
-
-        with engine.begin() as conn:
-            for column_name, statement in statements:
-                if column_name not in existing_columns:
-                    conn.execute(sa_text(statement))
-                    app.logger.info('Added p2p compatibility column: %s', column_name)
+        app.logger.warning(
+            'Legacy SQLite schema gaps detected after startup migration: %s. '
+            'Apply explicit database migrations before starting the application.',
+            report,
+        )
     
     # Create app context and tables
     with app.app_context():
         db_uri = str(app.config.get('SQLALCHEMY_DATABASE_URI', ''))
         if db_uri.startswith('sqlite:///') and ':memory:' not in db_uri:
             auto_migrate(db_uri.replace('sqlite:///', '', 1))
-            _ensure_donor_crm_columns()
-            _ensure_donation_columns()
-            _ensure_p2p_columns()
+            _report_legacy_sqlite_schema_gaps()
         db.create_all()
         if bool(app.config.get('ENABLE_DEMO_SEED', False)):
             seed_demo_data(app)
@@ -232,6 +216,7 @@ def create_app(config=None):
     from ngo_homesuite.web.program_routes import program_bp
     from ngo_homesuite.web.smart_groups_routes import smart_groups_bp
     from ngo_homesuite.web.p2p_routes import p2p_bp
+    from ngo_homesuite.web.events_routes import events_bp
     from ngo_homesuite.web.integrations_routes import integrations_bp
     from ngo_homesuite.web.reporting_routes import reporting_bp
     from ngo_homesuite.web.admin_routes import admin_bp
@@ -268,6 +253,7 @@ def create_app(config=None):
     app.register_blueprint(program_bp)
     app.register_blueprint(smart_groups_bp)
     app.register_blueprint(p2p_bp)
+    app.register_blueprint(events_bp)
     app.register_blueprint(integrations_bp)
     app.register_blueprint(reporting_bp)
     app.register_blueprint(admin_bp)

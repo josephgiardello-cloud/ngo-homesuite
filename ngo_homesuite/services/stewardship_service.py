@@ -237,27 +237,18 @@ def _dispatch_email(donor: Donor, step: StewardshipStep) -> None:
     if not donor.email:
         return
     try:
-        import smtplib
-        import os
-        from email.message import EmailMessage
+        from ngo_homesuite.utils.email import send_email
 
         subject = (step.subject or "A message from us").replace("{name}", donor.name)
         body = (step.body or "").replace("{name}", donor.name).replace("{email}", donor.email or "")
 
-        msg = EmailMessage()
-        msg["Subject"] = subject
-        msg["From"] = os.getenv("EMAIL_FROM", "noreply@homesuite.local")
-        msg["To"] = donor.email
-        msg.set_content(body)
-
-        smtp_host = os.getenv("SMTP_HOST")
-        if smtp_host:
-            with smtplib.SMTP(smtp_host, int(os.getenv("SMTP_PORT", "587"))) as server:
-                server.starttls()
-                server.login(os.getenv("SMTP_USER", ""), os.getenv("SMTP_PASSWORD", ""))
-                server.send_message(msg)
-        else:
-            logger.info("[EMAIL STUB] to=%s subject=%s", donor.email, subject)
+        sent = send_email(to=donor.email, subject=subject, context={"text": body})
+        if not sent:
+            logger.warning(
+                "Email delivery unavailable for stewardship step donor=%s email=%s",
+                donor.id,
+                donor.email,
+            )
     except Exception as exc:  # noqa: BLE001
         logger.error("Email dispatch failed donor=%s: %s", donor.id, exc)
 

@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+
+{% block title %}Event Management{% endblock %}
+
+{% block head %}
+<style>
+  .events-shell {
+    padding: 1.5rem;
+    display: grid;
+    gap: 1.25rem;
+    background:
+      radial-gradient(circle at top right, rgba(214, 154, 58, 0.16), transparent 32%),
+      radial-gradient(circle at left center, rgba(21, 87, 79, 0.12), transparent 28%),
+      linear-gradient(180deg, #f7f2ea 0%, #ffffff 100%);
+  }
+  .events-hero {
+    display: grid;
+    gap: 0.75rem;
+    padding: 1.5rem;
+    border-radius: 24px;
+    background: #10242f;
+    color: #f6f1e8;
+    box-shadow: 0 24px 80px rgba(16, 36, 47, 0.2);
+  }
+  .events-hero h1 {
+    margin: 0;
+    font-size: clamp(2rem, 3vw, 3rem);
+    letter-spacing: -0.03em;
+  }
+  .events-hero p { margin: 0; max-width: 64rem; color: rgba(246, 241, 232, 0.82); }
+  .events-grid {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  }
+  .events-card {
+    background: rgba(255, 255, 255, 0.88);
+    border: 1px solid rgba(16, 36, 47, 0.08);
+    border-radius: 20px;
+    padding: 1rem;
+    box-shadow: 0 16px 40px rgba(16, 36, 47, 0.08);
+  }
+  .events-card h2, .events-card h3 { margin: 0 0 0.75rem 0; color: #10242f; }
+  .events-form { display: grid; gap: 0.75rem; }
+  .events-form input, .events-form textarea {
+    width: 100%;
+    border-radius: 14px;
+    border: 1px solid rgba(16, 36, 47, 0.16);
+    padding: 0.85rem 1rem;
+    font: inherit;
+    background: #fff;
+  }
+  .events-form textarea { min-height: 96px; resize: vertical; }
+  .events-form button, .events-action {
+    border: 0;
+    border-radius: 999px;
+    padding: 0.8rem 1rem;
+    font-weight: 700;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .events-form button { background: #e9a23b; color: #10242f; }
+  .events-action { background: #10242f; color: #f6f1e8; }
+  .events-table {
+    width: 100%;
+    border-collapse: collapse;
+    overflow: hidden;
+    border-radius: 16px;
+  }
+  .events-table th, .events-table td {
+    padding: 0.8rem 0.75rem;
+    border-bottom: 1px solid rgba(16, 36, 47, 0.08);
+    text-align: left;
+    vertical-align: top;
+  }
+  .events-table th { color: #10242f; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.08em; }
+  .events-table td { color: #243845; }
+  .mini-form { display: grid; gap: 0.5rem; min-width: 220px; }
+  .mini-form input, .mini-form textarea {
+    border-radius: 12px;
+    border: 1px solid rgba(16, 36, 47, 0.16);
+    padding: 0.6rem 0.75rem;
+    font: inherit;
+  }
+  .pill-row { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.35rem 0.75rem;
+    border-radius: 999px;
+    background: rgba(16, 36, 47, 0.08);
+    color: #10242f;
+    font-size: 0.86rem;
+  }
+  .flash-stack { display: grid; gap: 0.5rem; }
+  .flash-message {
+    padding: 0.85rem 1rem;
+    border-radius: 14px;
+    background: rgba(16, 36, 47, 0.08);
+    color: #10242f;
+  }
+  .flash-message.success { background: rgba(34, 139, 92, 0.12); }
+  .flash-message.error { background: rgba(176, 54, 54, 0.12); }
+  @media (max-width: 720px) {
+    .events-shell { padding: 1rem; }
+    .events-card { padding: 0.85rem; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="events-shell">
+  <section class="events-hero">
+    <div class="pill-row">
+      <span class="pill">Events lifecycle</span>
+      <span class="pill">Legacy reminders</span>
+      <span class="pill">Registration visibility</span>
+    </div>
+    <h1>Event management</h1>
+    <p>Create, revise, and dispatch reminders for the legacy event records already powering registrations and email delivery.</p>
+  </section>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="flash-stack">
+        {% for category, message in messages %}
+          <div class="flash-message {{ category }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+  <div class="events-grid">
+    <section class="events-card">
+      <h2>Create event</h2>
+      <form class="events-form" method="post" action="{{ url_for('events.create_event_route') }}">
+        <input type="text" name="name" placeholder="Spring gala" required>
+        <textarea name="description" placeholder="Short description or notes"></textarea>
+        <input type="text" name="start_date" placeholder="2026-09-15 or 2026-09-15T18:00:00">
+        <input type="text" name="end_date" placeholder="Optional end date or datetime">
+        <button type="submit">Create event</button>
+      </form>
+    </section>
+
+    <section class="events-card">
+      <h2>Recent registrations</h2>
+      {% if recent_registrations %}
+        <table class="events-table">
+          <thead>
+            <tr>
+              <th>Attendee</th>
+              <th>Event</th>
+              <th>Registered</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for registration in recent_registrations %}
+              <tr>
+                <td>{{ registration.donor_name }}{% if registration.donor_email %}<br>{{ registration.donor_email }}{% endif %}</td>
+                <td>{{ registration.event_name }}</td>
+                <td>{{ registration.registered_at or 'n/a' }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p>No registrations yet.</p>
+      {% endif %}
+    </section>
+  </div>
+
+  <section class="events-card">
+    <h2>Events</h2>
+    {% if events %}
+      <table class="events-table">
+        <thead>
+          <tr>
+            <th>Event</th>
+            <th>Schedule</th>
+            <th>Registrations</th>
+            <th>Queue</th>
+            <th>Manage</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for event in events %}
+            <tr>
+              <td>
+                <strong>{{ event.name }}</strong>
+                {% if event.description %}<div>{{ event.description }}</div>{% endif %}
+              </td>
+              <td>
+                <div>{{ event.start_date or 'Start not set' }}</div>
+                <div>{{ event.end_date or 'End not set' }}</div>
+              </td>
+              <td>{{ event.registration_count }}</td>
+              <td>
+                <div>Pending: {{ event.queue_counts.pending }}</div>
+                <div>Sent: {{ event.queue_counts.sent }}</div>
+                <div>Failed: {{ event.queue_counts.failed }}</div>
+              </td>
+              <td>
+                <form class="mini-form" method="post" action="{{ url_for('events.update_event_route', event_id=event.id) }}">
+                  <input type="text" name="name" value="{{ event.name }}" required>
+                  <textarea name="description">{{ event.description or '' }}</textarea>
+                  <input type="text" name="start_date" value="{{ event.start_date or '' }}" placeholder="Start date">
+                  <input type="text" name="end_date" value="{{ event.end_date or '' }}" placeholder="End date">
+                  <button type="submit">Save changes</button>
+                </form>
+                <form class="mini-form" method="post" action="{{ url_for('events.send_event_reminders_route', event_id=event.id) }}" style="margin-top: 0.75rem;">
+                  <button type="submit" class="events-action">Send reminders</button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p>No events available yet.</p>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

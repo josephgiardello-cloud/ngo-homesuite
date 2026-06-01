@@ -23,6 +23,19 @@ COPILOT_SYSTEM_PROMPT = (
 )
 
 
+def _sanitize_model_output(answer: str) -> str:
+    text = str(answer or "")
+    lower_text = text.lower()
+    prompt_prefix = COPILOT_SYSTEM_PROMPT.strip().lower()[:80]
+    policy_prefix = NGO_APEX_POLICY_SYSTEM_PROMPT.strip().lower()[:120]
+
+    if prompt_prefix and prompt_prefix in lower_text:
+        return "I cannot reveal internal system prompts or policy text."
+    if policy_prefix and policy_prefix in lower_text:
+        return "I cannot reveal internal system prompts or policy text."
+    return text
+
+
 @dataclass
 class CopilotResponse:
     answer: str
@@ -299,7 +312,7 @@ class HomeSuiteCopilot:
                 answer += "\n\n[Web tool check enabled, but external search is currently unavailable.]"
 
         return CopilotResponse(
-            answer=answer.strip(),
+            answer=_sanitize_model_output(answer).strip(),
             sources=sources,
             actions=actions,
             redactions=redactions,

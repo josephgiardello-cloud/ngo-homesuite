@@ -10,6 +10,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 from ngo_homesuite.ai.pii_redact import redact_pii
+from ngo_homesuite.ai.copilot_service import _sanitize_model_output, COPILOT_SYSTEM_PROMPT
 
 
 class TestPiiRedaction:
@@ -82,6 +83,7 @@ def app():
         APEX_API_TOKEN = None
         APEX_MODEL = "llama3.2"
         APEX_TENANT_ID = "ngo-test"
+        ROLES_REQUIRING_2FA = []
 
     flask_app = create_app(_TestCfg)
     return flask_app
@@ -305,3 +307,15 @@ class TestApexFallbackAndRateLimit:
         payload = rv.get_json()
         assert payload["mode"] == "fallback"
         assert "temporarily unavailable" in payload["response"]
+
+
+class TestCopilotPromptLeakageGuard:
+    def test_sanitize_blocks_copilot_system_prompt_echo(self):
+        leaked = f"Leaked text: {COPILOT_SYSTEM_PROMPT}"
+        sanitized = _sanitize_model_output(leaked)
+        assert "cannot reveal internal system prompts" in sanitized.lower()
+
+    def test_sanitize_allows_normal_response_text(self):
+        normal = "Here is your donor summary for this month."
+        sanitized = _sanitize_model_output(normal)
+        assert sanitized == normal

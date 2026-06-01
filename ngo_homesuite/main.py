@@ -9,6 +9,7 @@ It is kept for backward compatibility with existing commands such as
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import unittest
 
@@ -20,6 +21,19 @@ def create_app(*, compat_mode: bool = False):
     settings = get_runtime_settings()
     if compat_mode and not bool(getattr(settings, "allow_compat_mode", False)):
         raise RuntimeError("Non-standard entrypoint blocked")
+    if compat_mode:
+        legacy_fallback_enabled = os.getenv("LEGACY_FALLBACK_ENABLED", "0").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if not legacy_fallback_enabled:
+            raise RuntimeError("Compat mode requires LEGACY_FALLBACK_ENABLED=true")
+        print(
+            "[COMPAT][WARN] Running in compat mode with LEGACY_FALLBACK_ENABLED=true.",
+            file=sys.stderr,
+        )
 
     from ngo_homesuite.app_factory import create_app as _create_app
 

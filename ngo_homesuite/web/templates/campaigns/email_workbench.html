@@ -248,6 +248,29 @@
             </div>
           </div>
 
+          <div class="ew-row3 mb-1">
+            <div class="ew-field">
+              <label for="savedSegmentSelect">Saved Segment</label>
+              <select id="savedSegmentSelect" class="form-control">
+                <option value="">None (use preset filters)</option>
+              </select>
+              <div class="hint">Selecting a saved segment overrides preset audience filters.</div>
+            </div>
+            <div class="ew-field">
+              <label for="savedSegmentName">Segment Name</label>
+              <input id="savedSegmentName" class="form-control" type="text" placeholder="Major donors Q2" />
+            </div>
+            <div class="ew-field">
+              <label>&nbsp;</label>
+              <div class="ew-toolbar" style="margin-top:0;">
+                <button id="refreshSegmentsBtn" class="btn btn-outline-primary" type="button">Refresh</button>
+                <button id="saveSegmentBtn" class="btn btn-outline-primary" type="button">Save</button>
+                <button id="renameSegmentBtn" class="btn btn-outline-primary" type="button">Rename</button>
+                <button id="deleteSegmentBtn" class="btn btn-outline-primary" type="button">Delete</button>
+              </div>
+            </div>
+          </div>
+
           <details>
             <summary>Advanced audience filters</summary>
             <div class="ew-row3 mt-1">
@@ -332,6 +355,31 @@
             <div class="hint">Comma-separated IDs for test send only.</div>
           </div>
         </div>
+        <div class="ew-row2">
+          <div class="ew-field">
+            <label for="automationSteps">Automation Steps</label>
+            <input id="automationSteps" class="form-control" type="number" min="1" max="12" step="1" value="3" />
+          </div>
+          <div class="ew-field">
+            <label for="automationCadenceDays">Cadence (days)</label>
+            <input id="automationCadenceDays" class="form-control" type="number" min="1" max="90" step="1" value="7" />
+          </div>
+        </div>
+        <div class="ew-row2 mt-half">
+          <div class="ew-field">
+            <label for="automationTemplateSelect">Automation Template</label>
+            <select id="automationTemplateSelect" class="form-control">
+              <option value="">Custom message (manual)</option>
+            </select>
+          </div>
+          <div class="ew-field">
+            <label>&nbsp;</label>
+            <div class="ew-toolbar" style="margin-top:0;">
+              <button id="applyTemplateBtn" class="btn btn-outline-primary" type="button">Apply Template Defaults</button>
+              <button id="queueTemplateBtn" class="btn btn-secondary" type="button" {% if not can_send_campaign_email %}disabled{% endif %}>Queue Template Sequence <span class="spinner"></span></button>
+            </div>
+          </div>
+        </div>
       </div>
 
       {# Compliance section #}
@@ -363,9 +411,11 @@
       {# Action toolbar #}
       <div class="ew-section">
         <div class="ew-toolbar">
+          <button id="deliverabilityBtn" class="btn btn-outline-primary" type="button">Deliverability Check <span class="spinner"></span></button>
           <button id="previewBtn"  class="btn btn-outline-primary" type="button">Preview Audience <span class="spinner"></span></button>
           <button id="dryRunBtn"   class="btn btn-outline-primary" type="button">Dry Run <span class="spinner"></span></button>
           <button id="testSendBtn" class="btn btn-secondary"       type="button">Test Send <span class="spinner"></span></button>
+          <button id="automationBtn" class="btn btn-secondary"      type="button" {% if not can_send_campaign_email %}disabled{% endif %}>Queue Automation Sequence <span class="spinner"></span></button>
           <button id="sendBtn"     class="btn btn-primary"         type="button" {% if not can_send_campaign_email %}disabled{% endif %}>
             Queue Send <span class="spinner"></span>
           </button>
@@ -415,6 +465,23 @@
           </div>
         </div>
         <div class="ew-section">
+          <div class="ew-section-title">Attribution (30-Day Window)</div>
+          <div class="ew-analytics">
+            <div class="kpi"><div class="kpi-label">Influenced Revenue</div><div class="kpi-value" data-kpi="influenced_revenue">—</div></div>
+            <div class="kpi"><div class="kpi-label">Influenced Gifts</div><div class="kpi-value" data-kpi="influenced_donations">—</div></div>
+            <div class="kpi"><div class="kpi-label">Influenced Donors</div><div class="kpi-value" data-kpi="influenced_donor_count">—</div></div>
+            <div class="kpi"><div class="kpi-label">Average Gift</div><div class="kpi-value" data-kpi="attribution_average_gift">—</div></div>
+            <div class="kpi"><div class="kpi-label">Revenue 7d</div><div class="kpi-value" data-kpi="influenced_revenue_7d">—</div></div>
+            <div class="kpi"><div class="kpi-label">Revenue 90d</div><div class="kpi-value" data-kpi="influenced_revenue_90d">—</div></div>
+          </div>
+          <div class="mt-half">
+            <div class="kpi-label" style="margin-bottom:.25rem;">Top Influenced Donors</div>
+            <ul id="topInfluencedDonors" class="sample-list">
+              <li class="text-muted">Select a campaign to load attribution.</li>
+            </ul>
+          </div>
+        </div>
+        <div class="ew-section">
           <div class="ew-section-title">Recent Batches</div>
           <div class="table-wrap">
             <table class="batch-table">
@@ -443,6 +510,8 @@
   const campaignEmptyState    = document.getElementById('campaignEmptyState');
   const campaignControls      = document.getElementById('campaignControls');
   const segmentPreset         = document.getElementById('segmentPreset');
+  const savedSegmentSelect    = document.getElementById('savedSegmentSelect');
+  const savedSegmentNameInput = document.getElementById('savedSegmentName');
   const reviewerNameInput     = document.getElementById('reviewerName');
   const reviewerRoleInput     = document.getElementById('reviewerRole');
   const warningAcknowledged   = document.getElementById('warningAcknowledged');
@@ -459,12 +528,17 @@
   const subjectCounter        = document.getElementById('subjectCounter');
   const testDonorIdsInput     = document.getElementById('testDonorIds');
   const scheduledAtInput      = document.getElementById('scheduledAt');
+  const automationStepsInput  = document.getElementById('automationSteps');
+  const automationCadenceDaysInput = document.getElementById('automationCadenceDays');
+  const automationTemplateSelect = document.getElementById('automationTemplateSelect');
+  const topInfluencedDonors   = document.getElementById('topInfluencedDonors');
   const resultBox             = document.getElementById('resultBox');
   const qualityHints          = document.getElementById('qualityHints');
   const samplePreview         = document.getElementById('samplePreview');
   const recentBatchRows       = document.getElementById('recentBatchRows');
   const aiDraftMeta           = document.getElementById('aiDraftMeta');
   const aiModelLabel          = document.getElementById('aiModelLabel');
+  let automationTemplateMap   = {};
 
   // ── Subject counter ───────────────────────────────────────────────────
   function updateSubjectCounter() {
@@ -494,6 +568,9 @@
     return { gifted_within_days: 365 };
   }
   function buildAudience() {
+    const savedSegmentId = Number(savedSegmentSelect.value || 0);
+    if (savedSegmentId > 0) return { smart_group_id: savedSegmentId };
+
     const payload = audienceFromPreset(segmentPreset.value);
     const minTotal  = Number(minTotalGiven.value  || 0);
     const within    = Number(giftedWithinDays.value  || 0);
@@ -502,6 +579,21 @@
     if (within  > 0) payload.gifted_within_days  = within;
     if (topN    > 0) payload.top_n_by_total_given = topN;
     return payload;
+  }
+
+  function rulesFromCurrentAudience() {
+    if (savedSegmentSelect.value) return null;
+    const rules = [];
+    const minTotal = Number(minTotalGiven.value || 0);
+    const withinDays = Number(giftedWithinDays.value || 0);
+    const preset = String(segmentPreset.value || '').trim();
+
+    if (preset === 'major_donors') rules.push({ field: 'total_giving', op: 'gte', value: 500 });
+    if (preset === 'lapsed_donors') rules.push({ field: 'last_gift_days_ago', op: 'gte', value: 180 });
+    if (preset === 'all_active_donors') rules.push({ field: 'last_gift_days_ago', op: 'lte', value: 365 });
+    if (minTotal > 0) rules.push({ field: 'total_giving', op: 'gte', value: minTotal });
+    if (withinDays > 0) rules.push({ field: 'last_gift_days_ago', op: 'lte', value: withinDays });
+    return rules.length ? rules : null;
   }
   function parseDonorIds(raw) {
     return String(raw || '').split(',').map(v => Number(String(v).trim())).filter(v => Number.isInteger(v) && v > 0);
@@ -599,6 +691,33 @@
     });
   }
 
+  function renderAttribution(payload) {
+    const kpis = {
+      influenced_revenue: '$' + Number(payload.influenced_revenue || 0).toFixed(2),
+      influenced_donations: payload.influenced_donations || 0,
+      influenced_donor_count: payload.influenced_donor_count || 0,
+      attribution_average_gift: '$' + Number(payload.average_gift || 0).toFixed(2),
+      influenced_revenue_7d: '$' + Number(payload.influenced_revenue_7d || 0).toFixed(2),
+      influenced_revenue_90d: '$' + Number(payload.influenced_revenue_90d || 0).toFixed(2),
+    };
+    Object.entries(kpis).forEach(([k, v]) => {
+      const node = document.querySelector('[data-kpi="' + k + '"]');
+      if (node) node.textContent = String(v);
+    });
+
+    topInfluencedDonors.innerHTML = '';
+    const rows = Array.isArray(payload.top_influenced_donors) ? payload.top_influenced_donors : [];
+    if (!rows.length) {
+      topInfluencedDonors.innerHTML = '<li class="text-muted">No influenced donations in selected window.</li>';
+      return;
+    }
+    rows.forEach(row => {
+      const li = document.createElement('li');
+      li.innerHTML = '<strong>' + (row.donor_name || 'Donor') + '</strong> · $' + Number(row.revenue || 0).toFixed(2);
+      topInfluencedDonors.appendChild(li);
+    });
+  }
+
   // ── Guard: require selected campaign ──────────────────────────────────
   function requireCampaign() {
     if (campaignSelect.value) return true;
@@ -631,7 +750,7 @@
       campaignSelect.appendChild(opt);
     });
     if (!campaignSelect.value && rows.length > 0) campaignSelect.value = String(rows[0].id);
-    if (campaignSelect.value) await refreshAnalytics();
+    if (campaignSelect.value) await refreshCampaignData();
   }
 
   async function refreshAnalytics() {
@@ -642,6 +761,189 @@
       if (!resp.ok) return;
       renderAnalytics(await resp.json());
     } catch (_) {}
+  }
+
+  async function refreshAttribution() {
+    const id = campaignSelect.value;
+    if (!id) return;
+    try {
+      const resp = await fetch('/api/v2/campaigns/' + id + '/emails/attribution?window_days=30');
+      if (!resp.ok) return;
+      renderAttribution(await resp.json());
+    } catch (_) {}
+  }
+
+  async function loadAutomationTemplates() {
+    const id = campaignSelect.value;
+    if (!id) return;
+    automationTemplateMap = {};
+    automationTemplateSelect.innerHTML = '<option value="">Custom message (manual)</option>';
+    try {
+      const resp = await fetch('/api/v2/campaigns/' + id + '/emails/automation/templates');
+      if (!resp.ok) return;
+      const rows = await resp.json();
+      (Array.isArray(rows) ? rows : []).forEach(row => {
+        const key = String(row.key || '');
+        if (!key) return;
+        automationTemplateMap[key] = row;
+        const opt = document.createElement('option');
+        opt.value = key;
+        opt.textContent = row.label || key;
+        automationTemplateSelect.appendChild(opt);
+      });
+    } catch (_) {}
+  }
+
+  function applyAutomationTemplateDefaults() {
+    const key = String(automationTemplateSelect.value || '').trim();
+    if (!key) {
+      showResult('Select an automation template first.', 'error');
+      return;
+    }
+    const row = automationTemplateMap[key];
+    if (!row) {
+      showResult('Template metadata unavailable. Refresh templates and try again.', 'error');
+      return;
+    }
+    subjectInput.value = String(row.subject || '');
+    setEditorBody(String(row.body || '').replace(/\n/g, '<br>'));
+    automationStepsInput.value = String(Number(row.step_count || 3));
+    automationCadenceDaysInput.value = String(Number(row.cadence_days || 7));
+    updateSubjectCounter();
+    showResult({ applied_template: key, label: row.label || key }, 'ok');
+  }
+
+  async function queueAutomationTemplate() {
+    if (!requireCampaign()) return;
+    const key = String(automationTemplateSelect.value || '').trim();
+    if (!key) {
+      showResult('Select an automation template before queueing.', 'error');
+      return;
+    }
+    const btn = document.getElementById('queueTemplateBtn');
+    setLoading(btn, true);
+    const payload = {
+      audience: buildAudience(),
+      compliance: {
+        reviewer_name: reviewerNameInput.value,
+        reviewer_role: reviewerRoleInput.value,
+        warning_acknowledged: warningAcknowledged.checked,
+        human_confirmation_text: confirmationPhrase.value,
+        ai_assisted: aiAssisted.checked,
+        contains_internal_details: containsInternalDetails.checked,
+      },
+    };
+    const sched = scheduledAtInput.value;
+    if (sched) payload.start_at = new Date(sched).toISOString();
+
+    try {
+      const resp = await fetch('/api/v2/campaigns/' + campaignSelect.value + '/emails/automation/templates/' + encodeURIComponent(key) + '/instantiate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const body = await resp.json();
+      showResult(body, resp.ok ? 'ok' : 'error');
+      if (resp.ok) await refreshCampaignData();
+    } catch (err) {
+      showResult('Template automation failed: ' + err, 'error');
+    } finally {
+      setLoading(btn, false);
+    }
+  }
+
+  async function refreshSavedSegments() {
+    try {
+      const resp = await fetch('/api/v2/campaigns/email/segments');
+      if (!resp.ok) return;
+      const rows = await resp.json();
+      const previous = String(savedSegmentSelect.value || '');
+      savedSegmentSelect.innerHTML = '<option value="">None (use preset filters)</option>';
+      (Array.isArray(rows) ? rows : []).forEach(row => {
+        const opt = document.createElement('option');
+        opt.value = String(row.id || '');
+        const countText = Number(row.last_count || 0) > 0 ? ' [' + Number(row.last_count || 0) + ']' : '';
+        opt.textContent = (row.name || ('Segment #' + row.id)) + countText;
+        savedSegmentSelect.appendChild(opt);
+      });
+      if (previous) savedSegmentSelect.value = previous;
+    } catch (_) {}
+  }
+
+  async function saveCurrentSegment() {
+    const name = String(savedSegmentNameInput.value || '').trim();
+    if (!name) {
+      showResult('Enter a segment name before saving.', 'error');
+      return;
+    }
+    const rules = rulesFromCurrentAudience();
+    if (!rules || !rules.length) {
+      showResult('Current audience cannot be represented as a saved rule set. Select filters like minimum giving or recency first.', 'error');
+      return;
+    }
+    try {
+      const resp = await fetch('/api/v2/campaigns/email/segments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, rules, include_preview: true, preview_limit: 5 }),
+      });
+      const body = await resp.json();
+      showResult(body, resp.ok ? 'ok' : 'error');
+      if (resp.ok) {
+        await refreshSavedSegments();
+        if (body.id) savedSegmentSelect.value = String(body.id);
+      }
+    } catch (err) {
+      showResult('Failed to save segment: ' + err, 'error');
+    }
+  }
+
+  async function renameSelectedSegment() {
+    const id = Number(savedSegmentSelect.value || 0);
+    const name = String(savedSegmentNameInput.value || '').trim();
+    if (id <= 0) {
+      showResult('Select a saved segment to rename.', 'error');
+      return;
+    }
+    if (!name) {
+      showResult('Enter the new segment name first.', 'error');
+      return;
+    }
+    try {
+      const resp = await fetch('/api/v2/campaigns/email/segments/' + id, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      const body = await resp.json();
+      showResult(body, resp.ok ? 'ok' : 'error');
+      if (resp.ok) await refreshSavedSegments();
+    } catch (err) {
+      showResult('Failed to rename segment: ' + err, 'error');
+    }
+  }
+
+  async function deleteSelectedSegment() {
+    const id = Number(savedSegmentSelect.value || 0);
+    if (id <= 0) {
+      showResult('Select a saved segment to delete.', 'error');
+      return;
+    }
+    try {
+      const resp = await fetch('/api/v2/campaigns/email/segments/' + id, { method: 'DELETE' });
+      const body = await resp.json();
+      showResult(body, resp.ok ? 'ok' : 'error');
+      if (resp.ok) {
+        savedSegmentSelect.value = '';
+        await refreshSavedSegments();
+      }
+    } catch (err) {
+      showResult('Failed to delete segment: ' + err, 'error');
+    }
+  }
+
+  async function refreshCampaignData() {
+    await Promise.all([refreshAnalytics(), refreshAttribution(), loadAutomationTemplates()]);
   }
 
   async function preview() {
@@ -661,6 +963,30 @@
       renderSamplePreview(payload.sample_preview || []);
     } catch (err) {
       showResult('Preview failed: ' + err, 'error');
+    } finally {
+      setLoading(btn, false);
+    }
+  }
+
+  async function deliverabilityCheck() {
+    if (!requireCampaign()) return;
+    const btn = document.getElementById('deliverabilityBtn');
+    setLoading(btn, true);
+    try {
+      const resp = await fetch('/api/v2/campaigns/' + campaignSelect.value + '/emails/deliverability', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subject: subjectInput.value, body: editorBody(), audience: buildAudience() }),
+      });
+      const payload = await resp.json();
+      if (!resp.ok) {
+        showResult(payload.error || JSON.stringify(payload, null, 2), 'error');
+        return;
+      }
+      renderHints(payload.quality_hints || []);
+      showResult(payload, payload.blocked ? 'error' : 'ok');
+    } catch (err) {
+      showResult('Deliverability check failed: ' + err, 'error');
     } finally {
       setLoading(btn, false);
     }
@@ -702,7 +1028,7 @@
       });
       const body = await resp.json();
       showResult(body, resp.ok ? 'ok' : 'error');
-      if (resp.ok) await refreshAnalytics();
+      if (resp.ok) await refreshCampaignData();
     } catch (err) {
       showResult('Send failed: ' + err, 'error');
     } finally {
@@ -746,8 +1072,49 @@
     }
   }
 
+  async function queueAutomationSequence() {
+    if (!requireCampaign()) return;
+    const btn = document.getElementById('automationBtn');
+    setLoading(btn, true);
+
+    const payload = {
+      subject: subjectInput.value,
+      body: editorBody(),
+      audience: buildAudience(),
+      step_count: Number(automationStepsInput.value || 3),
+      cadence_days: Number(automationCadenceDaysInput.value || 7),
+      compliance: {
+        reviewer_name: reviewerNameInput.value,
+        reviewer_role: reviewerRoleInput.value,
+        warning_acknowledged: warningAcknowledged.checked,
+        human_confirmation_text: confirmationPhrase.value,
+        ai_assisted: aiAssisted.checked,
+        contains_internal_details: containsInternalDetails.checked,
+      },
+    };
+
+    const sched = scheduledAtInput.value;
+    if (sched) payload.start_at = new Date(sched).toISOString();
+
+    try {
+      const resp = await fetch('/api/v2/campaigns/' + campaignSelect.value + '/emails/automation/sequence', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const body = await resp.json();
+      showResult(body, resp.ok ? 'ok' : 'error');
+      if (resp.ok) await refreshCampaignData();
+    } catch (err) {
+      showResult('Automation sequence failed: ' + err, 'error');
+    } finally {
+      setLoading(btn, false);
+    }
+  }
+
   // ── Event listeners ───────────────────────────────────────────────────
   document.getElementById('aiDraftBtn').addEventListener('click', aiDraft);
+  document.getElementById('deliverabilityBtn').addEventListener('click', deliverabilityCheck);
   document.getElementById('previewBtn').addEventListener('click', preview);
   document.getElementById('dryRunBtn').addEventListener('click', () => queueSend({ dryRun: true }));
   document.getElementById('testSendBtn').addEventListener('click', () => {
@@ -755,15 +1122,29 @@
     if (!ids.length) { showResult('Enter at least one valid donor ID in "Test Recipient Donor IDs" before running a test send.', 'error'); return; }
     queueSend({ dryRun: false, testDonorIds: ids });
   });
+  document.getElementById('automationBtn').addEventListener('click', queueAutomationSequence);
+  document.getElementById('applyTemplateBtn').addEventListener('click', applyAutomationTemplateDefaults);
+  document.getElementById('queueTemplateBtn').addEventListener('click', queueAutomationTemplate);
+  document.getElementById('refreshSegmentsBtn').addEventListener('click', refreshSavedSegments);
+  document.getElementById('saveSegmentBtn').addEventListener('click', saveCurrentSegment);
+  document.getElementById('renameSegmentBtn').addEventListener('click', renameSelectedSegment);
+  document.getElementById('deleteSegmentBtn').addEventListener('click', deleteSelectedSegment);
+  savedSegmentSelect.addEventListener('change', () => {
+    const selected = savedSegmentSelect.options[savedSegmentSelect.selectedIndex];
+    if (selected && savedSegmentSelect.value) {
+      savedSegmentNameInput.value = String(selected.textContent || '').replace(/\s\[\d+\]$/, '');
+    }
+  });
   document.getElementById('sendBtn').addEventListener('click', () => {
     // Auto-open compliance section when send is triggered so user sees fields
     document.getElementById('complianceDetails').open = true;
     queueSend({ dryRun: false });
   });
-  campaignSelect.addEventListener('change', refreshAnalytics);
+  campaignSelect.addEventListener('change', refreshCampaignData);
 
   // ── Init ──────────────────────────────────────────────────────────────
-  loadCampaigns().catch(err => showResult('Failed to initialize workbench: ' + err, 'error'));
+  Promise.all([loadCampaigns(), refreshSavedSegments()])
+    .catch(err => showResult('Failed to initialize workbench: ' + err, 'error'));
 })();
 </script>
 {% endblock %}

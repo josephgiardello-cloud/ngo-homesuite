@@ -1,0 +1,32 @@
+{% extends 'base.html' %}
+{% block title %}Integrations Hub · NGO HomeSuite{% endblock %}
+{% block content %}
+<section class="card p-4">
+    <h1 class="h3 mb-2">Integrations Hub</h1>
+    <p class="text-muted mb-4">Monitor external system health and review operational integration telemetry.</p>
+
+    <div class="row g-3">
+        <div class="col-12 col-lg-4">
+            <div class="border rounded p-3 h-100 bg-light-subtle">
+                <h2 class="h6 mb-2">Integration Status</h2>
+                <p class="small mb-3">Current health summary from integration operations endpoint.</p>
+                <a class="btn btn-primary btn-sm" href="{{ url_for('integrations.integrations_status_route') }}">Open Status JSON</a>
+            </div>
+        </div>
+        <div class="col-12 col-lg-4">
+            <div class="border rounded p-3 h-100 bg-light-subtle">
+                <h2 class="h6 mb-2">Recent Integration Events</h2>
+                <p class="small mb-3">Review latest retries, webhooks, and background activity.</p>
+                <a class="btn btn-outline-primary btn-sm" href="{{ url_for('integrations.integrations_recent_route') }}">Open Recent Events</a>
+            </div>
+        </div>
+        <div class="col-12 col-lg-4">
+            <div class="border rounded p-3 h-100 bg-light-subtle">
+                <h2 class="h6 mb-2">Background Jobs</h2>
+                <p class="small mb-3">Inspect asynchronous integration job states and failures.</p>
+                <a class="btn btn-outline-primary btn-sm" href="{{ url_for('integrations.integrations_jobs_route') }}">Open Jobs</a>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

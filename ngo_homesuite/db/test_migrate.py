@@ -234,6 +234,7 @@ def test_legacy_schema_migrate_uses_legacy_runner_when_opted_in(monkeypatch):
         database = "memory"
 
     monkeypatch.setenv("NGO_HOMESUITE_ALLOW_LEGACY_SCHEMA_FALLBACK", "1")
+    monkeypatch.setenv("LEGACY_FALLBACK_ENABLED", "1")
 
     import ngo_homesuite.db.migrate as migrate_module
 

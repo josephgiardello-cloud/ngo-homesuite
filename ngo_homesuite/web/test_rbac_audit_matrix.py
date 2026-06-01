@@ -15,6 +15,7 @@ INDUSTRY STANDARDS APPLIED:
 
 import pytest
 from collections.abc import Iterable
+from datetime import datetime, timezone
 from typing import NamedTuple
 from uuid import uuid4
 from flask import Flask
@@ -142,6 +143,12 @@ def app_fixture():
 
     app = create_app(TestingConfig)
     app.config["ROLES_REQUIRING_2FA"] = []
+    with app.app_context():
+        # Ensure late-imported security models are present in metadata before create_all.
+        from ngo_homesuite.audit.security_events import SecurityAuditEvent  # noqa: F401
+        from ngo_homesuite.auth.bootstrap import BootstrapToken  # noqa: F401
+
+        db.create_all()
     return app
 
 
@@ -296,6 +303,7 @@ class TestRbacAuditMatrix:
         with client.session_transaction() as sess:
             sess["_user_id"] = str(admin_user.id)
             sess["_fresh"] = True
+            sess["_step_up_verified_at"] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         
         # Admin changes role
         resp = client.patch(
@@ -307,16 +315,16 @@ class TestRbacAuditMatrix:
         # Should succeed with 200
         assert resp.status_code in [200, 204]
         
-        # Verify audit trail (implementation dependent)
-        try:
-            from ngo_homesuite.persistence.event_log import EventLog
-        except ModuleNotFoundError:
-            pytest.skip("Legacy EventLog persistence module not available in this runtime")
+        from ngo_homesuite.audit.security_events import SecurityAuditEvent
 
-        audit_events = EventLog.query.filter(
-            EventLog.event_type == "user_role_changed",
-            EventLog.entity_id == target_id,
-        ).all()
+        with app_fixture.app_context():
+            audit_events = (
+                SecurityAuditEvent.query
+                .filter(SecurityAuditEvent.resource_type == "user")
+                .filter(SecurityAuditEvent.resource_id == target_id)
+                .filter(SecurityAuditEvent.action.like("user_role_changed_%"))
+                .all()
+            )
         assert len(audit_events) > 0, "Role change not logged"
 
     def test_viewer_cannot_mutate_data(self, app_fixture, viewer_user, client):
@@ -372,9 +380,38 @@ class TestSecureBootstrapFlow:
         
         **Assertions**: Idempotency guard prevents re-bootstrap.
         """
-        # This test requires bootstrap endpoint implementation
-        # Placeholder for now
-        pytest.skip("Bootstrap endpoint not yet implemented")
+        from ngo_homesuite.auth.bootstrap import BootstrapService, BootstrapToken
+        from ngo_homesuite.models.core import User, db
+
+        with app_fixture.app_context():
+            org = Organization(name=f"Bootstrap Org {uuid4().hex[:6]}")
+            db.session.add(org)
+            db.session.commit()
+
+            token = BootstrapService.generate_setup_token(org.id, ttl_hours=1)
+            is_valid, _reason, token_org_id = BootstrapService.validate_setup_token(token)
+            assert is_valid is True
+            assert token_org_id == org.id
+
+            admin = User(
+                username=f"bootstrap_admin_{uuid4().hex[:8]}",
+                email=f"bootstrap_admin_{uuid4().hex[:8]}@test.local",
+                organization_id=org.id,
+                role="admin",
+            )
+            admin.set_password("BootstrapAdmin123!")
+            db.session.add(admin)
+            db.session.commit()
+
+            consumed = BootstrapService.consume_setup_token(token, admin.id)
+            assert consumed is True
+
+            token_record = BootstrapToken.query.filter_by(organization_id=org.id).first()
+            assert token_record is not None
+            assert token_record.used_at is not None
+
+            is_valid_after, _reason_after, _org_after = BootstrapService.validate_setup_token(token)
+            assert is_valid_after is False
 
     def test_admin_self_demotion_blocked(self, app_fixture, admin_user, client):
         """
@@ -386,6 +423,7 @@ class TestSecureBootstrapFlow:
         with client.session_transaction() as sess:
             sess["_user_id"] = str(admin_user.id)
             sess["_fresh"] = True
+            sess["_step_up_verified_at"] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         
         # Attempt to demote self
         resp = client.patch(
@@ -407,6 +445,7 @@ class TestSecureBootstrapFlow:
         with client.session_transaction() as sess:
             sess["_user_id"] = str(admin_user.id)
             sess["_fresh"] = True
+            sess["_step_up_verified_at"] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         
         # Attempt to delete self (last admin)
         resp = client.delete(

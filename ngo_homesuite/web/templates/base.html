@@ -163,7 +163,7 @@
             box-shadow: var(--shadow);
             margin-bottom: 1rem;
             position: relative;
-            overflow: hidden;
+            overflow: visible;
             background-image:
                 radial-gradient(circle at 100% 0%, rgba(6, 182, 212, 0.2), transparent 40%),
                 linear-gradient(180deg, rgba(20, 118, 212, 0.09), rgba(20, 118, 212, 0));
@@ -186,7 +186,7 @@
             border-bottom: 1px solid var(--border);
             margin-bottom: 0.65rem;
             position: relative;
-            z-index: 1;
+            z-index: 20;
         }
 
         .sidebar-eyebrow {
@@ -238,13 +238,14 @@
 
         .quick-create-wrap {
             position: relative;
+            z-index: 30;
         }
 
         .quick-create-menu {
             position: absolute;
             right: 0;
             top: calc(100% + 0.35rem);
-            z-index: 12;
+            z-index: 50;
             display: grid;
             min-width: 155px;
             gap: 0.1rem;
@@ -1347,6 +1348,7 @@
                 <span>Welcome, {{ current_user.first_name or current_user.username }}</span>
                 <button type="button" class="theme-toggle" id="themeToggle">Toggle Theme</button>
                 <form method="post" action="{{ url_for('auth.logout') }}" style="display:inline; margin:0;">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" style="background:none; border:none; color:var(--header-text); cursor:pointer; padding:0; font:inherit; text-decoration:underline; text-underline-offset:2px;">Logout</button>
                 </form>
             {% else %}
@@ -1406,32 +1408,38 @@
                         <div class="sidebar-personal-title">Recent</div>
                         <div class="sidebar-personal-list" id="sidebarRecentList"></div>
                     </li>
-                    <li class="sidebar-label-group" data-sidebar-group-label="overview"><button type="button" class="sidebar-group-toggle" data-sidebar-group-toggle="overview"><span class="sidebar-group-copy"><span class="sidebar-group-title"><span class="sidebar-group-step">1</span> Monitor and Prioritize</span><span class="sidebar-group-subtitle">INTAKE, SIGNALS, TRIAGE</span></span></button></li>
-                    <li class="sidebar-group-item" data-sidebar-group="overview"><a href="{{ url_for('main.dashboard') }}" class="{{ 'active' if active_page == 'dashboard' else '' }}"><span class="sidebar-icon">DB</span><span class="sidebar-link-text">Dashboard</span><span class="sidebar-urgency-badge" data-urgency-badge="alerts" hidden>0</span></a></li>
+                    <li class="sidebar-label-group" data-sidebar-group-label="overview"><button type="button" class="sidebar-group-toggle" data-sidebar-group-toggle="overview"><span class="sidebar-group-copy"><span class="sidebar-group-title"><span class="sidebar-group-step">1</span> Executive and Intelligence Suite</span><span class="sidebar-group-subtitle">EXEC OVERVIEW, REPORTS, AI HUB</span></span></button></li>
+                    <li class="sidebar-group-item" data-sidebar-group="overview"><a href="{{ url_for('main.dashboard') }}" class="{{ 'active' if active_page == 'dashboard' else '' }}"><span class="sidebar-icon">EX</span><span class="sidebar-link-text">Executive Overview (Dashboard)</span><span class="sidebar-urgency-badge" data-urgency-badge="alerts" hidden>0</span></a></li>
+                    <li class="sidebar-group-item" data-sidebar-group="overview"><a href="{{ url_for('main.reports_page') }}" class="{{ 'active' if active_page == 'reports' else '' }}"><span class="sidebar-icon">RX</span><span class="sidebar-link-text">Reports and Exports</span></a></li>
+                    <li class="sidebar-group-item" data-sidebar-group="overview"><a href="{{ url_for('main.calendar_deadlines_page') }}" class="{{ 'active' if active_page == 'calendar_deadlines' else '' }}"><span class="sidebar-icon">CA</span><span class="sidebar-link-text">Calendar and Deadlines</span></a></li>
+                    <li class="sidebar-group-item" data-sidebar-group="overview"><a href="{{ url_for('main.ai_assistant_hub_page') }}" class="{{ 'active' if active_page == 'ai_assistant_hub' else '' }}"><span class="sidebar-icon">AI</span><span class="sidebar-link-text">AI Assistant Hub</span></a></li>
 
-                    <li class="sidebar-label-group" data-sidebar-group-label="fundraising"><button type="button" class="sidebar-group-toggle" data-sidebar-group-toggle="fundraising"><span class="sidebar-group-copy"><span class="sidebar-group-title"><span class="sidebar-group-step">2</span> Engage and Fundraise</span><span class="sidebar-group-subtitle">PIPELINE, OUTREACH, GIFTS</span></span></button></li>
-                    <li class="sidebar-group-item" data-sidebar-group="fundraising"><a href="{{ url_for('main.donors_list') }}" class="{{ 'active' if active_page == 'donors' else '' }}"><span class="sidebar-icon">DN</span><span class="sidebar-link-text">Donors</span></a></li>
+                    <li class="sidebar-label-group" data-sidebar-group-label="fundraising"><button type="button" class="sidebar-group-toggle" data-sidebar-group-toggle="fundraising"><span class="sidebar-group-copy"><span class="sidebar-group-title"><span class="sidebar-group-step">2</span> Donor and Communications Suite</span><span class="sidebar-group-subtitle">CRM, CAMPAIGNS, OUTREACH</span></span></button></li>
+                    <li class="sidebar-group-item" data-sidebar-group="fundraising"><a href="{{ url_for('main.donors_list') }}" class="{{ 'active' if active_page == 'donors' else '' }}"><span class="sidebar-icon">CR</span><span class="sidebar-link-text">Donor CRM (Donors)</span></a></li>
                     <li class="sidebar-group-item" data-sidebar-group="fundraising"><a href="{{ url_for('main.donations_list') }}" class="{{ 'active' if active_page == 'donations' else '' }}"><span class="sidebar-icon">DT</span><span class="sidebar-link-text">Donations</span></a></li>
-                    <li class="sidebar-group-item" data-sidebar-group="fundraising"><a href="{{ url_for('main.funds_list') }}" class="{{ 'active' if active_page == 'funds' else '' }}"><span class="sidebar-icon">FD</span><span class="sidebar-link-text">Funds</span></a></li>
-                    <li class="sidebar-group-item" data-sidebar-group="fundraising"><a href="{{ url_for('main.p2p_manage') }}" class="{{ 'active' if active_page == 'p2p' else '' }}"><span class="sidebar-icon">P2</span><span class="sidebar-link-text">P2P</span></a></li>
-                    <li class="sidebar-group-item" data-sidebar-group="fundraising"><a href="{{ url_for('main.campaign_email_workbench_page') }}" class="{{ 'active' if active_page == 'campaign_email_workbench' else '' }}"><span class="sidebar-icon">EM</span><span class="sidebar-link-text">Email Workbench</span></a></li>
+                    <li class="sidebar-group-item" data-sidebar-group="fundraising"><a href="{{ url_for('main.funds_list') }}" class="{{ 'active' if active_page == 'funds' else '' }}"><span class="sidebar-icon">FD</span><span class="sidebar-link-text">Funds and Allocation</span></a></li>
+                    <li class="sidebar-group-item" data-sidebar-group="fundraising"><a href="{{ url_for('main.p2p_manage') }}" class="{{ 'active' if active_page == 'p2p' else '' }}"><span class="sidebar-icon">P2</span><span class="sidebar-link-text">P2P Campaigns</span></a></li>
+                    <li class="sidebar-group-item" data-sidebar-group="fundraising"><a href="{{ url_for('main.campaign_email_workbench_page') }}" class="{{ 'active' if active_page == 'campaign_email_workbench' else '' }}"><span class="sidebar-icon">CM</span><span class="sidebar-link-text">Communications (Email Workbench)</span></a></li>
 
-                    <li class="sidebar-label-group" data-sidebar-group-label="programs"><button type="button" class="sidebar-group-toggle" data-sidebar-group-toggle="programs"><span class="sidebar-group-copy"><span class="sidebar-group-title"><span class="sidebar-group-step">3</span> Deliver Programs</span><span class="sidebar-group-subtitle">SERVICE EXECUTION</span></span></button></li>
-                    <li class="sidebar-group-item" data-sidebar-group="programs"><a href="{{ url_for('main.beneficiaries_list') }}" class="{{ 'active' if active_page == 'beneficiaries' else '' }}"><span class="sidebar-icon">BF</span><span class="sidebar-link-text">Beneficiaries</span></a></li>
-                    <li class="sidebar-group-item" data-sidebar-group="programs"><a href="{{ url_for('main.projects_dashboard') }}" class="{{ 'active' if active_page == 'projects' else '' }}"><span class="sidebar-icon">PR</span><span class="sidebar-link-text">Projects</span></a></li>
+                    <li class="sidebar-label-group" data-sidebar-group-label="programs"><button type="button" class="sidebar-group-toggle" data-sidebar-group-toggle="programs"><span class="sidebar-group-copy"><span class="sidebar-group-title"><span class="sidebar-group-step">3</span> Programs and Grants Suite</span><span class="sidebar-group-subtitle">DELIVERY, OUTCOMES, GRANTS</span></span></button></li>
+                    <li class="sidebar-group-item" data-sidebar-group="programs"><a href="{{ url_for('main.beneficiaries_list') }}" class="{{ 'active' if active_page == 'beneficiaries' else '' }}"><span class="sidebar-icon">BF</span><span class="sidebar-link-text">Programs and Outcomes (Beneficiaries)</span></a></li>
+                    <li class="sidebar-group-item" data-sidebar-group="programs"><a href="{{ url_for('main.projects_dashboard') }}" class="{{ 'active' if active_page == 'projects' else '' }}"><span class="sidebar-icon">PR</span><span class="sidebar-link-text">Projects and Outcomes</span></a></li>
+                    <li class="sidebar-group-item" data-sidebar-group="programs"><a href="{{ url_for('admin.grant_budget_workbench_page') }}" class="{{ 'active' if active_page == 'grant_budget_workbench' else '' }}"><span class="sidebar-icon">GW</span><span class="sidebar-link-text">Grants Workbench (Budgets)</span><span class="sidebar-urgency-badge" data-urgency-badge="approvals" hidden>0</span></a></li>
 
-                    <li class="sidebar-label-group" data-sidebar-group-label="operations"><button type="button" class="sidebar-group-toggle" data-sidebar-group-toggle="operations"><span class="sidebar-group-copy"><span class="sidebar-group-title"><span class="sidebar-group-step">4</span> Operate and Report</span><span class="sidebar-group-subtitle">FINANCE, EXECUTION, INSIGHT</span></span></button></li>
-                    <li class="sidebar-group-item" data-sidebar-group="operations"><a href="{{ url_for('main.expenses_list') }}" class="{{ 'active' if active_page == 'expenses' else '' }}"><span class="sidebar-icon">EX</span><span class="sidebar-link-text">Expenses</span></a></li>
-                    <li class="sidebar-group-item" data-sidebar-group="operations"><a href="{{ url_for('main.reports_page') }}" class="{{ 'active' if active_page == 'reports' else '' }}"><span class="sidebar-icon">RP</span><span class="sidebar-link-text">Reports</span></a></li>
-                    <li class="sidebar-group-item" data-sidebar-group="operations"><a href="{{ url_for('main.mobile_intake') }}" class="{{ 'active' if active_page == 'mobile_intake' else '' }}"><span class="sidebar-icon">MI</span><span class="sidebar-link-text">Mobile Intake</span></a></li>
-                    <li class="sidebar-group-item" data-sidebar-group="operations"><a href="{{ url_for('main.task_board') }}" class="{{ 'active' if active_page == 'task_board' else '' }}"><span class="sidebar-icon">TB</span><span class="sidebar-link-text">Task Board</span><span class="sidebar-urgency-badge" data-urgency-badge="tasks" hidden>0</span></a></li>
-                    <li class="sidebar-group-item" data-sidebar-group="operations"><a href="{{ url_for('admin.grant_budget_workbench_page') }}" class="{{ 'active' if active_page == 'grant_budget_workbench' else '' }}"><span class="sidebar-icon">GB</span><span class="sidebar-link-text">Grant Budgets</span><span class="sidebar-urgency-badge" data-urgency-badge="approvals" hidden>0</span></a></li>
+                    <li class="sidebar-label-group" data-sidebar-group-label="operations"><button type="button" class="sidebar-group-toggle" data-sidebar-group-toggle="operations"><span class="sidebar-group-copy"><span class="sidebar-group-title"><span class="sidebar-group-step">4</span> Operations and Finance Suite</span><span class="sidebar-group-subtitle">BUDGETS, TASKS, DOCUMENTS</span></span></button></li>
+                    <li class="sidebar-group-item" data-sidebar-group="operations"><a href="{{ url_for('main.expenses_list') }}" class="{{ 'active' if active_page == 'expenses' else '' }}"><span class="sidebar-icon">FB</span><span class="sidebar-link-text">Finance and Budget (Expenses)</span></a></li>
+                    <li class="sidebar-group-item" data-sidebar-group="operations"><a href="{{ url_for('main.task_board') }}" class="{{ 'active' if active_page == 'task_board' else '' }}"><span class="sidebar-icon">TW</span><span class="sidebar-link-text">Tasks and Workflow</span><span class="sidebar-urgency-badge" data-urgency-badge="tasks" hidden>0</span></a></li>
+                    <li class="sidebar-group-item" data-sidebar-group="operations"><a href="{{ url_for('events.events_board') }}" class="{{ 'active' if active_page == 'events_board' else '' }}"><span class="sidebar-icon">EV</span><span class="sidebar-link-text">Events and Reminders</span></a></li>
+                    <li class="sidebar-group-item" data-sidebar-group="operations"><a href="{{ url_for('main.mobile_intake') }}" class="{{ 'active' if active_page == 'mobile_intake' else '' }}"><span class="sidebar-icon">IN</span><span class="sidebar-link-text">Intake and Field Operations</span></a></li>
+                    <li class="sidebar-group-item" data-sidebar-group="operations"><a href="{{ url_for('main.reports_page') }}" class="{{ 'active' if active_page == 'reports' else '' }}"><span class="sidebar-icon">DC</span><span class="sidebar-link-text">Documents and Templates</span></a></li>
                     {% if current_user.role == 'admin' %}
-                    <li class="sidebar-label-group" data-sidebar-group-label="admin"><button type="button" class="sidebar-group-toggle" data-sidebar-group-toggle="admin"><span class="sidebar-group-copy"><span class="sidebar-group-title"><span class="sidebar-group-step">5</span> Govern and Configure</span><span class="sidebar-group-subtitle">CONTROLS, COMPLIANCE, SETUP</span></span></button></li>
-                    <li class="sidebar-group-item" data-sidebar-group="admin"><a href="{{ tony_full_url or url_for('main.tony_scoring') }}" class="{{ 'active' if active_page in ['tony', 'tony_scoring'] else '' }}"><span class="sidebar-icon">TY</span><span class="sidebar-link-text">TONY Program</span></a></li>
+                    <li class="sidebar-label-group" data-sidebar-group-label="admin"><button type="button" class="sidebar-group-toggle" data-sidebar-group-toggle="admin"><span class="sidebar-group-copy"><span class="sidebar-group-title"><span class="sidebar-group-step">5</span> Governance and Platform Suite</span><span class="sidebar-group-subtitle">SECURITY, TEAM, INTEGRATIONS</span></span></button></li>
+                    <li class="sidebar-group-item" data-sidebar-group="admin"><a href="{{ tony_full_url or url_for('main.tony_scoring') }}" class="{{ 'active' if active_page in ['tony', 'tony_scoring'] else '' }}"><span class="sidebar-icon">TY</span><span class="sidebar-link-text">Audit and Security (TONY)</span></a></li>
+                    <li class="sidebar-group-item" data-sidebar-group="admin"><a href="{{ url_for('auth.mfa_setup_page') }}" class="{{ 'active' if active_page == 'security' else '' }}"><span class="sidebar-icon">SC</span><span class="sidebar-link-text">Security Center (MFA)</span></a></li>
                     <li class="sidebar-group-item" data-sidebar-group="admin" style="margin-top:0.45rem; padding-top:0.45rem; border-top:1px solid var(--border);">
-                        <a href="{{ url_for('main.org_settings') }}" class="{{ 'active' if active_page == 'settings' else '' }}"><span class="sidebar-icon">ST</span><span class="sidebar-link-text">Settings</span></a>
+                        <a href="{{ url_for('main.org_settings') }}" class="{{ 'active' if active_page == 'settings' else '' }}"><span class="sidebar-icon">ST</span><span class="sidebar-link-text">Settings, Team and Permissions</span></a>
                     </li>
+                    <li class="sidebar-group-item" data-sidebar-group="admin"><a href="{{ url_for('main.integrations_hub_page') }}" class="{{ 'active' if active_page == 'integrations_hub' else '' }}"><span class="sidebar-icon">IG</span><span class="sidebar-link-text">Integrations</span></a></li>
                     {% endif %}
                 </ul>
             </aside>

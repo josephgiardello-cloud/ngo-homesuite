@@ -1,13 +1,105 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="container py-4">
-  <h1>Donate Online</h1>
-  <p>Support our mission securely with card checkout.</p>
-  <form action="/public/donate/create-checkout" method="POST">
-    <label>Amount: $<input type="number" step="0.01" min="1" name="amount" required></label><br>
-    <label>Email: <input type="email" name="email" required></label><br>
-    <input type="hidden" name="campaign_id" value="{{ campaign.id if campaign else '' }}">
-    <button type="submit">Donate with Stripe</button>
+<section class="container py-4" style="max-width:840px;">
+  <div style="border:1px solid var(--border); border-radius:16px; padding:1rem 1.2rem; background:linear-gradient(135deg, rgba(20,118,212,0.09), rgba(35,132,101,0.09)); margin-bottom:0.8rem;">
+    <h1 style="margin:0 0 0.25rem;">Donate Online</h1>
+    <p style="margin:0; color:var(--muted);">Secure hosted giving page with campaign, fund, and tribute support.</p>
+  </div>
+
+  <form action="/public/donate/create-checkout" method="POST" style="border:1px solid var(--border); border-radius:14px; background:var(--surface); padding:1rem; display:grid; gap:0.8rem;">
+    <div>
+      <label style="display:block; font-weight:600; margin-bottom:0.25rem;">Amount (USD)</label>
+      <div style="display:flex; flex-wrap:wrap; gap:0.4rem; margin-bottom:0.5rem;">
+        <button type="button" class="amount-preset btn btn-outline-primary" data-amount="25">$25</button>
+        <button type="button" class="amount-preset btn btn-outline-primary" data-amount="50">$50</button>
+        <button type="button" class="amount-preset btn btn-outline-primary" data-amount="100">$100</button>
+        <button type="button" class="amount-preset btn btn-outline-primary" data-amount="250">$250</button>
+      </div>
+      <input id="donateAmount" type="number" step="0.01" min="1" name="amount" required class="form-control" placeholder="75.00" />
+    </div>
+
+    <div style="display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0.7rem;">
+      <div>
+        <label style="display:block; font-weight:600; margin-bottom:0.25rem;">Name</label>
+        <input type="text" name="donor_name" class="form-control" maxlength="160" placeholder="Jane Supporter" />
+      </div>
+      <div>
+        <label style="display:block; font-weight:600; margin-bottom:0.25rem;">Email</label>
+        <input type="email" name="email" class="form-control" required placeholder="jane@example.org" />
+      </div>
+    </div>
+
+    <div style="display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0.7rem;">
+      <div>
+        <label style="display:block; font-weight:600; margin-bottom:0.25rem;">Campaign</label>
+        <select name="campaign_id" class="form-control">
+          <option value="">General organization support</option>
+          {% for c in campaigns %}
+          <option value="{{ c.id }}" {{ 'selected' if campaign and c.id == campaign.id else '' }}>{{ c.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label style="display:block; font-weight:600; margin-bottom:0.25rem;">Fund Designation</label>
+        <select name="fund_id" class="form-control">
+          <option value="">General / none</option>
+          {% for fund in funds %}
+          <option value="{{ fund.id }}">{{ fund.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    <div>
+      <label style="display:block; font-weight:600; margin-bottom:0.25rem;">Purpose (optional)</label>
+      <input type="text" name="purpose" class="form-control" maxlength="200" placeholder="Scholarships, emergency relief, community kits" />
+    </div>
+
+    <details style="border:1px dashed var(--border); border-radius:12px; padding:0.7rem;">
+      <summary style="cursor:pointer; font-weight:600;">Tribute Gift</summary>
+      <div style="display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:0.7rem; margin-top:0.7rem;">
+        <div>
+          <label style="display:block; font-weight:600; margin-bottom:0.25rem;">Type</label>
+          <select name="tribute_type" class="form-control">
+            <option value="">None</option>
+            <option value="in_honor_of">In Honor Of</option>
+            <option value="in_memory_of">In Memory Of</option>
+          </select>
+        </div>
+        <div>
+          <label style="display:block; font-weight:600; margin-bottom:0.25rem;">Honoree Name</label>
+          <input type="text" name="tribute_honoree_name" class="form-control" maxlength="200" />
+        </div>
+        <div>
+          <label style="display:block; font-weight:600; margin-bottom:0.25rem;">Honoree Contact</label>
+          <input type="text" name="tribute_honoree_contact" class="form-control" maxlength="255" placeholder="email or address" />
+        </div>
+      </div>
+    </details>
+
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:0.6rem; flex-wrap:wrap;">
+      <small style="color:var(--muted);">Payments are processed securely via Stripe. A donation record is created before checkout for audit traceability.</small>
+      <button type="submit" class="btn btn-primary">Donate with Stripe</button>
+    </div>
   </form>
+
+  <details style="margin-top:0.8rem; border:1px solid var(--border); border-radius:12px; padding:0.7rem; background:var(--surface-soft);">
+    <summary style="cursor:pointer; font-weight:600;">Embed This Donation Form</summary>
+    <p style="margin:0.55rem 0 0.35rem; color:var(--muted);">Paste this script on your website:</p>
+    <pre style="margin:0; white-space:pre-wrap; border:1px solid var(--border); border-radius:10px; padding:0.65rem; background:#0f172a; color:#e2e8f0; overflow:auto;">&lt;script src="{{ request.url_root.rstrip('/') }}/public/donate/embed.js" data-height="860"&gt;&lt;/script&gt;
+&lt;div id="ngo-donate-form"&gt;&lt;/div&gt;</pre>
+  </details>
 </section>
+
+<script>
+(function () {
+  const amountInput = document.getElementById('donateAmount');
+  document.querySelectorAll('.amount-preset').forEach((btn) => {
+    btn.addEventListener('click', function () {
+      const value = Number(this.getAttribute('data-amount') || 0);
+      if (value > 0) amountInput.value = value.toFixed(2);
+    });
+  });
+})();
+</script>
 {% endblock %}

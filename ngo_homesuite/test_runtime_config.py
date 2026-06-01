@@ -30,6 +30,9 @@ def _clear_runtime_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "REDIS_URL",
         "REDIS_KEY_PREFIX",
         "NGO_HOMESUITE_ALLOW_SQLITE_IN_PRODUCTION",
+        "NGO_DEMO_ADMIN_PASSWORD",
+        "NGO_HOMESUITE_ENABLE_DEMO_SEED",
+        "SHOW_DEV_LOGIN_CREDENTIALS",
     ]
     for key in keys:
         monkeypatch.delenv(key, raising=False)
@@ -117,6 +120,32 @@ def test_load_runtime_settings_production_requires_explicit_database_url(monkeyp
     monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
 
     with pytest.raises(RuntimeError, match="DATABASE_URL"):
+        config.load_runtime_settings()
+
+
+def test_load_runtime_settings_production_rejects_placeholder_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_runtime_env(monkeypatch)
+
+    monkeypatch.setenv("FLASK_ENV", "production")
+    monkeypatch.setenv("SECRET_KEY", "__REPLACE_AT_DEPLOY__")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/ngo")
+    monkeypatch.setenv("SESSION_COOKIE_SECURE", "1")
+    monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
+
+    with pytest.raises(RuntimeError, match="placeholder"):
+        config.load_runtime_settings()
+
+
+def test_load_runtime_settings_production_rejects_placeholder_database_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_runtime_env(monkeypatch)
+
+    monkeypatch.setenv("FLASK_ENV", "production")
+    monkeypatch.setenv("SECRET_KEY", "prod-secret")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://ngohs:__REPLACE_AT_DEPLOY__@localhost/ngo_homesuite")
+    monkeypatch.setenv("SESSION_COOKIE_SECURE", "1")
+    monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
+
+    with pytest.raises(RuntimeError, match="placeholder"):
         config.load_runtime_settings()
 
 
@@ -350,6 +379,22 @@ def test_load_runtime_settings_production_rejects_show_dev_login_credentials(
     monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
 
     with pytest.raises(RuntimeError, match="SHOW_DEV_LOGIN_CREDENTIALS"):
+        config.load_runtime_settings()
+
+
+def test_load_runtime_settings_production_rejects_demo_seed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+
+    monkeypatch.setenv("FLASK_ENV", "production")
+    monkeypatch.setenv("SECRET_KEY", "prod-secret")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/ngo")
+    monkeypatch.setenv("SESSION_COOKIE_SECURE", "1")
+    monkeypatch.setenv("NGO_HOMESUITE_ENABLE_DEMO_SEED", "1")
+    monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
+
+    with pytest.raises(RuntimeError, match="NGO_HOMESUITE_ENABLE_DEMO_SEED"):
         config.load_runtime_settings()
 
 

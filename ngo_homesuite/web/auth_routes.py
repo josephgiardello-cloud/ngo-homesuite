@@ -35,9 +35,12 @@ _LOGIN_WINDOW_SECONDS = 60
 _LOGIN_RATE_LIMIT = 10
 _FORGOT_WINDOW_SECONDS = 60
 _FORGOT_RATE_LIMIT = 5
+_STEP_UP_WINDOW_SECONDS = 60
+_STEP_UP_RATE_LIMIT = 10
 
 _LOGIN_ATTEMPT_BUCKETS: dict[str, deque[datetime]] = defaultdict(deque)
 _FORGOT_ATTEMPT_BUCKETS: dict[str, deque[datetime]] = defaultdict(deque)
+_STEP_UP_ATTEMPT_BUCKETS: dict[str, deque[datetime]] = defaultdict(deque)
 _RATE_LIMIT_LOCK = Lock()
 
 
@@ -412,7 +415,13 @@ def login():
             if not otp_code:
                 flash('Verification code required for this account.', 'error')
                 return render_template('auth/login.html', mfa_required=True, **login_template_context)
-            if not user.verify_mfa_code(otp_code):
+            try:
+                mfa_valid = user.verify_mfa_code(otp_code)
+            except RuntimeError:
+                current_app.logger.exception('mfa_verification_unavailable user_id=%s', int(user.id or 0))
+                flash('MFA verification is temporarily unavailable. Please contact support.', 'error')
+                return render_template('auth/login.html', mfa_required=True, **login_template_context), 503
+            if not mfa_valid:
                 user.register_mfa_challenge_failure(
                     max_attempts=_MAX_MFA_FAILED_ATTEMPTS,
                     window_minutes=_MFA_LOCKOUT_DURATION_MINUTES,
@@ -644,9 +653,24 @@ def _webauthn_verify_authentication_response(
 @login_required
 def mfa_enroll():
     """Initialize TOTP secret and backup codes for current user."""
-    secret = current_user.ensure_mfa_secret()
+    try:
+        secret = current_user.ensure_mfa_secret()
+        provisioning_uri = current_user.mfa_provisioning_uri()
+    except RuntimeError as exc:
+        # Recover from stale encrypted MFA material after local key rotations by
+        # resetting enrollment state and issuing a fresh secret.
+        if 'Stored MFA secret could not be decrypted' in str(exc):
+            current_app.logger.warning('mfa_secret_stale_reenroll user_id=%s', int(current_user.id or 0))
+            current_user.mfa_totp_secret = None
+            current_user.mfa_enabled = False
+            current_user.mfa_backup_codes_json = []
+            db.session.flush()
+            secret = current_user.ensure_mfa_secret()
+            provisioning_uri = current_user.mfa_provisioning_uri()
+        else:
+            current_app.logger.exception('mfa_enrollment_unavailable user_id=%s', int(current_user.id or 0))
+            return {'error': 'mfa_encryption_unavailable'}, 503
     backup_codes = current_user.generate_mfa_backup_codes()
-    provisioning_uri = current_user.mfa_provisioning_uri()
     db.session.commit()
     return {
         'secret': secret,
@@ -667,7 +691,15 @@ def mfa_confirm():
         return {'error': 'code is required'}, 400
     if not current_user.mfa_totp_secret:
         return {'error': 'mfa enrollment has not been initialized'}, 400
-    if not current_user.verify_mfa_code(code):
+    try:
+        mfa_valid = current_user.verify_mfa_code(code)
+    except RuntimeError as exc:
+        if 'Stored MFA secret could not be decrypted' in str(exc):
+            current_app.logger.warning('mfa_secret_stale_confirm user_id=%s', int(current_user.id or 0))
+            return {'error': 'mfa_secret_stale_reenroll_required'}, 409
+        current_app.logger.exception('mfa_verification_unavailable user_id=%s', int(current_user.id or 0))
+        return {'error': 'mfa_encryption_unavailable'}, 503
+    if not mfa_valid:
         db.session.commit()
         return {'error': 'invalid code'}, 400
     current_user.mfa_enabled = True
@@ -685,7 +717,12 @@ def mfa_disable():
         return {'status': 'already_disabled'}, 200
     if not code:
         return {'error': 'code is required'}, 400
-    if not current_user.verify_mfa_code(code):
+    try:
+        mfa_valid = current_user.verify_mfa_code(code)
+    except RuntimeError:
+        current_app.logger.exception('mfa_verification_unavailable user_id=%s', int(current_user.id or 0))
+        return {'error': 'mfa_encryption_unavailable'}, 503
+    if not mfa_valid:
         db.session.commit()
         return {'error': 'invalid code'}, 400
     current_user.mfa_enabled = False
@@ -707,7 +744,12 @@ def mfa_rotate_backup_codes():
     if current_user.mfa_enabled:
         if not code:
             return {'error': 'code is required'}, 400
-        if not current_user.verify_mfa_code(code):
+        try:
+            mfa_valid = current_user.verify_mfa_code(code)
+        except RuntimeError:
+            current_app.logger.exception('mfa_verification_unavailable user_id=%s', int(current_user.id or 0))
+            return {'error': 'mfa_encryption_unavailable'}, 503
+        if not mfa_valid:
             db.session.commit()
             return {'error': 'invalid code'}, 400
     backup_codes = current_user.generate_mfa_backup_codes()
@@ -761,7 +803,12 @@ def two_factor_login():
             return {'error': 'verification temporarily locked, try again later'}, 429
         if not otp_code:
             return {'error': 'otp_code is required for this account'}, 401
-        if not user.verify_mfa_code(otp_code):
+        try:
+            mfa_valid = user.verify_mfa_code(otp_code)
+        except RuntimeError:
+            current_app.logger.exception('mfa_verification_unavailable user_id=%s', int(user.id or 0))
+            return {'error': 'mfa_encryption_unavailable'}, 503
+        if not mfa_valid:
             user.register_mfa_challenge_failure(
                 max_attempts=_MAX_MFA_FAILED_ATTEMPTS,
                 window_minutes=_MFA_LOCKOUT_DURATION_MINUTES,
@@ -1288,16 +1335,24 @@ def require_step_up_auth(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
         if not is_step_up_verified():
-            from ngo_homesuite.audit.security_events import SecurityAuditService, SecurityEventType
-            SecurityAuditService.log_event(
-                event_type=SecurityEventType.PERMISSION_DENIED,
-                action='SENSITIVE_ACTION_ATTEMPTED',
-                result='step_up_required',
-                payload={
-                    'endpoint': request.endpoint,
-                    'user_id': int(getattr(current_user, 'id', 0)),
-                },
-            )
+            try:
+                from ngo_homesuite.audit.security_events import SecurityAuditService, SecurityEventType
+
+                SecurityAuditService.log_event(
+                    event_type=SecurityEventType.PERMISSION_DENIED,
+                    action='SENSITIVE_ACTION_ATTEMPTED',
+                    result='step_up_required',
+                    payload={
+                        'endpoint': request.endpoint,
+                        'user_id': int(getattr(current_user, 'id', 0)),
+                    },
+                )
+            except Exception:
+                current_app.logger.warning(
+                    'step_up_required_audit_log_failed endpoint=%s user_id=%s',
+                    request.endpoint,
+                    int(getattr(current_user, 'id', 0) or 0),
+                )
             return jsonify({'error': 'Step-up authentication required', 'step_up_required': True}), 403
         return fn(*args, **kwargs)
 
@@ -1320,30 +1375,51 @@ def step_up_otp():
     if not bool(current_user.mfa_enabled):
         return {'error': 'MFA is not enabled for this account'}, 400
 
+    source_ip = str(request.headers.get('X-Forwarded-For') or request.remote_addr or 'unknown').split(',', 1)[0].strip()
+    step_up_rate_key = f"stepup:{int(current_user.id)}:{source_ip}"
+    if _auth_rate_limited(
+        _STEP_UP_ATTEMPT_BUCKETS,
+        step_up_rate_key,
+        limit=int(current_app.config.get('STEP_UP_OTP_RATE_LIMIT_PER_MIN', _STEP_UP_RATE_LIMIT)),
+        window_seconds=_STEP_UP_WINDOW_SECONDS,
+    ):
+        return {'error': 'Too many step-up attempts. Please retry in a minute.'}, 429
+
     data = _request_data()
     code = str(data.get('code') or '').strip()
     if not code:
         return {'error': 'code is required'}, 400
 
-    if not current_user.verify_mfa_code(code):
+    try:
+        mfa_valid = current_user.verify_mfa_code(code)
+    except RuntimeError:
+        current_app.logger.exception('step_up_verification_unavailable user_id=%s', int(current_user.id or 0))
+        return {'error': 'mfa_encryption_unavailable'}, 503
+    if not mfa_valid:
         db.session.commit()
-        SecurityAuditService.log_event(
-            event_type=SecurityEventType.LOGIN_FAILURE,
-            action='STEP_UP_OTP_FAILED',
-            result='invalid_code',
-            payload={'user_id': int(current_user.id)},
-        )
+        try:
+            SecurityAuditService.log_event(
+                event_type=SecurityEventType.LOGIN_FAILURE,
+                action='STEP_UP_OTP_FAILED',
+                result='invalid_code',
+                payload={'user_id': int(current_user.id)},
+            )
+        except Exception:
+            current_app.logger.warning('step_up_otp_failed_audit_log_failed user_id=%s', int(current_user.id or 0))
         return {'error': 'invalid code'}, 400
 
     # Record step-up verification timestamp in session.
     session[_STEP_UP_SESSION_KEY] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
     db.session.commit()
 
-    SecurityAuditService.log_event(
-        event_type=SecurityEventType.LOGIN_SUCCESS,
-        action='STEP_UP_OTP_VERIFIED',
-        result='success',
-        payload={'user_id': int(current_user.id)},
-    )
+    try:
+        SecurityAuditService.log_event(
+            event_type=SecurityEventType.LOGIN_SUCCESS,
+            action='STEP_UP_OTP_VERIFIED',
+            result='success',
+            payload={'user_id': int(current_user.id)},
+        )
+    except Exception:
+        current_app.logger.warning('step_up_otp_verified_audit_log_failed user_id=%s', int(current_user.id or 0))
     ttl = int(current_app.config.get('STEP_UP_AUTH_TTL_SECONDS', 900))
     return {'status': 'verified', 'expires_in_seconds': ttl}, 200

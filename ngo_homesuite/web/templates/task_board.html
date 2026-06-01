@@ -181,6 +181,29 @@
         background: var(--surface-soft);
         padding: 0.5rem 0.65rem;
     }
+
+    .task-management-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 0.65rem;
+    }
+
+    .task-management-grid label {
+        display: grid;
+        gap: 0.25rem;
+        font-size: 0.86rem;
+    }
+
+    .task-management-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        align-items: center;
+    }
+
+    .task-management-actions .btn {
+        font-size: 0.82rem;
+    }
 </style>
 {% endblock %}
 
@@ -197,6 +220,55 @@
 </div>
 
 <div class="board-shell">
+    {% if current_user.role in ['admin', 'staff'] %}
+    <div class="card">
+        <h3 style="margin-bottom:0.65rem;">Quick Task Capture</h3>
+        <div class="task-management-grid">
+            <label>
+                Title
+                <input id="task-title" type="text" placeholder="Follow up with major donor" />
+            </label>
+            <label>
+                Assignee
+                <select id="task-assignee">
+                    <option value="">Unassigned</option>
+                </select>
+            </label>
+            <label>
+                Type
+                <select id="task-type">
+                    <option value="general">General</option>
+                    <option value="call">Call</option>
+                    <option value="email">Email</option>
+                    <option value="meeting">Meeting</option>
+                    <option value="follow_up">Follow Up</option>
+                </select>
+            </label>
+            <label>
+                Priority
+                <select id="task-priority">
+                    <option value="low">Low</option>
+                    <option value="medium" selected>Medium</option>
+                    <option value="high">High</option>
+                    <option value="urgent">Urgent</option>
+                </select>
+            </label>
+            <label>
+                Due Date
+                <input id="task-due-date" type="date" />
+            </label>
+            <label style="grid-column: 1 / -1;">
+                Description
+                <textarea id="task-description" rows="3" placeholder="Internal notes, call script, or follow-up context"></textarea>
+            </label>
+        </div>
+        <div class="task-management-actions" style="margin-top:0.65rem;">
+            <button id="create-task" type="button" class="btn btn-primary">Create Task</button>
+            <span id="task-create-status" class="text-muted"></span>
+        </div>
+    </div>
+    {% endif %}
+
     <div class="card">
         <h3 style="margin-bottom:0.7rem;">Filters</h3>
         <div class="board-filters">
@@ -292,6 +364,135 @@ function boardFilters() {
         reminders_limit: Number(document.getElementById('reminder-limit')?.value || 20),
         grant_within_days: Number(document.getElementById('grant-window')?.value || 120),
     };
+}
+
+const canManageTasks = {{ 'true' if current_user.role in ['admin', 'staff'] else 'false' }};
+let taskAssignees = [];
+
+function assigneeLabel(user) {
+    const parts = [user?.first_name, user?.last_name].map(part => String(part || '').trim()).filter(Boolean);
+    return parts.join(' ') || user?.username || `User ${user?.id}`;
+}
+
+function assigneeOptions(selectedId) {
+    const selectedValue = selectedId ? String(selectedId) : '';
+    const options = ['<option value="">Unassigned</option>'];
+    (taskAssignees || []).forEach(user => {
+        options.push(`<option value="${user.id}" ${String(user.id) === selectedValue ? 'selected' : ''}>${assigneeLabel(user)}</option>`);
+    });
+    return options.join('');
+}
+
+async function loadTaskAssignees() {
+    if (!canManageTasks) {
+        return [];
+    }
+    if (taskAssignees.length > 0) {
+        return taskAssignees;
+    }
+
+    const response = await fetch('/api/v2/task-assignees');
+    if (!response.ok) {
+        return [];
+    }
+
+    const users = await response.json();
+    taskAssignees = (users || []).filter(user => user && user.is_active !== false);
+    const assigneeSelect = document.getElementById('task-assignee');
+    if (assigneeSelect) {
+        assigneeSelect.innerHTML = assigneeOptions('');
+    }
+    return taskAssignees;
+}
+
+function taskManageControls(task) {
+    if (!canManageTasks) {
+        return '';
+    }
+
+    return `
+        <div class="task-management-grid" style="margin-top:0.6rem;">
+            <label>
+                Status
+                <select data-task-status="${task.id}">
+                    <option value="open" ${task.status === 'open' ? 'selected' : ''}>Open</option>
+                    <option value="in_progress" ${task.status === 'in_progress' ? 'selected' : ''}>In Progress</option>
+                    <option value="done" ${task.status === 'done' ? 'selected' : ''}>Done</option>
+                    <option value="cancelled" ${task.status === 'cancelled' ? 'selected' : ''}>Cancelled</option>
+                </select>
+            </label>
+            <label>
+                Assignee
+                <select data-task-assignee="${task.id}">${assigneeOptions(task.assigned_to_id)}</select>
+            </label>
+            <label>
+                Reminder Channel
+                <select data-task-reminder-channel="${task.id}">
+                    <option value="auto" ${task.reminder_channel === 'auto' ? 'selected' : ''}>Auto</option>
+                    <option value="email" ${task.reminder_channel === 'email' ? 'selected' : ''}>Email</option>
+                    <option value="sms" ${task.reminder_channel === 'sms' ? 'selected' : ''}>SMS</option>
+                    <option value="none" ${task.reminder_channel === 'none' ? 'selected' : ''}>None</option>
+                </select>
+            </label>
+            <label>
+                Due Date
+                <input data-task-due-date="${task.id}" type="date" value="${String(task.due_date || '').slice(0, 10)}" />
+            </label>
+        </div>
+        <div class="task-management-actions" style="margin-top:0.55rem;">
+            <button type="button" class="btn btn-primary" data-save-task-id="${task.id}">Save Changes</button>
+            ${task.status !== 'done' ? `<button type="button" class="btn btn-secondary" data-complete-id="${task.id}">Mark Done</button>` : ''}
+            ${task.status !== 'done' ? `<button type="button" class="btn btn-secondary" data-remind-id="${task.id}">Send Reminder</button>` : ''}
+        </div>
+    `;
+}
+
+async function createTask() {
+    const title = String(document.getElementById('task-title')?.value || '').trim();
+    if (!title) {
+        throw new Error('Task title is required');
+    }
+
+    const payload = {
+        title,
+        assigned_to_id: document.getElementById('task-assignee')?.value || null,
+        task_type: document.getElementById('task-type')?.value || 'general',
+        priority: document.getElementById('task-priority')?.value || 'medium',
+        due_date: document.getElementById('task-due-date')?.value || null,
+        description: String(document.getElementById('task-description')?.value || '').trim() || null,
+    };
+
+    const response = await fetch('/api/v2/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+        const message = await response.text();
+        throw new Error(message || 'Task creation failed');
+    }
+
+    return response.json();
+}
+
+async function saveTask(taskId) {
+    const payload = {
+        status: document.querySelector(`[data-task-status="${taskId}"]`)?.value || 'open',
+        assigned_to_id: document.querySelector(`[data-task-assignee="${taskId}"]`)?.value || null,
+        reminder_channel: document.querySelector(`[data-task-reminder-channel="${taskId}"]`)?.value || 'auto',
+        due_date: document.querySelector(`[data-task-due-date="${taskId}"]`)?.value || null,
+    };
+
+    const response = await fetch(`/api/v2/tasks/${taskId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+        throw new Error('Task update failed');
+    }
 }
 
 function buildQuery(params) {
@@ -396,10 +597,7 @@ function renderTaskColumns(tasks) {
                     <span>${dueText(task)}</span>
                 </div>
                 ${linkLine ? `<div class="task-meta" style="margin-top:-0.1rem;">${linkLine}</div>` : ''}
-                <div class="task-actions">
-                    ${task.status !== 'done' ? `<button type="button" class="btn btn-secondary" data-complete-id="${task.id}">Mark Done</button>` : ''}
-                    ${task.status !== 'done' ? `<button type="button" class="btn btn-secondary" data-remind-id="${task.id}">Send Reminder</button>` : ''}
-                </div>
+                ${taskManageControls(task)}
             `;
             body.appendChild(card);
         });
@@ -479,6 +677,10 @@ async function loadBoard() {
     const filters = boardFilters();
     const query = buildQuery(filters);
 
+    if (canManageTasks) {
+        await loadTaskAssignees();
+    }
+
     const response = await fetch(`/api/v2/tasks/board?${query}`);
     if (!response.ok) {
         throw new Error('Failed to load task board');
@@ -517,6 +719,17 @@ async function refreshBoardWithFallback() {
 }
 
 document.addEventListener('click', async (event) => {
+    const saveId = event.target?.getAttribute?.('data-save-task-id');
+    if (saveId) {
+        try {
+            await saveTask(Number(saveId));
+            await refreshBoardWithFallback();
+        } catch (error) {
+            console.error(error);
+        }
+        return;
+    }
+
     const completeId = event.target?.getAttribute?.('data-complete-id');
     if (completeId) {
         try {
@@ -540,6 +753,30 @@ document.addEventListener('click', async (event) => {
 });
 
 document.addEventListener('DOMContentLoaded', () => {
+    if (canManageTasks) {
+        loadTaskAssignees().catch(error => console.error('Failed to load task assignees:', error));
+        document.getElementById('create-task')?.addEventListener('click', async () => {
+            const status = document.getElementById('task-create-status');
+            if (status) {
+                status.textContent = '';
+            }
+            try {
+                await createTask();
+                if (status) {
+                    status.textContent = 'Task created.';
+                }
+                document.getElementById('task-title').value = '';
+                document.getElementById('task-description').value = '';
+                document.getElementById('task-due-date').value = '';
+                await refreshBoardWithFallback();
+            } catch (error) {
+                console.error(error);
+                if (status) {
+                    status.textContent = 'Task creation failed.';
+                }
+            }
+        });
+    }
     document.getElementById('refresh-board')?.addEventListener('click', refreshBoardWithFallback);
     refreshBoardWithFallback();
 });

@@ -9,7 +9,7 @@ import hashlib
 import hmac
 import logging
 from collections import defaultdict, deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import re
 import time
@@ -31,13 +31,152 @@ from ngo_homesuite.models.core import (
     db,
 )
 from ngo_homesuite.utils.email import send_email
+from ngo_homesuite.utils.email import email_connectivity_smoke
 
 
 logger = logging.getLogger(__name__)
+_EMAIL_ADDRESS_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _normalized_email(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _looks_like_email(value: Any) -> bool:
+    email = _normalized_email(value)
+    if not email:
+        return False
+    return bool(_EMAIL_ADDRESS_PATTERN.match(email))
+
+
+def _sender_email() -> str:
+    if has_app_context():
+        configured = str(current_app.config.get("DEFAULT_MAIL_SENDER") or "").strip()
+        if configured:
+            return configured.lower()
+    return "noreply@ngohomesuite.local"
+
+
+def _parse_domain_allowlist(raw: Any) -> set[str]:
+    if raw is None:
+        return set()
+    if isinstance(raw, str):
+        values = [part.strip().lower() for part in raw.split(",")]
+        return {value for value in values if value}
+    if isinstance(raw, (list, tuple, set)):
+        values = [str(part).strip().lower() for part in raw]
+        return {value for value in values if value}
+    return set()
+
+
+def _sender_domain_policy(sender_email: str) -> tuple[bool, set[str], str]:
+    allowed_domains = _parse_domain_allowlist(
+        current_app.config.get("CAMPAIGN_EMAIL_ALLOWED_SENDER_DOMAINS", "")
+    ) if has_app_context() else set()
+    sender_domain = _recipient_domain(sender_email)
+    if not allowed_domains:
+        return True, allowed_domains, sender_domain
+    return sender_domain in allowed_domains, allowed_domains, sender_domain
+
+
+def _public_tracking_url_ready() -> tuple[bool, str]:
+    base_url = _tracking_base_url()
+    lower = base_url.lower()
+    if lower.startswith("https://"):
+        return True, base_url
+
+    # Keep local and test environments functional while still surfacing warnings.
+    if has_app_context() and bool(current_app.config.get("TESTING", False)):
+        return True, base_url
+
+    allow_http_local = bool(current_app.config.get("CAMPAIGN_EMAIL_ALLOW_HTTP_LOCAL_PUBLIC_URL", True)) if has_app_context() else True
+    if allow_http_local and ("localhost" in lower or "127.0.0.1" in lower):
+        return True, base_url
+
+    return False, base_url
+
+
+def _deliverability_preflight(
+    *,
+    organization_id: int,
+    campaign_id: int,
+    subject: str,
+    body: str,
+    audience: dict[str, Any] | None,
+    recipients: list[Donor] | None = None,
+) -> dict[str, Any]:
+    enforce = bool(current_app.config.get("CAMPAIGN_EMAIL_ENFORCE_PRECHECKS", True)) if has_app_context() else True
+    recipient_rows = recipients if recipients is not None else _resolve_recipients(organization_id, campaign_id, audience)
+    total_recipients = int(len(recipient_rows))
+
+    sender = _sender_email()
+    domain_ok, allowed_domains, sender_domain = _sender_domain_policy(sender)
+    public_url_ok, public_url = _public_tracking_url_ready()
+
+    connectivity = email_connectivity_smoke(probe=False)
+    connectivity_ready = bool(connectivity.get("ready", False))
+
+    checks: list[dict[str, Any]] = []
+    checks.append({
+        "check": "sender_domain_policy",
+        "status": "pass" if domain_ok else "fail",
+        "message": (
+            "Sender domain satisfies configured allowlist."
+            if domain_ok else
+            "Sender domain is not in CAMPAIGN_EMAIL_ALLOWED_SENDER_DOMAINS."
+        ),
+    })
+    checks.append({
+        "check": "provider_connectivity_ready",
+        "status": "pass" if connectivity_ready else "fail",
+        "message": (
+            "At least one email provider is configured."
+            if connectivity_ready else
+            "No email provider is configured. Configure SendGrid or SMTP before sending."
+        ),
+    })
+    checks.append({
+        "check": "tracking_public_url",
+        "status": "pass" if public_url_ok else "warn",
+        "message": (
+            "Tracking links resolve to a valid public URL."
+            if public_url_ok else
+            "PUBLIC_APP_URL is not HTTPS/public; tracking links may degrade in production."
+        ),
+    })
+    checks.append({
+        "check": "recipient_audience",
+        "status": "pass" if total_recipients > 0 else "warn",
+        "message": (
+            f"Audience resolved to {total_recipients} recipients."
+            if total_recipients > 0 else
+            "Audience resolved to zero recipients."
+        ),
+    })
+
+    hard_failures = [
+        item for item in checks
+        if item.get("status") == "fail"
+    ]
+    blocked = bool(hard_failures) and enforce
+
+    return {
+        "enforcement_enabled": bool(enforce),
+        "blocked": bool(blocked),
+        "block_reasons": [str(item.get("message") or "") for item in hard_failures],
+        "checks": checks,
+        "sender_email": sender,
+        "sender_domain": sender_domain,
+        "allowed_sender_domains": sorted(list(allowed_domains)),
+        "public_app_url": public_url,
+        "provider_readiness": connectivity,
+        "total_recipients": total_recipients,
+        "quality_hints": _quality_hints(str(subject or ""), str(body or "")),
+    }
 
 
 def _render_body(body_template: str, *, donor: Donor, campaign: Campaign) -> str:
@@ -431,7 +570,9 @@ def _resolve_recipients(
 
     deduped: dict[str, Donor] = {}
     for donor in recipients:
-        email_key = str(donor.email or "").strip().lower()
+        email_key = _normalized_email(donor.email)
+        if not _looks_like_email(email_key):
+            continue
         if email_key and email_key not in deduped:
             deduped[email_key] = donor
 
@@ -512,6 +653,119 @@ def preview_campaign_email(
         "quality_hints": _quality_hints(str(subject), str(body)),
         "sample_preview": previews,
     }
+
+
+def campaign_email_deliverability_report(
+    organization_id: int,
+    campaign_id: int,
+    *,
+    subject: str,
+    body: str,
+    audience: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    campaign = _get_campaign_or_raise(campaign_id, organization_id)
+    report = _deliverability_preflight(
+        organization_id=int(organization_id),
+        campaign_id=int(campaign.id),
+        subject=str(subject or ""),
+        body=str(body or ""),
+        audience=audience,
+    )
+    report.update({
+        "campaign_id": int(campaign.id),
+        "campaign_name": campaign.name,
+    })
+    return report
+
+
+def campaign_email_automation_templates(campaign: Campaign) -> list[dict[str, Any]]:
+    campaign_name = str(campaign.name or "Our Campaign").strip() or "Our Campaign"
+    return [
+        {
+            "key": "welcome_nurture",
+            "label": "Welcome Nurture (3-touch)",
+            "step_count": 3,
+            "cadence_days": 7,
+            "subject": f"Welcome to {campaign_name}",
+            "body": (
+                "Hi {name},\n\n"
+                f"Thank you for supporting {campaign_name}. Over the next few weeks, "
+                "we will share updates showing the impact your support makes.\n\n"
+                "With gratitude,\n"
+                "Fundraising Team"
+            ),
+        },
+        {
+            "key": "lapsed_reengagement",
+            "label": "Lapsed Donor Re-engagement",
+            "step_count": 4,
+            "cadence_days": 10,
+            "subject": f"{campaign_name}: we'd love to reconnect",
+            "body": (
+                "Hi {name},\n\n"
+                f"You have been an important part of {campaign_name}. "
+                "If now is a good time, we would love to welcome you back and share what has changed since your last gift.\n\n"
+                "Thank you for your continued care,\n"
+                "Fundraising Team"
+            ),
+        },
+        {
+            "key": "deadline_last_call",
+            "label": "Deadline Last Call",
+            "step_count": 2,
+            "cadence_days": 3,
+            "subject": f"Last chance to support {campaign_name}",
+            "body": (
+                "Hi {name},\n\n"
+                f"We are in the final stretch for {campaign_name}. "
+                "A gift today helps us finish strong before this deadline.\n\n"
+                "Thank you for standing with us,\n"
+                "Fundraising Team"
+            ),
+        },
+    ]
+
+
+def _template_by_key(campaign: Campaign, template_key: str) -> dict[str, Any]:
+    key = str(template_key or "").strip().lower()
+    for template in campaign_email_automation_templates(campaign):
+        if str(template.get("key") or "").strip().lower() == key:
+            return template
+    raise ValueError("unknown automation template key")
+
+
+@enforce_error_contract
+def instantiate_campaign_email_automation_template(
+    organization_id: int,
+    campaign_id: int,
+    *,
+    template_key: str,
+    created_by_user_id: int | None,
+    created_by_username: str | None,
+    created_by_role: str | None,
+    audience: dict[str, Any] | None,
+    human_authorization: dict[str, Any] | None,
+    start_at: datetime | None = None,
+) -> dict[str, Any]:
+    campaign = _get_campaign_or_raise(campaign_id, organization_id)
+    template = _template_by_key(campaign, template_key)
+    result = schedule_campaign_email_sequence(
+        organization_id=int(organization_id),
+        campaign_id=int(campaign.id),
+        created_by_user_id=created_by_user_id,
+        created_by_username=created_by_username,
+        created_by_role=created_by_role,
+        subject=str(template.get("subject") or ""),
+        body=str(template.get("body") or ""),
+        audience=audience,
+        human_authorization=human_authorization,
+        step_count=int(template.get("step_count") or 1),
+        cadence_days=int(template.get("cadence_days") or 7),
+        start_at=start_at,
+    )
+    result["template_key"] = str(template.get("key") or "")
+    result["template_label"] = str(template.get("label") or "")
+    return result
 
 
 def generate_ai_campaign_email_draft(
@@ -626,12 +880,25 @@ def send_campaign_bulk_email(
     campaign = _get_campaign_or_raise(campaign_id, organization_id)
     recipients = _resolve_recipients(organization_id, campaign.id, audience)
 
+    preflight = _deliverability_preflight(
+        organization_id=int(organization_id),
+        campaign_id=int(campaign.id),
+        subject=subject_value,
+        body=body_value,
+        audience=audience,
+        recipients=recipients,
+    )
+    if bool(preflight.get("blocked", False)):
+        reason = "; ".join([str(item) for item in preflight.get("block_reasons") or []]).strip()
+        raise ValueError(f"deliverability precheck failed: {reason or 'configuration is not ready'}")
+
     if bool(dry_run):
         return {
             "dry_run": True,
             "campaign_id": int(campaign.id),
             "total_recipients": len(recipients),
             "sample_emails": [str(r.email) for r in recipients[:20]],
+            "deliverability": preflight,
         }
 
     authorization_audit = ExternalCommunicationAuthorization(
@@ -776,6 +1043,66 @@ def send_campaign_bulk_email(
         "total_recipients": int(batch.total_recipients),
         "sent": int(batch.sent_count),
         "failed": int(batch.failed_count),
+        "deliverability": preflight,
+    }
+
+
+@enforce_error_contract
+def schedule_campaign_email_sequence(
+    organization_id: int,
+    campaign_id: int,
+    *,
+    created_by_user_id: int | None,
+    created_by_username: str | None,
+    created_by_role: str | None,
+    subject: str,
+    body: str,
+    audience: dict[str, Any] | None,
+    human_authorization: dict[str, Any] | None,
+    step_count: int = 3,
+    cadence_days: int = 7,
+    start_at: datetime | None = None,
+) -> dict[str, Any]:
+    steps = max(1, min(int(step_count or 1), 12))
+    cadence = max(1, min(int(cadence_days or 1), 90))
+    first_send_at = start_at if isinstance(start_at, datetime) else (_utcnow() + timedelta(minutes=5))
+
+    sequence_results: list[dict[str, Any]] = []
+    for index in range(steps):
+        scheduled_at = first_send_at + timedelta(days=(index * cadence))
+        sequence_subject = str(subject or "").strip()
+        if steps > 1:
+            sequence_subject = f"{sequence_subject} [{index + 1}/{steps}]"
+
+        result = send_campaign_bulk_email(
+            organization_id=int(organization_id),
+            campaign_id=int(campaign_id),
+            created_by_user_id=created_by_user_id,
+            created_by_username=created_by_username,
+            created_by_role=created_by_role,
+            subject=sequence_subject,
+            body=body,
+            audience=audience,
+            human_authorization=human_authorization,
+            dry_run=False,
+            scheduled_at=scheduled_at,
+        )
+        sequence_results.append(
+            {
+                "step": int(index + 1),
+                "batch_id": int(result.get("batch_id") or 0),
+                "scheduled_at": str(result.get("scheduled_at") or scheduled_at.isoformat()),
+                "total_recipients": int(result.get("total_recipients") or 0),
+                "status": str(result.get("status") or "scheduled"),
+            }
+        )
+
+    return {
+        "campaign_id": int(campaign_id),
+        "automation": "drip_sequence",
+        "step_count": int(steps),
+        "cadence_days": int(cadence),
+        "batches": sequence_results,
     }
 
 
@@ -1024,5 +1351,135 @@ def campaign_email_analytics(organization_id: int, campaign_id: int) -> dict[str
                 "scheduled_at": b.scheduled_at.isoformat() if b.scheduled_at else None,
             }
             for b in recent_batches
+        ],
+    }
+
+
+def campaign_email_attribution(
+    organization_id: int,
+    campaign_id: int,
+    *,
+    window_days: int = 30,
+) -> dict[str, Any]:
+    campaign = _get_campaign_or_raise(campaign_id, organization_id)
+    window = max(1, min(int(window_days or 30), 365))
+    completed_statuses = ("received", "processed", "receipted")
+
+    deliveries = db.session.execute(
+        select(
+            CampaignEmailDelivery.id,
+            CampaignEmailDelivery.donor_id,
+            CampaignEmailDelivery.sent_at,
+        ).where(
+            CampaignEmailDelivery.organization_id == int(organization_id),
+            CampaignEmailDelivery.campaign_id == int(campaign.id),
+            CampaignEmailDelivery.delivery_status == "sent",
+            CampaignEmailDelivery.sent_at.is_not(None),
+            CampaignEmailDelivery.donor_id.is_not(None),
+        )
+    ).all()
+
+    last_touch_by_donor: dict[int, datetime] = {}
+    sent_delivery_count = 0
+    for _delivery_id, donor_id, sent_at in deliveries:
+        if donor_id is None or sent_at is None:
+            continue
+        sent_delivery_count += 1
+        donor_key = int(donor_id)
+        previous = last_touch_by_donor.get(donor_key)
+        if previous is None or sent_at > previous:
+            last_touch_by_donor[donor_key] = sent_at
+
+    if not last_touch_by_donor:
+        return {
+            "campaign_id": int(campaign.id),
+            "campaign_name": campaign.name,
+            "window_days": int(window),
+            "sent_deliveries": int(sent_delivery_count),
+            "influenced_donations": 0,
+            "influenced_revenue": 0.0,
+            "influenced_donor_count": 0,
+            "average_gift": 0.0,
+            "influenced_revenue_7d": 0.0,
+            "influenced_revenue_30d": 0.0,
+            "influenced_revenue_90d": 0.0,
+            "top_influenced_donors": [],
+        }
+
+    donor_ids = sorted(last_touch_by_donor.keys())
+    donation_rows = db.session.execute(
+        select(
+            Donation.id,
+            Donation.donor_id,
+            Donation.amount,
+            Donation.donation_date,
+        ).where(
+            Donation.organization_id == int(organization_id),
+            Donation.status.in_(completed_statuses),
+            Donation.donor_id.in_(donor_ids),
+            Donation.donation_date.is_not(None),
+        )
+    ).all()
+
+    influenced_donations = 0
+    influenced_revenue = 0.0
+    influenced_revenue_7d = 0.0
+    influenced_revenue_30d = 0.0
+    influenced_revenue_90d = 0.0
+    donor_totals: dict[int, float] = defaultdict(float)
+
+    for _donation_id, donor_id, amount, donation_date in donation_rows:
+        if donor_id is None or donation_date is None:
+            continue
+        last_touch = last_touch_by_donor.get(int(donor_id))
+        if last_touch is None:
+            continue
+        delta = donation_date - last_touch
+        if delta.total_seconds() < 0:
+            continue
+        delta_days = delta.days
+        if delta_days > window:
+            continue
+
+        gift_amount = float(amount or 0.0)
+        influenced_donations += 1
+        influenced_revenue += gift_amount
+        donor_totals[int(donor_id)] += gift_amount
+        if delta_days <= 7:
+            influenced_revenue_7d += gift_amount
+        if delta_days <= 30:
+            influenced_revenue_30d += gift_amount
+        if delta_days <= 90:
+            influenced_revenue_90d += gift_amount
+
+    donor_name_rows = db.session.execute(
+        select(Donor.id, Donor.name).where(
+            Donor.organization_id == int(organization_id),
+            Donor.id.in_(list(donor_totals.keys()) if donor_totals else [-1]),
+        )
+    ).all()
+    donor_names = {int(did): str(name or "Donor") for did, name in donor_name_rows}
+
+    top_donors = sorted(donor_totals.items(), key=lambda item: item[1], reverse=True)[:10]
+
+    return {
+        "campaign_id": int(campaign.id),
+        "campaign_name": campaign.name,
+        "window_days": int(window),
+        "sent_deliveries": int(sent_delivery_count),
+        "influenced_donations": int(influenced_donations),
+        "influenced_revenue": round(float(influenced_revenue), 2),
+        "influenced_donor_count": int(len(donor_totals)),
+        "average_gift": round(float(influenced_revenue / influenced_donations), 2) if influenced_donations > 0 else 0.0,
+        "influenced_revenue_7d": round(float(influenced_revenue_7d), 2),
+        "influenced_revenue_30d": round(float(influenced_revenue_30d), 2),
+        "influenced_revenue_90d": round(float(influenced_revenue_90d), 2),
+        "top_influenced_donors": [
+            {
+                "donor_id": int(donor_id),
+                "donor_name": donor_names.get(int(donor_id), "Donor"),
+                "revenue": round(float(total), 2),
+            }
+            for donor_id, total in top_donors
         ],
     }

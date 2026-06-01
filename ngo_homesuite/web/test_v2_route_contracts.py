@@ -31,6 +31,37 @@ def _login_admin(client):
     assert rv.status_code in (302, 303)
 
 
+def _ensure_user(app, username: str, email: str, role: str, password: str, org_id: int) -> None:
+    with app.app_context():
+        user = User.query.filter_by(username=username).first()
+        if user is None:
+            user = User(
+                username=username,
+                email=email,
+                role=role,
+                is_active=True,
+                organization_id=org_id,
+            )
+            user.set_password(password)
+            db.session.add(user)
+        else:
+            user.email = email
+            user.role = role
+            user.is_active = True
+            user.organization_id = org_id
+            user.set_password(password)
+        db.session.commit()
+
+
+def _login_user(client, username: str, password: str) -> None:
+    rv = client.post(
+        "/auth/login",
+        data={"username": username, "password": password},
+        follow_redirects=False,
+    )
+    assert rv.status_code in (302, 303)
+
+
 def test_v2_grant_advance_and_disbursement_contract(client, app):
     _login_admin(client)
 
@@ -133,6 +164,51 @@ def test_v2_grant_advance_and_disbursement_contract(client, app):
     assert isinstance(restricted_payload.get("grants"), list)
     assert restricted_payload.get("total_awarded", 0) >= 1000
     assert restricted_payload.get("total_disbursed", 0) >= 500
+
+
+def test_v2_grant_detail_blocks_cross_tenant_access_without_leaking_payload(client, app):
+    with app.app_context():
+        org_a = Organization.query.filter_by(slug="release-lane-org-a").first()
+        if org_a is None:
+            org_a = Organization(name="Release Lane Org A", slug="release-lane-org-a", is_active=True)
+            db.session.add(org_a)
+            db.session.flush()
+
+        org_b = Organization.query.filter_by(slug="release-lane-org-b").first()
+        if org_b is None:
+            org_b = Organization(name="Release Lane Org B", slug="release-lane-org-b", is_active=True)
+            db.session.add(org_b)
+            db.session.flush()
+
+        org_a_id = int(org_a.id)
+        org_b_id = int(org_b.id)
+        db.session.commit()
+
+    _ensure_user(app, "rl_tenant_a", "rl_tenant_a@test.local", "staff", "ReleaseLane123!", org_a_id)
+    _ensure_user(app, "rl_tenant_b", "rl_tenant_b@test.local", "staff", "ReleaseLane123!", org_b_id)
+
+    _login_user(client, "rl_tenant_b", "ReleaseLane123!")
+    created = client.post(
+        "/api/v2/grants",
+        json={
+            "title": "Org B Private Grant",
+            "funder_name": "Release Lane Foundation",
+            "amount_requested": 7500,
+        },
+    )
+    assert created.status_code == 201
+    grant_id = created.get_json()["id"]
+
+    client.post("/auth/logout")
+    _login_user(client, "rl_tenant_a", "ReleaseLane123!")
+
+    blocked = client.get(f"/api/v2/grants/{grant_id}")
+    assert blocked.status_code == 404
+    assert blocked.get_json() == {"error": "not found"}
+
+    listed = client.get("/api/v2/grants")
+    assert listed.status_code == 200
+    assert all(item["id"] != grant_id for item in listed.get_json())
 
 
 def test_v2_grant_opportunity_search_and_compliance_guidance_contract(client, app):
@@ -531,14 +607,59 @@ def test_v2_activity_feed_and_insights_contract(client):
     assert isinstance(payload.get("recommended_actions"), list)
 
 
-def test_v2_task_board_and_reminder_candidates_contract(client):
+def test_v2_task_board_and_reminder_candidates_contract(client, app):
     _login_admin(client)
+
+    with app.app_context():
+        admin_user = User.query.filter_by(username="admin").first()
+        assert admin_user is not None
+        org_id = int(admin_user.organization_id)
+
+    _ensure_user(app, "task_assignee", "task.assignee@test.local", "staff", "TaskAssigneePass123!", org_id)
+
+    with app.app_context():
+        assignee = User.query.filter_by(username="task_assignee").first()
+        assert assignee is not None
+        assignee_id = assignee.id
+
+    assignees = client.get("/api/v2/task-assignees")
+    assert assignees.status_code == 200
+    assignee_payload = assignees.get_json()
+    assert isinstance(assignee_payload, list)
+    assert any(user["id"] == assignee_id for user in assignee_payload)
 
     created = client.post(
         "/api/v2/tasks",
-        json={"title": "Board contract task", "priority": "high"},
+        json={
+            "title": "Board contract task",
+            "priority": "high",
+            "assigned_to_id": assignee_id,
+            "due_date": "2030-06-01",
+            "reminder_channel": "email",
+        },
     )
     assert created.status_code == 201
+    task_id = created.get_json()["id"]
+
+    updated = client.patch(
+        f"/api/v2/tasks/{task_id}",
+        json={
+            "status": "in_progress",
+            "assigned_to_id": admin_user.id,
+            "due_date": "2030-06-15",
+            "reminder_channel": "sms",
+        },
+    )
+    assert updated.status_code == 200
+    updated_payload = updated.get_json()
+    assert updated_payload["status"] == "in_progress"
+    assert updated_payload["assigned_to_id"] == admin_user.id
+    assert updated_payload["due_date"].startswith("2030-06-15")
+    assert updated_payload["reminder_channel"] == "sms"
+
+    completed = client.post(f"/api/v2/tasks/{task_id}/complete", json={"notes": "Finished"})
+    assert completed.status_code == 200
+    assert completed.get_json()["status"] == "done"
 
     board = client.get("/api/v2/tasks/board")
     assert board.status_code == 200
@@ -551,3 +672,15 @@ def test_v2_task_board_and_reminder_candidates_contract(client):
     candidates = client.get("/api/v2/tasks/reminder-candidates?limit=15")
     assert candidates.status_code == 200
     assert isinstance(candidates.get_json(), list)
+
+
+def test_task_board_page_renders_management_controls(client):
+    _login_admin(client)
+
+    rv = client.get('/tasks/board')
+    assert rv.status_code == 200
+
+    body = rv.get_data(as_text=True)
+    assert 'Quick Task Capture' in body
+    assert 'Create Task' in body
+    assert 'Save Changes' in body

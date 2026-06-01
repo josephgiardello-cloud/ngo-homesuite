@@ -21,6 +21,8 @@ This project uses a lightweight release process to keep rapid changes safe and t
 
 2. Validate quality gates:
 - Run full tests: `python -m pytest --maxfail=10 -q`
+- Run tenant isolation release lane: `python -m pytest ngo_homesuite/web/test_cross_tenant_boundaries.py ngo_homesuite/web/test_rbac_tenant_route_audit.py ngo_homesuite/api/test_v1_runtime.py ngo_homesuite/ai/test_copilot_routes.py ngo_homesuite/ai/test_copilot_tools.py ngo_homesuite/ai/test_semantic_memory.py -v --maxfail=10`
+- Run observability release lane: `python -m pytest ngo_homesuite/api/test_observability_api.py ngo_homesuite/api/test_observability_request_logs.py -v --maxfail=10`
 - Verify migrations preflight: `python -m ngo_homesuite.db.migrate --dry-run --verify-backup`
 - Run backup/restore drill in non-prod: `python -m ngo_homesuite.db.backup_restore_drill --db data/homesuite.db --output-dir backups/drills`
 - Run key-rotation drill in non-prod per `docs/key_rotation_drill.md`

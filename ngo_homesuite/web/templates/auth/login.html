@@ -1223,10 +1223,10 @@
                 <div class="form-group" style="padding:0.9rem 1rem;border:1px solid var(--border);border-radius:14px;background:var(--surface-soft);">
                     <div style="font-weight:700;margin-bottom:0.35rem;">Two-factor verification required</div>
                     <p class="text-muted" style="margin:0 0 0.7rem 0;">
-                        Enter the 6-digit code from your authenticator app. If you need to enroll first, use the security setup page after signing in.
+                        Enter either a 6-digit authenticator code or an 8-character backup recovery code. If you need to enroll first, use the security setup page after signing in.
                     </p>
                     {{ form.otp_code.label }}
-                    {{ form.otp_code(class='form-control', autocomplete='one-time-code', inputmode='numeric', placeholder='123456') }}
+                    {{ form.otp_code(class='form-control', autocomplete='one-time-code', placeholder='123456 or A1B2C3D4') }}
                 </div>
                 {% endif %}
 

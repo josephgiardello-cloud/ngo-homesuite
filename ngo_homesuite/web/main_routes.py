@@ -50,6 +50,7 @@ from ngo_homesuite.services.opinionated_workflows import (
     run_program_tracking_impact_workflow,
 )
 from sqlalchemy import func, select
+from ngo_homesuite.web.auth_routes import require_step_up_auth
 from ngo_homesuite.web.rbac import roles_required
 from ngo_homesuite.utils.receipt_pdf import generate_receipt_pdf_bytes
 from ngo_homesuite.compliance.evidence_pack import build_compliance_evidence
@@ -1546,16 +1547,54 @@ def public_give():
 def public_donate_page():
     org = get_first_active_organization()
     campaign = None
+    campaigns: list[Campaign] = []
+    funds: list[Fund] = []
+    is_embed = request.args.get('embed', '0') == '1'
     if org is not None:
-        campaign = (
+        campaigns = list(
             db.session.scalars(
                 select(Campaign)
                 .where(Campaign.organization_id == org.id, Campaign.status == 'active')
-                .order_by(Campaign.id.asc())
-                .limit(1)
-            ).first()
+                .order_by(Campaign.name.asc(), Campaign.id.asc())
+            )
         )
-    return render_template('public/donate.html', campaign=campaign)
+        campaign = campaigns[0] if campaigns else None
+        funds = FundService().list_all_funds(org.id, active_only=True)
+    template_name = 'public/donate_embed.html' if is_embed else 'public/donate.html'
+    return render_template(
+        template_name,
+        campaign=campaign,
+        campaigns=campaigns,
+        funds=funds,
+        is_embed=is_embed,
+    )
+
+
+@main_bp.route('/public/donate/embed.js', methods=['GET'])
+def public_donate_embed_script():
+    src = '/public/donate?embed=1'
+    safe_src = json.dumps(src)
+    safe_title = json.dumps('Donate Securely')
+    script = f"""
+(function() {{
+  var script = document.currentScript;
+  if (!script) return;
+  var targetId = script.getAttribute('data-target');
+  var target = targetId ? document.getElementById(targetId) : script.parentNode;
+  if (!target) return;
+  var iframe = document.createElement('iframe');
+  iframe.src = {safe_src};
+  iframe.title = {safe_title};
+  iframe.width = '100%';
+  iframe.height = script.getAttribute('data-height') || '860';
+  iframe.style.border = '0';
+  iframe.style.maxWidth = '100%';
+  iframe.style.borderRadius = '12px';
+  iframe.loading = 'lazy';
+  target.appendChild(iframe);
+}})();
+""".strip()
+    return Response(script, mimetype='application/javascript')
 
 
 @main_bp.route('/api/events/<int:event_id>/validate-code', methods=['POST'])
@@ -1594,11 +1633,19 @@ def public_donate_create_checkout():
 
     amount = float(request.form.get('amount', '0') or 0)
     donor_email = (request.form.get('email') or '').strip().lower()
+    donor_name = (request.form.get('donor_name') or '').strip()
+    purpose = (request.form.get('purpose') or '').strip()
     raw_campaign_id = (request.form.get('campaign_id') or '').strip()
+    raw_fund_id = (request.form.get('fund_id') or '').strip()
     raw_event_id = (request.form.get('event_id') or '').strip()
     discount_code = (request.form.get('discount_code') or '').strip()
+    tribute_type_raw = (request.form.get('tribute_type') or '').strip().lower()
+    tribute_honoree_name = (request.form.get('tribute_honoree_name') or '').strip()
+    tribute_honoree_contact = (request.form.get('tribute_honoree_contact') or '').strip()
     campaign_id = int(raw_campaign_id) if raw_campaign_id.isdigit() else None
+    fund_id = int(raw_fund_id) if raw_fund_id.isdigit() else None
     event_id = int(raw_event_id) if raw_event_id.isdigit() else None
+    tribute_type = tribute_type_raw if tribute_type_raw in {'in_honor_of', 'in_memory_of'} else None
 
     if amount <= 0:
         flash('Amount must be greater than zero.', 'error')
@@ -1606,6 +1653,29 @@ def public_donate_create_checkout():
     if not donor_email:
         flash('Email is required.', 'error')
         return redirect(url_for('main.public_donate_page'))
+
+    if campaign_id is not None:
+        campaign = db.session.scalars(
+            select(Campaign).where(Campaign.id == campaign_id, Campaign.organization_id == org.id).limit(1)
+        ).first()
+        if campaign is None:
+            flash('Selected campaign is not available.', 'error')
+            return redirect(url_for('main.public_donate_page'))
+
+    if fund_id is not None and fund_id > 0:
+        fund = db.session.scalars(
+            select(Fund).where(Fund.id == fund_id, Fund.organization_id == org.id, Fund.is_active == True).limit(1)
+        ).first()
+        if fund is None:
+            flash('Selected fund is not available.', 'error')
+            return redirect(url_for('main.public_donate_page'))
+    else:
+        fund_id = None
+
+    if tribute_type and not tribute_honoree_name:
+        flash('Honoree name is required for tribute gifts.', 'error')
+        return redirect(url_for('main.public_donate_page'))
+
     attempts_in_last_hour = _public_donation_attempts_last_hour(org_id=org.id, donor_email=donor_email)
     if attempts_in_last_hour >= _PUBLIC_DONATION_MAX_ATTEMPTS_PER_HOUR:
         flash('Too many donation attempts for this email. Please wait and try again later.', 'error')
@@ -1626,7 +1696,7 @@ def public_donate_create_checkout():
     donor, _created = donor_service.find_or_create_by_email(
         org.id,
         donor_email,
-        donor_email.split('@')[0] or 'Donor',
+        donor_name or donor_email.split('@')[0] or 'Donor',
         donor_type='individual',
         notes='Created from public Stripe donate flow.',
     )
@@ -1639,8 +1709,12 @@ def public_donate_create_checkout():
         donor_email=donor.email,
         donor_id=donor.id,
         campaign_id=campaign_id,
+        fund_id=fund_id,
         payment_method='stripe',
-        purpose='Public Stripe donation',
+        purpose=purpose or 'Public Stripe donation',
+        tribute_type=tribute_type,
+        tribute_honoree_name=tribute_honoree_name or None,
+        tribute_honoree_contact=tribute_honoree_contact or None,
         notes=(
             f'Pending Stripe checkout. Discount code {discount.code} applied: -${discount_amount:.2f}'
             if discount is not None
@@ -2062,6 +2136,7 @@ def dashboard():
 
 @main_bp.route('/dashboard/export')
 @login_required
+@require_step_up_auth
 def dashboard_export() -> Response:
     """Export the current dashboard snapshot as JSON."""
     selected_period = str(request.args.get('period', '30d') or '30d').strip().lower()
@@ -2890,6 +2965,7 @@ def donor_detail(donor_id: int):
 
 @main_bp.route('/donors/export/<string:file_type>')
 @login_required
+@require_step_up_auth
 def donors_export(file_type: str):
     org = _current_org()
     if not org:
@@ -3057,15 +3133,14 @@ def campaign_photo(campaign_id: int):
 @main_bp.route('/donors/<int:donor_id>/delete', methods=['POST'])
 @login_required
 @roles_required('admin', 'staff')
+@require_step_up_auth
 def donor_delete(donor_id: int):
-    form = ConfirmDeleteForm()
-    if not form.validate_on_submit():
-        flash('Invalid delete request.', 'error')
+    org_id = getattr(current_user, 'organization_id', None)
+    if org_id is None:
+        flash('No organization is available.', 'error')
         return redirect(url_for('main.donors_list'))
-
-    org = _current_org()
     try:
-        DonorService().delete_donor(donor_id, org.id)
+        DonorService().delete_donor(donor_id, int(org_id))
     except ValueError:
         flash('Cannot delete donor with existing donations. Edit donor instead.', 'error')
         return redirect(url_for('main.donors_list'))
@@ -3778,6 +3853,7 @@ def donations_bulk_receipt_resend():
 
 @main_bp.route('/donations/export/<string:file_type>')
 @login_required
+@require_step_up_auth
 def donations_export(file_type: str):
     org = _current_org()
     if not org:
@@ -3964,6 +4040,7 @@ def expense_create():
 
 @main_bp.route('/expenses/export/<string:file_type>')
 @login_required
+@require_step_up_auth
 def expenses_export(file_type: str):
     org = _current_org()
     if not org:
@@ -4053,6 +4130,7 @@ def projects_dashboard():
 
 @main_bp.route('/projects/export/<string:file_type>')
 @login_required
+@require_step_up_auth
 def projects_export(file_type: str):
     org = _current_org()
     if not org:
@@ -4529,6 +4607,7 @@ def funds_bulk_status_update():
 
 @main_bp.route('/funds/export/<string:file_type>')
 @login_required
+@require_step_up_auth
 def funds_export(file_type: str):
     org = _current_org()
     if not org:
@@ -4755,6 +4834,28 @@ def about():
 def help():
     """Help/documentation page."""
     return render_template('help.html', active_page='help')
+
+
+@main_bp.route('/calendar-deadlines')
+@login_required
+def calendar_deadlines_page():
+    """Calendar and deadlines workspace."""
+    return render_template('calendar_deadlines.html', active_page='calendar_deadlines')
+
+
+@main_bp.route('/integrations-hub')
+@login_required
+@roles_required('admin', 'staff')
+def integrations_hub_page():
+    """Operational integrations workspace."""
+    return render_template('integrations_hub.html', active_page='integrations_hub')
+
+
+@main_bp.route('/ai-assistant-hub')
+@login_required
+def ai_assistant_hub_page():
+    """AI assistant launcher and guardrails reference."""
+    return render_template('ai_assistant_hub.html', active_page='ai_assistant_hub')
 
 
 # ---------------------------------------------------------------------------
