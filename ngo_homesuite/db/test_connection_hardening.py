@@ -1,6 +1,7 @@
 # pyright: reportUnknownParameterType=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportMissingParameterType=false, reportPrivateUsage=false
 
 import os
+import base64
 import tempfile
 import pytest
 import sqlite3
@@ -58,6 +59,27 @@ def test_env_var_fail_safe(monkeypatch):
     with pytest.raises(FatalDBError) as excinfo:
         connection.update_metadata_hash(conn)
     assert 'NGO_HOMESUITE_SCHEMA_SIGNATURE must be set' in str(excinfo.value)
+
+
+def test_get_hmac_key_supports_b64_source(monkeypatch):
+    monkeypatch.delenv('NGO_HOMESUITE_SCHEMA_HMAC_KEY', raising=False)
+    monkeypatch.delenv('NGO_HOMESUITE_SCHEMA_HMAC_KEY_FILE', raising=False)
+    monkeypatch.setenv(
+        'NGO_HOMESUITE_SCHEMA_HMAC_KEY_B64',
+        base64.b64encode(b'test_hmac_from_b64').decode('ascii'),
+    )
+    assert connection._get_hmac_key() == b'test_hmac_from_b64'
+
+
+def test_get_hmac_key_supports_file_source(monkeypatch, tmp_path):
+    key_file = tmp_path / 'schema_hmac.key'
+    key_file.write_bytes(b'file_secret_key\n')
+
+    monkeypatch.delenv('NGO_HOMESUITE_SCHEMA_HMAC_KEY', raising=False)
+    monkeypatch.delenv('NGO_HOMESUITE_SCHEMA_HMAC_KEY_B64', raising=False)
+    monkeypatch.setenv('NGO_HOMESUITE_SCHEMA_HMAC_KEY_FILE', str(key_file))
+
+    assert connection._get_hmac_key() == b'file_secret_key'
 
 
 def test_temp_file_cleanup():
