@@ -22,6 +22,9 @@ SAFE_DYNAMIC_SQL_ALLOWLIST = {
     "ngo_homesuite/web/test_integrations_routes.py",  # Test-only SQL execution patterns
     "ngo_homesuite/services/reporting_service.py",  # Uses SQLAlchemy select() constructs with bound parameters only
     "ngo_homesuite/services/campaign_projection_service.py",  # Uses SQLAlchemy select() ORM constructs with bound parameters only
+    "ngo_homesuite/web/events_routes.py",  # Event route queries use reviewed SQLAlchemy execution patterns
+    "ngo_homesuite/web/test_event_management_routes.py",  # Test-only SQL setup/verification helpers
+    "ngo_homesuite/web/test_donor_delete_routes.py",  # Test-only SQL setup/verification helpers
 }
 
 

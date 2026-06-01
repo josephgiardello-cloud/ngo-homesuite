@@ -18,6 +18,7 @@ class _FakeResult:
 
 
 def test_send_event_reminder_uses_email_utility(monkeypatch):
+    monkeypatch.setattr(events_services, "_ensure_event_tables", lambda: None)
     monkeypatch.setattr(events_services, "get_event", lambda _event_id: {"title": "Town Hall"})
     called = {"ok": False}
 
