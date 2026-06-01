@@ -619,7 +619,100 @@ def test_campaign_email_preview_returns_quality_hints_and_samples(client, app):
     assert payload.get("total_recipients", 0) >= 1
     assert isinstance(payload.get("quality_hints"), list)
     assert isinstance(payload.get("sample_preview"), list)
+    assert isinstance(payload.get("recipient_breakdown"), dict)
+    breakdown = payload.get("recipient_breakdown") or {}
+    assert isinstance(breakdown.get("by_donor_type"), dict)
+    assert isinstance(breakdown.get("by_total_giving_band"), dict)
+    assert isinstance(breakdown.get("by_gift_count_band"), dict)
+    assert isinstance(breakdown.get("by_recency_band"), dict)
     assert payload["sample_preview"][0]["recipient_email"] == "preview@example.org"
+
+
+def test_campaign_email_preview_reflects_advanced_filtering_and_breakdowns(client, app):
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "Preview Filtered Campaign"})
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+    org_id = _admin_org_id(app)
+
+    now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+    with app.app_context():
+        d1 = Donor(organization_id=org_id, name="Preview Match", email="preview-match@example.org", donor_type="individual")
+        d2 = Donor(organization_id=org_id, name="Preview Excluded", email="preview-excluded@example.org", donor_type="individual")
+        db.session.add_all([d1, d2])
+        db.session.flush()
+
+        db.session.add_all(
+            [
+                Donation(
+                    organization_id=org_id,
+                    campaign_id=campaign_id,
+                    donor_id=d1.id,
+                    donor_name=d1.name,
+                    donor_email=d1.email,
+                    amount=300.0,
+                    currency="USD",
+                    status="received",
+                    donation_date=now_naive - timedelta(days=40),
+                ),
+                Donation(
+                    organization_id=org_id,
+                    campaign_id=campaign_id,
+                    donor_id=d1.id,
+                    donor_name=d1.name,
+                    donor_email=d1.email,
+                    amount=80.0,
+                    currency="USD",
+                    status="received",
+                    donation_date=now_naive - timedelta(days=15),
+                ),
+                Donation(
+                    organization_id=org_id,
+                    campaign_id=campaign_id,
+                    donor_id=d2.id,
+                    donor_name=d2.name,
+                    donor_email=d2.email,
+                    amount=950.0,
+                    currency="USD",
+                    status="received",
+                    donation_date=now_naive - timedelta(days=20),
+                ),
+            ]
+        )
+        db.session.commit()
+
+    audience = {
+        "min_total_given": 300.0,
+        "max_total_given": 500.0,
+        "min_gift_count": 2,
+        "max_gift_count": 3,
+        "gifted_between_days_min": 1,
+        "gifted_between_days_max": 90,
+    }
+    rv = client.post(
+        f"/api/v2/campaigns/{campaign_id}/emails/preview",
+        json={
+            "subject": "Filtered preview",
+            "body": "Hi {name}, previewing {campaign_name}.",
+            "audience": audience,
+        },
+    )
+    assert rv.status_code == 200
+    payload = rv.get_json() or {}
+    assert int(payload.get("total_recipients") or 0) == 1
+    assert (payload.get("sample_preview") or [])[0]["recipient_email"] == "preview-match@example.org"
+
+    applied = payload.get("audience_applied") or {}
+    assert int(applied.get("min_gift_count") or 0) == 2
+    assert int(applied.get("max_gift_count") or 0) == 3
+
+    breakdown = payload.get("recipient_breakdown") or {}
+    total_bands = breakdown.get("by_total_giving_band") or {}
+    gift_bands = breakdown.get("by_gift_count_band") or {}
+    recency_bands = breakdown.get("by_recency_band") or {}
+    assert int(total_bands.get("100-499") or 0) == 1
+    assert int(gift_bands.get("2-5") or 0) == 1
+    assert int(recency_bands.get("0-30d") or 0) == 1
 
 
 def test_campaign_email_deliverability_endpoint_returns_policy_checks(client, app):
@@ -783,6 +876,126 @@ def test_campaign_send_email_respects_min_total_and_top_n_filters(client, app):
     assert send_mock.call_count == 1
 
 
+def test_campaign_send_email_respects_total_gift_count_and_recency_band_filters(client, app):
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "Advanced Audience Filters Campaign"})
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+    org_id = _admin_org_id(app)
+
+    now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+    with app.app_context():
+        d1 = Donor(organization_id=org_id, name="Balanced Donor", email="balanced@example.org", donor_type="individual")
+        d2 = Donor(organization_id=org_id, name="High Total Donor", email="high-total@example.org", donor_type="individual")
+        d3 = Donor(organization_id=org_id, name="Old Gift Donor", email="old-gift@example.org", donor_type="individual")
+        db.session.add_all([d1, d2, d3])
+        db.session.flush()
+        target_donor_ids = [int(d1.id), int(d2.id), int(d3.id)]
+
+        # d1: within all bounds (2 gifts, total 250, last gift 20 days ago)
+        db.session.add_all(
+            [
+                Donation(
+                    organization_id=org_id,
+                    campaign_id=campaign_id,
+                    donor_id=d1.id,
+                    donor_name=d1.name,
+                    donor_email=d1.email,
+                    amount=150.0,
+                    currency="USD",
+                    status="received",
+                    donation_date=now_naive - timedelta(days=45),
+                ),
+                Donation(
+                    organization_id=org_id,
+                    campaign_id=campaign_id,
+                    donor_id=d1.id,
+                    donor_name=d1.name,
+                    donor_email=d1.email,
+                    amount=100.0,
+                    currency="USD",
+                    status="received",
+                    donation_date=now_naive - timedelta(days=20),
+                ),
+                # d2: excluded by max_total_given
+                Donation(
+                    organization_id=org_id,
+                    campaign_id=campaign_id,
+                    donor_id=d2.id,
+                    donor_name=d2.name,
+                    donor_email=d2.email,
+                    amount=900.0,
+                    currency="USD",
+                    status="received",
+                    donation_date=now_naive - timedelta(days=10),
+                ),
+                # d3: excluded by recency band (too old)
+                Donation(
+                    organization_id=org_id,
+                    campaign_id=campaign_id,
+                    donor_id=d3.id,
+                    donor_name=d3.name,
+                    donor_email=d3.email,
+                    amount=220.0,
+                    currency="USD",
+                    status="received",
+                    donation_date=now_naive - timedelta(days=220),
+                ),
+            ]
+        )
+        db.session.commit()
+
+    with mock.patch("ngo_homesuite.services.campaign_email_service.send_email", return_value=True) as send_mock:
+        rv = client.post(
+            f"/api/v2/campaigns/{campaign_id}/emails/send",
+            json={
+                "subject": "Advanced filter blast",
+                "body": "Hi {name}, support {campaign_name}.",
+                "audience": {
+                    "donor_ids": target_donor_ids,
+                    "min_total_given": 200.0,
+                    "max_total_given": 400.0,
+                    "min_gift_count": 2,
+                    "max_gift_count": 3,
+                    "gifted_between_days_min": 10,
+                    "gifted_between_days_max": 90,
+                },
+                "compliance": _human_authorization_payload(),
+            },
+        )
+
+    assert rv.status_code == 200
+    payload = rv.get_json() or {}
+    assert payload.get("total_recipients") == 1
+    assert send_mock.call_count == 1
+    sent_emails = [str(call.kwargs.get("to") or "").strip().lower() for call in send_mock.call_args_list]
+    assert sent_emails == ["balanced@example.org"]
+
+
+def test_campaign_send_email_rejects_invalid_recency_band_filter_range(client):
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "Invalid Recency Band Campaign"})
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+
+    rv = client.post(
+        f"/api/v2/campaigns/{campaign_id}/emails/send",
+        json={
+            "subject": "Invalid range",
+            "body": "Hi {name}.",
+            "audience": {
+                "gifted_between_days_min": 60,
+                "gifted_between_days_max": 10,
+            },
+            "compliance": _human_authorization_payload(),
+        },
+    )
+
+    assert rv.status_code == 400
+    payload = rv.get_json() or {}
+    assert "gifted_between_days_max" in str(payload.get("error") or "")
+
+
 def test_campaign_send_email_accepts_smart_group_audience(client, app):
     _login_admin(client)
     create_rv = client.post("/api/v2/campaigns", json={"name": "Smart Group Audience Campaign"})
@@ -870,6 +1083,88 @@ def test_campaign_send_email_rejects_invalid_smart_group_audience(client):
     assert rv.status_code == 400
     payload = rv.get_json() or {}
     assert "smart_group_id" in str(payload.get("error") or "")
+
+
+def test_campaign_send_email_accepts_inline_smart_group_rules_audience(client, app):
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "Inline Rules Segment Campaign"})
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+    org_id = _admin_org_id(app)
+
+    with app.app_context():
+        d1 = Donor(organization_id=org_id, name="Rules High", email="rules-high@example.org", donor_type="individual")
+        d2 = Donor(organization_id=org_id, name="Rules Low", email="rules-low@example.org", donor_type="individual")
+        db.session.add_all([d1, d2])
+        db.session.flush()
+
+        db.session.add_all(
+            [
+                Donation(
+                    organization_id=org_id,
+                    campaign_id=campaign_id,
+                    donor_id=d1.id,
+                    donor_name=d1.name,
+                    donor_email=d1.email,
+                    amount=600.0,
+                    currency="USD",
+                    status="received",
+                ),
+                Donation(
+                    organization_id=org_id,
+                    campaign_id=campaign_id,
+                    donor_id=d2.id,
+                    donor_name=d2.name,
+                    donor_email=d2.email,
+                    amount=50.0,
+                    currency="USD",
+                    status="received",
+                ),
+            ]
+        )
+        db.session.commit()
+
+    with mock.patch("ngo_homesuite.services.campaign_email_service.send_email", return_value=True) as send_mock:
+        send_rv = client.post(
+            f"/api/v2/campaigns/{campaign_id}/emails/send",
+            json={
+                "subject": "Inline rules outreach",
+                "body": "Hello {name}, this came from inline rules for {campaign_name}.",
+                "audience": {
+                    "smart_group_rules": [
+                        {"field": "total_giving", "op": "gte", "value": 300},
+                    ]
+                },
+                "compliance": _human_authorization_payload(),
+            },
+        )
+
+    assert send_rv.status_code == 200
+    payload = send_rv.get_json() or {}
+    assert int(payload.get("total_recipients") or 0) >= 1
+    sent_emails = [str(call.kwargs.get("to") or "").strip().lower() for call in send_mock.call_args_list]
+    assert "rules-high@example.org" in sent_emails
+    assert "rules-low@example.org" not in sent_emails
+
+
+def test_campaign_send_email_rejects_invalid_inline_smart_group_rules_payload(client):
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "Invalid Inline Rules Campaign"})
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+
+    rv = client.post(
+        f"/api/v2/campaigns/{campaign_id}/emails/send",
+        json={
+            "subject": "Bad inline rules",
+            "body": "Hello {name}.",
+            "audience": {"smart_group_rules": "not-a-list"},
+            "compliance": _human_authorization_payload(),
+        },
+    )
+    assert rv.status_code == 400
+    payload = rv.get_json() or {}
+    assert "smart_group_rules" in str(payload.get("error") or "")
 
 
 def test_campaign_email_segments_list_endpoint_returns_saved_groups(client):

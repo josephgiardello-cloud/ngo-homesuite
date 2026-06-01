@@ -204,6 +204,20 @@ def evaluate_group(group_id: int, organization_id: int) -> List[Dict[str, Any]]:
         raise NotFound()
     rules = group.rules_json if isinstance(group.rules_json, list) else json.loads(group.rules_json)
 
+    results = evaluate_rules(organization_id, rules)
+
+    # Persist count and timestamp
+    group.last_count = len(results)
+    group.last_evaluated_at = _utcnow()
+    db.session.commit()
+
+    return results
+
+
+def evaluate_rules(organization_id: int, rules: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Evaluate Smart Group-compatible rules without requiring a saved group."""
+    _validate_rules(rules)
+
     donors = list(db.session.scalars(select(Donor).where(Donor.organization_id == organization_id)))
 
     # Build lookup maps (one DB round-trip each)
@@ -255,11 +269,6 @@ def evaluate_group(group_id: int, organization_id: int) -> List[Dict[str, Any]]:
                     "last_gift_days_ago": facts["last_gift_days_ago"],
                 }
             )
-
-    # Persist count and timestamp
-    group.last_count = len(results)
-    group.last_evaluated_at = _utcnow()
-    db.session.commit()
 
     return results
 
