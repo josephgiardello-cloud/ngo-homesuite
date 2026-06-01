@@ -6,6 +6,7 @@ from flask import Blueprint, current_app, jsonify, request, url_for
 from flask_login import current_user, login_required
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 
+from ngo_homesuite.web.auth_routes import require_step_up_auth
 from ngo_homesuite.web.rbac import roles_required
 
 
@@ -124,6 +125,7 @@ def update_case_route(case_id: int):
 @program_bp.delete("/cases/<int:case_id>")
 @login_required
 @roles_required("admin", "staff")
+@require_step_up_auth
 def delete_case_route(case_id: int):
     from ngo_homesuite.services.program_impact_service import delete_case
 
@@ -692,6 +694,7 @@ def beneficiary_timeline_route(beneficiary_id: int):
 @program_bp.delete("/intake/beneficiaries/<int:beneficiary_id>")
 @login_required
 @roles_required("admin", "staff")
+@require_step_up_auth
 def delete_intake_beneficiary_route(beneficiary_id: int):
     from ngo_homesuite.services.beneficiary_service import delete_beneficiary
 
@@ -969,6 +972,7 @@ def update_appointment_route(appointment_id: int):
 @program_bp.delete("/appointments/<int:appointment_id>")
 @login_required
 @roles_required("admin", "staff")
+@require_step_up_auth
 def cancel_appointment_route(appointment_id: int):
     from ngo_homesuite.services.program_impact_service import cancel_appointment
 

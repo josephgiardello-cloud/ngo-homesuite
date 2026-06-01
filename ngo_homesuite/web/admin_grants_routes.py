@@ -14,6 +14,7 @@ from sqlalchemy import select
 
 from ngo_homesuite.models.core import db
 from ngo_homesuite.grants.models import Grant, GrantBudgetLine, GrantExpenseAllocation, GrantBudgetTransaction
+from ngo_homesuite.web.auth_routes import require_step_up_auth
 from ngo_homesuite.web.rbac import roles_required
 
 grant_admin_bp = Blueprint("grant_admin", __name__, url_prefix="/admin/grants")
@@ -237,6 +238,7 @@ def update_budget_line(grant_id: int, line_id: int):
 @grant_admin_bp.route("/<int:grant_id>/budget/lines/<int:line_id>", methods=["DELETE"])
 @login_required
 @roles_required("admin")
+@require_step_up_auth
 def delete_budget_line(grant_id: int, line_id: int):
     """Delete a budget line (only if no allocations exist)."""
     org_id = _org_id()

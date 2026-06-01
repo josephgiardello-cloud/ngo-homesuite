@@ -570,6 +570,9 @@ class TestGrantBudgetAdminRoutes:
             )
             assert rv.status_code == 200
 
+            with client.session_transaction() as sess:
+                sess["_step_up_verified_at"] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+
             response = client.delete(f"/admin/grants/{grant_id}/budget/lines/{line_id}")
             assert response.status_code == 204
 

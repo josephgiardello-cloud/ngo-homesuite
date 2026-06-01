@@ -4,6 +4,7 @@ from __future__ import annotations
 from flask import Blueprint, jsonify, request
 from flask_login import login_required
 
+from ngo_homesuite.web.auth_routes import require_step_up_auth
 from ngo_homesuite.web.rbac import roles_required
 
 volunteer_bp = Blueprint('volunteer', __name__)
@@ -175,6 +176,7 @@ def update_course_route(course_id: int):
 @volunteer_bp.delete('/volunteers/training/courses/<int:course_id>')
 @login_required
 @roles_required('admin')
+@require_step_up_auth
 def delete_course_route(course_id: int):
     from ngo_homesuite.services.volunteer_service import delete_training_course
     delete_training_course(course_id, _org_id())

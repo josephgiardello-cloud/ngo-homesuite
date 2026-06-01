@@ -6,6 +6,7 @@ from datetime import date
 from flask import Blueprint, jsonify, request
 from flask_login import current_user, login_required
 
+from ngo_homesuite.web.auth_routes import require_step_up_auth
 from ngo_homesuite.web.rbac import roles_required
 
 
@@ -117,6 +118,7 @@ def update_scheduled_report_route(report_id: int):
 @reporting_bp.delete("/scheduled/<int:report_id>")
 @login_required
 @roles_required("admin")
+@require_step_up_auth
 def delete_scheduled_report_route(report_id: int):
     from ngo_homesuite.services.advanced_reporting_service import delete_scheduled_report
 
