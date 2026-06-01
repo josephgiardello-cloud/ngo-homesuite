@@ -1,12 +1,18 @@
 ﻿import logging
 import re
+import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
 import pandas as pd
 import requests
-from PyPDF2 import PdfReader
+try:
+    from pypdf import PdfReader
+except Exception:  # pragma: no cover - compatibility fallback for older environments
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        from PyPDF2 import PdfReader
 
 from .config import load_config
 from .utils import coalesce_number, resolve_path, write_json

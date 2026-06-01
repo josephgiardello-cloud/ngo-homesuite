@@ -4,7 +4,7 @@ from importlib import resources
 from typing import Any
 
 
-with resources.files("tony").joinpath("default_config.json").open("r", encoding="utf-8") as handle:
+with resources.files("ngo_homesuite.tony").joinpath("default_config.json").open("r", encoding="utf-8") as handle:
     DEFAULT_CONFIG = json.load(handle)
 
 
