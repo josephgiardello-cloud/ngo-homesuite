@@ -1,14 +1,28 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import select
 
 from ngo_homesuite.grants.models import Grant
+from ngo_homesuite.grants.models import GrantBudgetLine, GrantBudgetTransaction
 from ngo_homesuite.grants.services import lifecycle as grant_service
 from ngo_homesuite.grants.services.preaward import PreawardService
-from ngo_homesuite.models.core import Donation, Donor, MembershipTier, Organization, ProgramCase, Task, User, db
+from ngo_homesuite.models.core import (
+    Donation,
+    Donor,
+    Expense,
+    FormSubmissionEvent,
+    MembershipTier,
+    Organization,
+    ProgramCase,
+    Project,
+    RecurringDonationPlan,
+    Task,
+    User,
+    db,
+)
 
 
 @pytest.fixture(scope="module")
@@ -605,6 +619,580 @@ def test_v2_activity_feed_and_insights_contract(client):
     assert isinstance(payload.get("summary"), str)
     assert isinstance(payload.get("next_best_action"), str)
     assert isinstance(payload.get("recommended_actions"), list)
+
+
+def test_v2_donor_journey_and_soft_credit_contract(client, app):
+    _login_admin(client)
+
+    with app.app_context():
+        admin_user = User.query.filter_by(username="admin").first()
+        assert admin_user is not None
+        org_id = int(admin_user.organization_id)
+
+        nonce = int(datetime.now(timezone.utc).timestamp() * 1000000)
+        hard_credit_donor = Donor(
+            organization_id=org_id,
+            name=f"Journey Hard Credit {nonce}",
+            email=f"journey-hard-{nonce}@example.org",
+            donor_type="individual",
+            status="active",
+        )
+        influencer_donor = Donor(
+            organization_id=org_id,
+            name=f"Journey Influencer {nonce}",
+            email=f"journey-soft-{nonce}@example.org",
+            donor_type="individual",
+            status="active",
+        )
+        db.session.add_all([hard_credit_donor, influencer_donor])
+        db.session.flush()
+
+        donation = Donation(
+            organization_id=org_id,
+            donor_id=int(hard_credit_donor.id),
+            donor_name=str(hard_credit_donor.name),
+            donor_email=hard_credit_donor.email,
+            amount=250.0,
+            currency="USD",
+            status="received",
+            reference_number=f"SOFT-CREDIT-{nonce}",
+        )
+        db.session.add(donation)
+        db.session.commit()
+
+        donation_id = int(donation.id)
+        influencer_id = int(influencer_donor.id)
+
+    created = client.post(
+        f"/api/v2/donations/{donation_id}/soft-credits",
+        json={
+            "donor_id": influencer_id,
+            "role": "influencer",
+            "credited_amount": 175.5,
+            "credit_weight": 0.8,
+            "rationale": "Introduced major donor to campaign",
+        },
+    )
+    assert created.status_code == 201
+    created_payload = created.get_json()
+    assert created_payload["donation_id"] == donation_id
+    assert created_payload["donor_id"] == influencer_id
+    assert created_payload["role"] == "influencer"
+    assert created_payload["credited_amount"] == 175.5
+
+    listed = client.get(f"/api/v2/donations/{donation_id}/soft-credits")
+    assert listed.status_code == 200
+    listed_payload = listed.get_json()
+    assert isinstance(listed_payload, list)
+    assert any(
+        int(item.get("donor_id", 0)) == influencer_id
+        and int(item.get("donation_id", 0)) == donation_id
+        for item in listed_payload
+    )
+
+    journey = client.get(f"/api/v2/donors/{influencer_id}/journey?limit=100")
+    assert journey.status_code == 200
+    journey_payload = journey.get_json()
+    assert isinstance(journey_payload, dict)
+    assert isinstance(journey_payload.get("donor"), dict)
+    assert isinstance(journey_payload.get("summary"), dict)
+    assert isinstance(journey_payload.get("timeline"), list)
+    assert journey_payload["donor"]["id"] == influencer_id
+    assert journey_payload["summary"].get("soft_credit_count", 0) >= 1
+    assert journey_payload["summary"].get("soft_credit_total", 0) >= 175.5
+    assert any(item.get("activity_type") == "soft_credit" for item in journey_payload["timeline"])
+
+
+def test_v2_role_based_dashboard_intelligence_contract(client, app):
+    _login_admin(client)
+
+    with app.app_context():
+        admin_user = User.query.filter_by(username="admin").first()
+        assert admin_user is not None
+        org_id = int(admin_user.organization_id)
+
+    _ensure_user(app, "intelligence_staff", "intelligence.staff@test.local", "staff", "IntelStaff123!", org_id)
+    _ensure_user(app, "intelligence_viewer", "intelligence.viewer@test.local", "viewer", "IntelViewer123!", org_id)
+
+    with app.app_context():
+        staff_user = User.query.filter_by(username="intelligence_staff").first()
+        assert staff_user is not None
+        nonce = int(datetime.now(timezone.utc).timestamp() * 1000000)
+        donor = Donor(
+            organization_id=org_id,
+            name=f"Intelligence Donor {nonce}",
+            email=f"intelligence-donor-{nonce}@example.org",
+            donor_type="individual",
+            status="active",
+        )
+        db.session.add(donor)
+        db.session.flush()
+
+        donation = Donation(
+            organization_id=org_id,
+            donor_id=int(donor.id),
+            donor_name=str(donor.name),
+            donor_email=donor.email,
+            amount=325.0,
+            currency="USD",
+            status="received",
+            donation_date=datetime.now(timezone.utc).replace(tzinfo=None),
+            reference_number=f"INTEL-{nonce}",
+        )
+        db.session.add(donation)
+
+        task = Task(
+            organization_id=org_id,
+            assigned_to_id=int(staff_user.id),
+            donor_id=int(donor.id),
+            title="Follow up intelligence donor",
+            task_type="follow_up",
+            priority="high",
+            status="open",
+            due_date=datetime.now(timezone.utc).replace(tzinfo=None),
+        )
+        db.session.add(task)
+        db.session.commit()
+
+    admin_payload_resp = client.get("/api/v2/intelligence/dashboard?period=30d")
+    assert admin_payload_resp.status_code == 200
+    admin_payload = admin_payload_resp.get_json()
+    assert admin_payload["role"] == "admin"
+    assert isinstance(admin_payload.get("scorecard"), list)
+    assert isinstance(admin_payload.get("next_best_actions"), list)
+
+    admin_preview_resp = client.get("/api/v2/intelligence/dashboard?period=30d&role=staff")
+    assert admin_preview_resp.status_code == 200
+    admin_preview_payload = admin_preview_resp.get_json()
+    assert admin_preview_payload["role"] == "staff"
+    assert "operational_queues" in admin_preview_payload
+
+    bad_date_resp = client.get("/api/v2/intelligence/dashboard?start_date=06-02-2026")
+    assert bad_date_resp.status_code == 400
+
+    client.post("/auth/logout")
+    _login_user(client, "intelligence_staff", "IntelStaff123!")
+
+    staff_payload_resp = client.get("/api/v2/intelligence/dashboard?period=30d")
+    assert staff_payload_resp.status_code == 200
+    staff_payload = staff_payload_resp.get_json()
+    assert staff_payload["role"] == "staff"
+    staff_queue = staff_payload.get("operational_queues", {}).get("my_task_queue")
+    assert isinstance(staff_queue, list)
+    assert any(item.get("title") == "Follow up intelligence donor" for item in staff_queue)
+
+    forbidden_preview = client.get("/api/v2/intelligence/dashboard?role=admin")
+    assert forbidden_preview.status_code == 403
+    assert forbidden_preview.get_json() == {"error": "Only admin users may preview alternate intelligence roles"}
+
+    client.post("/auth/logout")
+    _login_user(client, "intelligence_viewer", "IntelViewer123!")
+
+    viewer_payload_resp = client.get("/api/v2/intelligence/dashboard?period=90d")
+    assert viewer_payload_resp.status_code == 200
+    viewer_payload = viewer_payload_resp.get_json()
+    assert viewer_payload["role"] == "viewer"
+    assert isinstance(viewer_payload.get("scorecard"), list)
+    assert isinstance(viewer_payload.get("drilldowns"), dict)
+
+
+def test_v2_financial_guardrails_intelligence_contract(client, app):
+    _login_admin(client)
+
+    with app.app_context():
+        admin_user = User.query.filter_by(username="admin").first()
+        assert admin_user is not None
+        org_id = int(admin_user.organization_id)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        project = Project(
+            organization_id=org_id,
+            name=f"Guardrail Project {int(now.timestamp() * 1000000)}",
+            description="Project used for financial guardrail contract testing",
+            budget=100.0,
+            status="active",
+        )
+        db.session.add(project)
+        db.session.flush()
+
+        donor = Donor(
+            organization_id=org_id,
+            name=f"Guardrail Donor {int(now.timestamp() * 1000000)}",
+            email=f"guardrail-donor-{int(now.timestamp() * 1000000)}@example.org",
+            donor_type="individual",
+            status="active",
+        )
+        db.session.add(donor)
+        db.session.flush()
+
+        db.session.add(
+            Donation(
+                organization_id=org_id,
+                donor_id=int(donor.id),
+                donor_name=donor.name,
+                donor_email=donor.email,
+                amount=50.0,
+                currency="USD",
+                status="received",
+                donation_date=now - timedelta(days=2),
+                reference_number=f"GRD-DON-{int(now.timestamp())}",
+            )
+        )
+
+        db.session.add(
+            Expense(
+                organization_id=org_id,
+                project_id=int(project.id),
+                amount=1000000.0,
+                currency="USD",
+                payee="Guardrail Ops Vendor",
+                description="Guardrail stress expense",
+                paid_at=now - timedelta(days=1),
+            )
+        )
+
+        grant = Grant(
+            organization_id=org_id,
+            title=f"Guardrail Grant {int(now.timestamp() * 1000000)}",
+            funder_name="Guardrail Foundation",
+            status="awarded",
+            amount_awarded=250.0,
+            award_date=(now - timedelta(days=30)).date(),
+        )
+        db.session.add(grant)
+        db.session.flush()
+
+        grant_line = GrantBudgetLine(
+            organization_id=org_id,
+            grant_id=int(grant.id),
+            category="operations",
+            line_name="Operations Line",
+            allocated_amount=100.0,
+            committed_amount=140.0,
+            reconciled_amount=80.0,
+            status="active",
+        )
+        db.session.add(grant_line)
+        db.session.flush()
+
+        db.session.add(
+            GrantBudgetTransaction(
+                organization_id=org_id,
+                grant_id=int(grant.id),
+                budget_line_id=int(grant_line.id),
+                transaction_type="commit",
+                amount=140.0,
+                description="Unreconciled transaction for guardrails",
+                created_by_user_id=int(admin_user.id),
+                created_at=now - timedelta(days=45),
+                reconciled_at=None,
+                reconciled_by_user_id=None,
+            )
+        )
+        db.session.commit()
+
+        _ensure_user(app, "guardrail_staff", "guardrail.staff@test.local", "staff", "Guardrail123!", org_id)
+
+    payload_resp = client.get("/api/v2/intelligence/financial-guardrails?period=30d")
+    assert payload_resp.status_code == 200
+    payload = payload_resp.get_json()
+    assert payload["role"] == "admin"
+    assert isinstance(payload.get("guardrails"), list)
+    assert isinstance(payload.get("watchlists"), dict)
+    assert isinstance(payload.get("next_best_actions"), list)
+    assert "risk_score" in payload
+
+    financial_posture = payload.get("financial_posture") or {}
+    assert int(financial_posture.get("over_budget_projects", 0)) >= 1
+    assert int(financial_posture.get("unreconciled_grant_transactions_over_30d", 0)) >= 1
+
+    guardrails = payload.get("guardrails") or []
+    guardrail_ids = {item.get("id") for item in guardrails}
+    assert "period_net_cashflow" in guardrail_ids
+    assert "project_budget_control" in guardrail_ids
+    assert "grant_reconciliation_hygiene" in guardrail_ids
+    budget_guardrail = next(item for item in guardrails if item.get("id") == "project_budget_control")
+    assert budget_guardrail.get("status") in {"warning", "critical"}
+
+    invalid_date = client.get("/api/v2/intelligence/financial-guardrails?start_date=06-02-2026")
+    assert invalid_date.status_code == 400
+    assert invalid_date.get_json() == {"error": "start_date must be ISO format YYYY-MM-DD"}
+
+    staff_client = app.test_client()
+    _login_user(staff_client, "guardrail_staff", "Guardrail123!")
+    forbidden_preview = staff_client.get("/api/v2/intelligence/financial-guardrails?role=admin")
+    assert forbidden_preview.status_code == 403
+    assert forbidden_preview.get_json() == {"error": "Only admin users may preview alternate intelligence roles"}
+
+
+def test_v2_donor_journey_automation_run_and_audit_contract(client, app):
+    _login_admin(client)
+
+    with app.app_context():
+        admin_user = User.query.filter_by(username="admin").first()
+        assert admin_user is not None
+        org_id = int(admin_user.organization_id)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        # First-gift candidate: exactly one donation in window.
+        first_gift_donor = Donor(
+            organization_id=org_id,
+            name=f"Automation First Gift {int(now.timestamp() * 1000000)}",
+            email=f"automation-first-{int(now.timestamp() * 1000000)}@example.org",
+            donor_type="individual",
+            status="active",
+        )
+        db.session.add(first_gift_donor)
+        db.session.flush()
+        db.session.add(
+            Donation(
+                organization_id=org_id,
+                donor_id=int(first_gift_donor.id),
+                donor_name=first_gift_donor.name,
+                donor_email=first_gift_donor.email,
+                amount=120.0,
+                currency="USD",
+                status="received",
+                donation_date=now - timedelta(days=1),
+                reference_number=f"AUTO-FIRST-{int(now.timestamp())}",
+            )
+        )
+
+        # Lapsing candidate: multiple gifts, none recently.
+        lapsing_donor = Donor(
+            organization_id=org_id,
+            name=f"Automation Lapsing {int(now.timestamp() * 1000000) + 1}",
+            email=f"automation-lapsing-{int(now.timestamp() * 1000000) + 1}@example.org",
+            donor_type="individual",
+            status="active",
+        )
+        db.session.add(lapsing_donor)
+        db.session.flush()
+        db.session.add_all(
+            [
+                Donation(
+                    organization_id=org_id,
+                    donor_id=int(lapsing_donor.id),
+                    donor_name=lapsing_donor.name,
+                    donor_email=lapsing_donor.email,
+                    amount=80.0,
+                    currency="USD",
+                    status="received",
+                    donation_date=now - timedelta(days=300),
+                    reference_number=f"AUTO-LAPSE-A-{int(now.timestamp())}",
+                ),
+                Donation(
+                    organization_id=org_id,
+                    donor_id=int(lapsing_donor.id),
+                    donor_name=lapsing_donor.name,
+                    donor_email=lapsing_donor.email,
+                    amount=60.0,
+                    currency="USD",
+                    status="received",
+                    donation_date=now - timedelta(days=160),
+                    reference_number=f"AUTO-LAPSE-B-{int(now.timestamp())}",
+                ),
+            ]
+        )
+
+        # Recurring failure candidate.
+        recurring_donor = Donor(
+            organization_id=org_id,
+            name=f"Automation Recurring {int(now.timestamp() * 1000000) + 2}",
+            email=f"automation-recurring-{int(now.timestamp() * 1000000) + 2}@example.org",
+            donor_type="individual",
+            status="active",
+        )
+        db.session.add(recurring_donor)
+        db.session.flush()
+        db.session.add(
+            RecurringDonationPlan(
+                organization_id=org_id,
+                donor_id=int(recurring_donor.id),
+                amount=35.0,
+                currency="USD",
+                frequency="monthly",
+                next_charge_date=(now + timedelta(days=1)).date(),
+                status="failed",
+                fail_count=3,
+                last_error="card_declined",
+            )
+        )
+
+        db.session.commit()
+
+    run_resp = client.post(
+        "/api/v2/donor-journeys/automations/run",
+        json={
+            "first_gift_window_days": 14,
+            "lapsing_days": 120,
+            "recurring_fail_threshold": 2,
+            "cooldown_days": 30,
+        },
+    )
+    assert run_resp.status_code == 200
+    run_payload = run_resp.get_json()
+    assert isinstance(run_payload.get("summary"), dict)
+    assert run_payload["summary"]["executed"] >= 3
+    assert run_payload["summary"]["tasks_created"] >= 3
+    assert isinstance(run_payload.get("actions"), list)
+
+    events_resp = client.get("/api/v2/donor-journeys/automations/events?limit=200")
+    assert events_resp.status_code == 200
+    events_payload = events_resp.get_json()
+    assert isinstance(events_payload, list)
+    trigger_names = {item.get("trigger_name") for item in events_payload}
+    assert "first_gift_followup" in trigger_names
+    assert "lapsing_donor_reactivation" in trigger_names
+    assert "recurring_failure_recovery" in trigger_names
+
+    run_again_resp = client.post(
+        "/api/v2/donor-journeys/automations/run",
+        json={
+            "first_gift_window_days": 14,
+            "lapsing_days": 120,
+            "recurring_fail_threshold": 2,
+            "cooldown_days": 30,
+        },
+    )
+    assert run_again_resp.status_code == 200
+    run_again_payload = run_again_resp.get_json()
+    assert run_again_payload["summary"]["executed"] == 0
+    assert run_again_payload["summary"]["skipped"] >= 3
+
+    filtered_resp = client.get(
+        "/api/v2/donor-journeys/automations/events?trigger=recurring_failure_recovery&limit=50"
+    )
+    assert filtered_resp.status_code == 200
+    filtered_payload = filtered_resp.get_json()
+    assert isinstance(filtered_payload, list)
+    assert filtered_payload
+    assert all(item.get("trigger_name") == "recurring_failure_recovery" for item in filtered_payload)
+
+
+def test_v2_integrated_form_ecosystem_ingest_dedupe_and_tenant_isolation_contract(client, app):
+    _login_admin(client)
+
+    with app.app_context():
+        admin_user = User.query.filter_by(username="admin").first()
+        assert admin_user is not None
+        org_id = int(admin_user.organization_id)
+        nonce = int(datetime.now(timezone.utc).timestamp() * 1000000)
+
+        existing_donor = Donor(
+            organization_id=org_id,
+            name=f"Forms Existing Donor {nonce}",
+            email=f"forms-existing-{nonce}@example.org",
+            donor_type="individual",
+            status="active",
+        )
+        db.session.add(existing_donor)
+        db.session.commit()
+        existing_donor_id = int(existing_donor.id)
+        existing_donor_email = str(existing_donor.email)
+
+    ingest_payload = {
+        "source": "typeform",
+        "form_type": "donation",
+        "form_name": "Spring Appeal Landing Form",
+        "external_submission_id": f"tf-{int(datetime.now(timezone.utc).timestamp())}",
+        "submitter_name": "Existing Forms Donor",
+        "submitter_email": existing_donor_email,
+        "submitter_phone": "+1-555-100-2000",
+        "amount": 88.5,
+        "currency": "USD",
+        "purpose": "Spring appeal",
+        "message": "Please apply this to the emergency response fund.",
+        "follow_up_requested": True,
+    }
+
+    created = client.post("/api/v2/forms/submissions", json=ingest_payload)
+    assert created.status_code == 201
+    created_payload = created.get_json()
+    assert created_payload["duplicate"] is False
+    assert created_payload["source"] == "typeform"
+    assert created_payload["form_type"] == "donation"
+    assert created_payload["donor_id"] == existing_donor_id
+    assert created_payload["donor_created"] is False
+    assert created_payload["donation_id"] is not None
+    assert created_payload["task_id"] is not None
+
+    duplicate = client.post("/api/v2/forms/submissions", json=ingest_payload)
+    assert duplicate.status_code == 200
+    duplicate_payload = duplicate.get_json()
+    assert duplicate_payload["duplicate"] is True
+    assert duplicate_payload["submission_id"] == created_payload["submission_id"]
+    assert duplicate_payload["donation_id"] == created_payload["donation_id"]
+    assert duplicate_payload["task_id"] == created_payload["task_id"]
+
+    listed = client.get("/api/v2/forms/submissions?source=typeform&form_type=donation&limit=20")
+    assert listed.status_code == 200
+    listed_payload = listed.get_json()
+    assert isinstance(listed_payload, list)
+    assert any(int(item.get("id", 0)) == int(created_payload["submission_id"]) for item in listed_payload)
+
+    with app.app_context():
+        event_count = db.session.scalar(
+            select(db.func.count(FormSubmissionEvent.id)).where(
+                FormSubmissionEvent.organization_id == org_id,
+                FormSubmissionEvent.id == int(created_payload["submission_id"]),
+            )
+        )
+        assert int(event_count or 0) == 1
+
+        org_b = Organization.query.filter_by(slug="form-ecosystem-org-b").first()
+        if org_b is None:
+            org_b = Organization(name="Form Ecosystem Org B", slug="form-ecosystem-org-b", is_active=True)
+            db.session.add(org_b)
+            db.session.flush()
+        org_b_id = int(org_b.id)
+        db.session.commit()
+
+    _ensure_user(app, "forms_staff_b", "forms.staff.b@test.local", "staff", "FormsStaffB123!", org_b_id)
+    client.post("/auth/logout")
+    _login_user(client, "forms_staff_b", "FormsStaffB123!")
+
+    isolated_list = client.get("/api/v2/forms/submissions?limit=20")
+    assert isolated_list.status_code == 200
+    isolated_payload = isolated_list.get_json()
+    assert isinstance(isolated_payload, list)
+    assert all(int(item.get("id", 0)) != int(created_payload["submission_id"]) for item in isolated_payload)
+
+    with app.app_context():
+        app.config["FORM_ECOSYSTEM_INGEST_TOKEN"] = "forms-ingest-contract-token"
+
+    public_bad_auth = client.post(
+        "/api/v2/forms/submissions/public",
+        json={
+            "organization_id": org_id,
+            "source": "webflow",
+            "form_type": "contact",
+            "external_submission_id": f"wf-bad-{int(datetime.now(timezone.utc).timestamp())}",
+            "submitter_name": "Public Submitter",
+            "submitter_email": f"public-bad-{int(datetime.now(timezone.utc).timestamp())}@example.org",
+            "message": "Need information about your volunteer opportunities.",
+        },
+    )
+    assert public_bad_auth.status_code == 401
+
+    public_ok = client.post(
+        "/api/v2/forms/submissions/public",
+        headers={"X-Form-Ingest-Token": "forms-ingest-contract-token"},
+        json={
+            "organization_id": org_id,
+            "source": "webflow",
+            "form_type": "contact",
+            "external_submission_id": f"wf-ok-{int(datetime.now(timezone.utc).timestamp())}",
+            "submitter_name": "Public Submitter",
+            "submitter_email": f"public-ok-{int(datetime.now(timezone.utc).timestamp())}@example.org",
+            "message": "Need information about your volunteer opportunities.",
+            "follow_up_requested": True,
+        },
+    )
+    assert public_ok.status_code == 201
+    public_ok_payload = public_ok.get_json()
+    assert public_ok_payload["duplicate"] is False
+    assert public_ok_payload["task_id"] is not None
 
 
 def test_v2_task_board_and_reminder_candidates_contract(client, app):

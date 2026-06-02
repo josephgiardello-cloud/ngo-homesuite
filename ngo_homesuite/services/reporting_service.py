@@ -5,11 +5,22 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping, cast
 
-from sqlalchemy import func, select
+from sqlalchemy import desc, func, select
 from werkzeug.exceptions import NotFound
 
 from ngo_homesuite.db.repositories.reports import fetch_reports
-from ngo_homesuite.models.core import Beneficiary, Donation, Donor, Expense, Fund, Project, RecurringDonationPlan, db
+from ngo_homesuite.models.core import (
+    Beneficiary,
+    Donation,
+    Donor,
+    Expense,
+    Fund,
+    ProgramCase,
+    Project,
+    RecurringDonationPlan,
+    Task,
+    db,
+)
 
 
 class ReportingService:
@@ -767,6 +778,680 @@ class ReportingService:
             "data_quality": {
                 "missing_donation_dates": missing_donation_dates,
             },
+        }
+
+    @staticmethod
+    def _normalize_intelligence_role(role: str | None) -> str:
+        normalized = str(role or "viewer").strip().lower()
+        role_map = {
+            "fundraiser": "staff",
+            "volunteer_manager": "volunteer",
+            "org_admin": "admin",
+            "executive": "admin",
+        }
+        return role_map.get(normalized, normalized)
+
+    @staticmethod
+    def _role_profile(role: str) -> str:
+        if role == "admin":
+            return "executive_director"
+        if role == "staff":
+            return "major_gifts_officer"
+        if role == "volunteer":
+            return "field_operations"
+        return "operations_viewer"
+
+    @staticmethod
+    def _safe_int(value: Any) -> int:
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _safe_float(value: Any) -> float:
+        try:
+            return float(value or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    @staticmethod
+    def _period_window(
+        *,
+        period: str,
+        now: datetime,
+        start_date: datetime | None,
+        end_date: datetime | None,
+    ) -> tuple[datetime, datetime]:
+        normalized = str(period or "30d").strip().lower()
+        if normalized == "custom" and start_date is not None and end_date is not None:
+            start = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+            end = end_date.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+            if end > start:
+                return start, end
+        if normalized == "90d":
+            return now - timedelta(days=90), now
+        if normalized == "ytd":
+            return datetime(year=now.year, month=1, day=1), now
+        return now - timedelta(days=30), now
+
+    def role_based_intelligence(
+        self,
+        organization_id: int,
+        *,
+        role: str,
+        actor_user_id: int | None = None,
+        period: str = "30d",
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+        recent_donations_limit: int = 10,
+    ) -> dict[str, Any]:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        normalized_role = self._normalize_intelligence_role(role)
+        summary = self.organization_dashboard_summary(
+            organization_id,
+            recent_donations_limit=max(5, min(25, int(recent_donations_limit))),
+            period=period,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        window_start, window_end = self._period_window(
+            period=str(summary.get("selected_period") or period),
+            now=now,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        top_donor_rows = db.session.execute(
+            select(
+                Donor.id,
+                Donor.name,
+                Donor.email,
+                func.coalesce(func.sum(Donation.amount), 0.0).label("raised_amount"),
+                func.count(Donation.id).label("gift_count"),
+                func.max(Donation.donation_date).label("last_gift_date"),
+            )
+            .join(Donation, Donation.donor_id == Donor.id)
+            .where(
+                Donor.organization_id == organization_id,
+                Donation.organization_id == organization_id,
+                Donation.donation_date >= window_start,
+                Donation.donation_date < window_end,
+            )
+            .group_by(Donor.id, Donor.name, Donor.email)
+            .order_by(desc("raised_amount"))
+            .limit(8)
+        ).all()
+        top_donors = [
+            {
+                "donor_id": self._safe_int(row.id),
+                "name": str(row.name or "Unnamed donor"),
+                "email": str(row.email or "") or None,
+                "raised_amount": round(self._safe_float(row.raised_amount), 2),
+                "gift_count": self._safe_int(row.gift_count),
+                "last_gift_date": row.last_gift_date.isoformat() if row.last_gift_date else None,
+            }
+            for row in top_donor_rows
+        ]
+
+        open_tasks_count = self._safe_int(
+            db.session.scalar(
+                select(func.count(Task.id)).where(
+                    Task.organization_id == organization_id,
+                    Task.status.in_(["open", "in_progress"]),
+                )
+            )
+        )
+        overdue_tasks_count = self._safe_int(
+            db.session.scalar(
+                select(func.count(Task.id)).where(
+                    Task.organization_id == organization_id,
+                    Task.status.in_(["open", "in_progress"]),
+                    Task.due_date.is_not(None),
+                    Task.due_date < now,
+                )
+            )
+        )
+        high_priority_tasks_count = self._safe_int(
+            db.session.scalar(
+                select(func.count(Task.id)).where(
+                    Task.organization_id == organization_id,
+                    Task.status.in_(["open", "in_progress"]),
+                    Task.priority.in_(["high", "urgent"]),
+                )
+            )
+        )
+
+        high_risk_case_count = self._safe_int(
+            db.session.scalar(
+                select(func.count(ProgramCase.id)).where(
+                    ProgramCase.organization_id == organization_id,
+                    ProgramCase.status.in_(["open", "in_progress", "on_hold"]),
+                    ProgramCase.risk_level.in_(["high", "critical"]),
+                )
+            )
+        )
+
+        assigned_task_rows: list[dict[str, Any]] = []
+        assigned_open_count = 0
+        assigned_overdue_count = 0
+        if actor_user_id is not None:
+            assigned_open_count = self._safe_int(
+                db.session.scalar(
+                    select(func.count(Task.id)).where(
+                        Task.organization_id == organization_id,
+                        Task.assigned_to_id == int(actor_user_id),
+                        Task.status.in_(["open", "in_progress"]),
+                    )
+                )
+            )
+            assigned_overdue_count = self._safe_int(
+                db.session.scalar(
+                    select(func.count(Task.id)).where(
+                        Task.organization_id == organization_id,
+                        Task.assigned_to_id == int(actor_user_id),
+                        Task.status.in_(["open", "in_progress"]),
+                        Task.due_date.is_not(None),
+                        Task.due_date < now,
+                    )
+                )
+            )
+            task_rows = db.session.execute(
+                select(
+                    Task.id,
+                    Task.title,
+                    Task.priority,
+                    Task.status,
+                    Task.due_date,
+                    Donor.id.label("donor_id"),
+                    Donor.name.label("donor_name"),
+                )
+                .outerjoin(Donor, Donor.id == Task.donor_id)
+                .where(
+                    Task.organization_id == organization_id,
+                    Task.assigned_to_id == int(actor_user_id),
+                    Task.status.in_(["open", "in_progress"]),
+                )
+                .order_by(
+                    Task.due_date.asc().nulls_last(),
+                    Task.priority.desc(),
+                )
+                .limit(12)
+            ).all()
+            assigned_task_rows = [
+                {
+                    "task_id": self._safe_int(row.id),
+                    "title": str(row.title or ""),
+                    "priority": str(row.priority or "medium"),
+                    "status": str(row.status or "open"),
+                    "due_date": row.due_date.isoformat() if row.due_date else None,
+                    "donor_id": self._safe_int(row.donor_id) if row.donor_id is not None else None,
+                    "donor_name": str(row.donor_name or "") or None,
+                }
+                for row in task_rows
+            ]
+
+        donor_lifecycle = cast(dict[str, Any], summary.get("donor_lifecycle") or {})
+        forecast = cast(dict[str, Any], summary.get("forecast") or {})
+        budget_variance = cast(dict[str, Any], summary.get("budget_variance") or {})
+        period_focus = cast(dict[str, Any], summary.get("period_focus") or {})
+        campaign_attribution = cast(dict[str, Any], summary.get("campaign_attribution") or {})
+        alerts = cast(list[dict[str, Any]], summary.get("alerts") or [])
+
+        next_best_actions: list[dict[str, str]] = []
+        if self._safe_float(period_focus.get("net")) < 0:
+            next_best_actions.append({
+                "priority": "high",
+                "action": "Stabilize cashflow this week",
+                "rationale": "Current period net is negative; pause discretionary spend and accelerate donor asks.",
+            })
+        if self._safe_int(donor_lifecycle.get("lapsed_donors")) > 0:
+            next_best_actions.append({
+                "priority": "high",
+                "action": "Run a lapsed donor reactivation sprint",
+                "rationale": f"{self._safe_int(donor_lifecycle.get('lapsed_donors'))} donors lapsed in the current comparison window.",
+            })
+        if high_priority_tasks_count > 0:
+            next_best_actions.append({
+                "priority": "medium",
+                "action": "Clear high-priority follow-ups",
+                "rationale": f"{high_priority_tasks_count} high/urgent open tasks are pending.",
+            })
+        if not next_best_actions:
+            next_best_actions.append({
+                "priority": "medium",
+                "action": "Maintain current operating cadence",
+                "rationale": "No immediate risk trigger detected in finance, delivery, or donor engagement.",
+            })
+
+        common_payload = {
+            "role": normalized_role,
+            "profile": self._role_profile(normalized_role),
+            "selected_period": str(summary.get("selected_period") or "30d"),
+            "selected_period_label": str(summary.get("selected_period_label") or "Last 30 Days"),
+            "generated_at": now.isoformat(timespec="seconds"),
+            "risk_alerts": alerts,
+            "operational_queues": {
+                "organization_open_tasks": open_tasks_count,
+                "organization_overdue_tasks": overdue_tasks_count,
+                "high_priority_tasks": high_priority_tasks_count,
+                "high_risk_cases": high_risk_case_count,
+            },
+            "portfolio_highlights": {
+                "top_donors": top_donors,
+                "top_campaigns": cast(list[dict[str, Any]], campaign_attribution.get("top_campaigns") or []),
+                "over_budget_projects": self._safe_int(budget_variance.get("over_budget_projects")),
+            },
+            "next_best_actions": next_best_actions,
+        }
+
+        if normalized_role == "admin":
+            scorecard = [
+                {
+                    "id": "period_revenue",
+                    "label": "Period Revenue",
+                    "value": round(self._safe_float(period_focus.get("donations")), 2),
+                    "unit": "currency",
+                    "trend_pct": period_focus.get("donations_delta_pct"),
+                },
+                {
+                    "id": "period_net",
+                    "label": "Period Net",
+                    "value": round(self._safe_float(period_focus.get("net")), 2),
+                    "unit": "currency",
+                    "trend_pct": period_focus.get("net_delta_pct"),
+                },
+                {
+                    "id": "retention_pct",
+                    "label": "Donor Retention",
+                    "value": round(self._safe_float(donor_lifecycle.get("retention_pct")), 1),
+                    "unit": "percent",
+                },
+                {
+                    "id": "projected_month_net",
+                    "label": "Projected Month-End Net",
+                    "value": round(self._safe_float(forecast.get("projected_month_net")), 2),
+                    "unit": "currency",
+                },
+            ]
+            return {
+                **common_payload,
+                "scorecard": scorecard,
+                "focus_areas": [
+                    {
+                        "area": "Financial trajectory",
+                        "detail": "Projection and period-net deltas determine runway confidence.",
+                    },
+                    {
+                        "area": "Portfolio risk",
+                        "detail": "Over-budget projects and high-risk cases require leadership escalation.",
+                    },
+                ],
+                "drilldowns": {
+                    "forecast": forecast,
+                    "budget_variance": budget_variance,
+                    "donor_lifecycle": donor_lifecycle,
+                },
+            }
+
+        if normalized_role == "staff":
+            period_revenue = self._safe_float(period_focus.get("donations"))
+            top_donor_revenue = round(sum(self._safe_float(item.get("raised_amount")) for item in top_donors[:5]), 2)
+            scorecard = [
+                {
+                    "id": "portfolio_revenue",
+                    "label": "Portfolio Revenue",
+                    "value": top_donor_revenue,
+                    "unit": "currency",
+                },
+                {
+                    "id": "period_revenue",
+                    "label": "Total Period Revenue",
+                    "value": round(period_revenue, 2),
+                    "unit": "currency",
+                    "trend_pct": period_focus.get("donations_delta_pct"),
+                },
+                {
+                    "id": "assigned_open_tasks",
+                    "label": "My Open Moves",
+                    "value": assigned_open_count,
+                    "unit": "count",
+                },
+                {
+                    "id": "assigned_overdue_tasks",
+                    "label": "My Overdue Moves",
+                    "value": assigned_overdue_count,
+                    "unit": "count",
+                },
+            ]
+            return {
+                **common_payload,
+                "scorecard": scorecard,
+                "focus_areas": [
+                    {
+                        "area": "Top donor cultivation",
+                        "detail": "Prioritize donors with highest period contribution and stale follow-up windows.",
+                    },
+                    {
+                        "area": "Task execution",
+                        "detail": "Close overdue and high-priority stewardship actions first.",
+                    },
+                ],
+                "operational_queues": {
+                    **cast(dict[str, Any], common_payload["operational_queues"]),
+                    "my_open_tasks": assigned_open_count,
+                    "my_overdue_tasks": assigned_overdue_count,
+                    "my_task_queue": assigned_task_rows,
+                },
+                "drilldowns": {
+                    "top_donors": top_donors,
+                    "my_task_queue": assigned_task_rows,
+                },
+            }
+
+        scorecard = [
+            {
+                "id": "period_revenue",
+                "label": "Period Revenue",
+                "value": round(self._safe_float(period_focus.get("donations")), 2),
+                "unit": "currency",
+                "trend_pct": period_focus.get("donations_delta_pct"),
+            },
+            {
+                "id": "open_tasks",
+                "label": "Open Tasks",
+                "value": open_tasks_count,
+                "unit": "count",
+            },
+            {
+                "id": "high_risk_cases",
+                "label": "High Risk Cases",
+                "value": high_risk_case_count,
+                "unit": "count",
+            },
+            {
+                "id": "data_quality_missing_dates",
+                "label": "Missing Donation Dates",
+                "value": self._safe_int(cast(dict[str, Any], summary.get("data_quality") or {}).get("missing_donation_dates")),
+                "unit": "count",
+            },
+        ]
+        return {
+            **common_payload,
+            "scorecard": scorecard,
+            "focus_areas": [
+                {
+                    "area": "Operational health",
+                    "detail": "Track open workload, overdue tasks, and case risk trends.",
+                },
+                {
+                    "area": "Fundraising pulse",
+                    "detail": "Monitor campaign contribution share and donor activity freshness.",
+                },
+            ],
+            "drilldowns": {
+                "campaign_attribution": campaign_attribution,
+                "top_donors": top_donors,
+            },
+        }
+
+    def financial_guardrails_intelligence(
+        self,
+        organization_id: int,
+        *,
+        role: str,
+        actor_user_id: int | None = None,
+        period: str = "30d",
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+    ) -> dict[str, Any]:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        normalized_role = self._normalize_intelligence_role(role)
+        summary = self.organization_dashboard_summary(
+            organization_id,
+            recent_donations_limit=15,
+            period=period,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        period_focus = cast(dict[str, Any], summary.get("period_focus") or {})
+        forecast = cast(dict[str, Any], summary.get("forecast") or {})
+        budget_variance = cast(dict[str, Any], summary.get("budget_variance") or {})
+        donor_lifecycle = cast(dict[str, Any], summary.get("donor_lifecycle") or {})
+
+        period_net = self._safe_float(period_focus.get("net"))
+        projected_month_net = self._safe_float(forecast.get("projected_month_net"))
+        over_budget_projects = self._safe_int(budget_variance.get("over_budget_projects"))
+        lapsed_donors = self._safe_int(donor_lifecycle.get("lapsed_donors"))
+
+        grant_watchlist: list[dict[str, Any]] = []
+        unreconciled_transactions_over_30d = 0
+        try:
+            from ngo_homesuite.grants.models import Grant, GrantBudgetLine, GrantBudgetTransaction
+
+            budget_line_rows = db.session.execute(
+                select(
+                    GrantBudgetLine.id,
+                    GrantBudgetLine.grant_id,
+                    Grant.title,
+                    GrantBudgetLine.category,
+                    GrantBudgetLine.allocated_amount,
+                    GrantBudgetLine.committed_amount,
+                    GrantBudgetLine.reconciled_amount,
+                    GrantBudgetLine.status,
+                )
+                .join(Grant, Grant.id == GrantBudgetLine.grant_id)
+                .where(
+                    GrantBudgetLine.organization_id == organization_id,
+                    Grant.organization_id == organization_id,
+                )
+            ).all()
+
+            for row in budget_line_rows:
+                allocated = self._safe_float(row.allocated_amount)
+                committed = self._safe_float(row.committed_amount)
+                reconciled = self._safe_float(row.reconciled_amount)
+                consumed = max(committed, reconciled)
+                utilization_pct = round((consumed / allocated) * 100.0, 1) if allocated > 0 else 0.0
+                status = "ok"
+                if allocated > 0 and consumed > allocated:
+                    status = "critical"
+                elif utilization_pct >= 90.0:
+                    status = "warning"
+
+                if status != "ok":
+                    grant_watchlist.append(
+                        {
+                            "budget_line_id": self._safe_int(row.id),
+                            "grant_id": self._safe_int(row.grant_id),
+                            "grant_title": str(row.title or f"Grant #{self._safe_int(row.grant_id)}"),
+                            "category": str(row.category or "uncategorized"),
+                            "allocated_amount": round(allocated, 2),
+                            "consumed_amount": round(consumed, 2),
+                            "remaining_amount": round(allocated - consumed, 2),
+                            "utilization_pct": utilization_pct,
+                            "status": status,
+                            "line_status": str(row.status or "pending"),
+                        }
+                    )
+
+            cutoff = now - timedelta(days=30)
+            unreconciled_transactions_over_30d = self._safe_int(
+                db.session.scalar(
+                    select(func.count(GrantBudgetTransaction.id)).where(
+                        GrantBudgetTransaction.organization_id == organization_id,
+                        GrantBudgetTransaction.reconciled_at.is_(None),
+                        GrantBudgetTransaction.created_at < cutoff,
+                    )
+                )
+            )
+        except Exception:
+            grant_watchlist = []
+            unreconciled_transactions_over_30d = 0
+
+        grant_watchlist.sort(
+            key=lambda item: (
+                item.get("status") != "critical",
+                item.get("status") != "warning",
+                -self._safe_float(item.get("utilization_pct")),
+            )
+        )
+
+        guardrails: list[dict[str, Any]] = []
+
+        cash_status = "ok"
+        if period_net < 0:
+            cash_status = "critical"
+        elif period_net < (0.15 * max(self._safe_float(period_focus.get("donations")), 1.0)):
+            cash_status = "warning"
+        guardrails.append(
+            {
+                "id": "period_net_cashflow",
+                "label": "Period Net Cashflow",
+                "status": cash_status,
+                "observed": round(period_net, 2),
+                "threshold": "must stay >= 0",
+                "detail": "Current period inflow minus outflow should remain non-negative for operating stability.",
+            }
+        )
+
+        forecast_status = "ok"
+        if projected_month_net < 0:
+            forecast_status = "critical"
+        elif projected_month_net < (0.10 * max(self._safe_float(forecast.get("projected_month_donations")), 1.0)):
+            forecast_status = "warning"
+        guardrails.append(
+            {
+                "id": "projected_month_net",
+                "label": "Projected Month-End Net",
+                "status": forecast_status,
+                "observed": round(projected_month_net, 2),
+                "threshold": "projected net should stay >= 0",
+                "detail": "Run-rate projection highlights end-of-month runway pressure before it materializes.",
+            }
+        )
+
+        budget_status = "ok"
+        if over_budget_projects > 0:
+            budget_status = "critical" if over_budget_projects >= 3 else "warning"
+        guardrails.append(
+            {
+                "id": "project_budget_control",
+                "label": "Project Budget Control",
+                "status": budget_status,
+                "observed": over_budget_projects,
+                "threshold": "0 over-budget projects",
+                "detail": "Projects exceeding allocated budget indicate immediate spend-control intervention needs.",
+            }
+        )
+
+        grant_status = "ok"
+        if unreconciled_transactions_over_30d > 0:
+            grant_status = "critical" if unreconciled_transactions_over_30d >= 10 else "warning"
+        guardrails.append(
+            {
+                "id": "grant_reconciliation_hygiene",
+                "label": "Grant Reconciliation Hygiene",
+                "status": grant_status,
+                "observed": unreconciled_transactions_over_30d,
+                "threshold": "no unreconciled grant transactions older than 30 days",
+                "detail": "Aging unreconciled grant transactions increase audit and restricted-fund compliance risk.",
+            }
+        )
+
+        donor_risk_status = "ok"
+        if lapsed_donors > 0:
+            donor_risk_status = "warning"
+        guardrails.append(
+            {
+                "id": "revenue_retention_risk",
+                "label": "Revenue Retention Risk",
+                "status": donor_risk_status,
+                "observed": lapsed_donors,
+                "threshold": "minimize lapsed donors in comparison window",
+                "detail": "Lapsed donors are a leading indicator of near-term revenue compression.",
+            }
+        )
+
+        risk_score = 0
+        for item in guardrails:
+            status = str(item.get("status") or "ok")
+            if status == "critical":
+                risk_score += 25
+            elif status == "warning":
+                risk_score += 12
+        risk_score = min(100, risk_score)
+        overall_status = "ok"
+        if risk_score >= 60:
+            overall_status = "critical"
+        elif risk_score >= 25:
+            overall_status = "warning"
+
+        next_best_actions: list[dict[str, str]] = []
+        if period_net < 0 or projected_month_net < 0:
+            next_best_actions.append(
+                {
+                    "priority": "high",
+                    "action": "Execute 14-day cash stabilization plan",
+                    "rationale": "Negative current or projected net requires immediate spend triage and accelerated fundraising conversion.",
+                }
+            )
+        if over_budget_projects > 0:
+            next_best_actions.append(
+                {
+                    "priority": "high",
+                    "action": "Freeze discretionary spend on over-budget projects",
+                    "rationale": f"{over_budget_projects} active projects are over budget and need manager-approved recovery plans.",
+                }
+            )
+        if unreconciled_transactions_over_30d > 0:
+            next_best_actions.append(
+                {
+                    "priority": "medium",
+                    "action": "Clear aged grant reconciliation backlog",
+                    "rationale": f"{unreconciled_transactions_over_30d} grant transactions are unreconciled beyond 30 days.",
+                }
+            )
+        if lapsed_donors > 0:
+            next_best_actions.append(
+                {
+                    "priority": "medium",
+                    "action": "Launch targeted reactivation asks",
+                    "rationale": f"{lapsed_donors} donors lapsed in the selected comparison window.",
+                }
+            )
+        if not next_best_actions:
+            next_best_actions.append(
+                {
+                    "priority": "medium",
+                    "action": "Maintain guardrail monitoring cadence",
+                    "rationale": "All monitored financial guardrails are currently inside expected thresholds.",
+                }
+            )
+
+        return {
+            "role": normalized_role,
+            "profile": self._role_profile(normalized_role),
+            "selected_period": str(summary.get("selected_period") or period),
+            "selected_period_label": str(summary.get("selected_period_label") or "Last 30 Days"),
+            "generated_at": now.isoformat(timespec="seconds"),
+            "overall_status": overall_status,
+            "risk_score": risk_score,
+            "financial_posture": {
+                "period_donations": round(self._safe_float(period_focus.get("donations")), 2),
+                "period_expenses": round(self._safe_float(period_focus.get("expenses")), 2),
+                "period_net": round(period_net, 2),
+                "projected_month_net": round(projected_month_net, 2),
+                "over_budget_projects": over_budget_projects,
+                "unreconciled_grant_transactions_over_30d": unreconciled_transactions_over_30d,
+            },
+            "guardrails": guardrails,
+            "watchlists": {
+                "project_budget_top": cast(list[dict[str, Any]], budget_variance.get("top_projects") or []),
+                "grant_budget_lines": grant_watchlist[:10],
+            },
+            "next_best_actions": next_best_actions,
         }
 
     def donor_profile_summary(self, organization_id: int, donor_id: int, *, recent_limit: int = 10) -> dict[str, Any]:

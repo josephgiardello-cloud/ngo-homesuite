@@ -1,6 +1,6 @@
 # Production Checklist
 
-Last updated: 2026-05-31
+Last updated: 2026-06-02
 
 Use this checklist before production deployment.
 
@@ -131,6 +131,28 @@ Security-hardening behavior validated in this lane:
 - volunteer training-course deletion route now requires step-up auth and passes focused lifecycle coverage (`ngo_homesuite/web/test_volunteer_accounting.py::TestTrainingCourses::test_course_full_lifecycle`).
 - appointment cancellation route now requires step-up auth and passes focused lifecycle coverage (`ngo_homesuite/web/test_roadmap_tranche4.py::TestAppointmentRoutes::test_appointment_full_lifecycle`).
 - v2 campaign email segment deletion now requires step-up auth and passes focused route coverage (`ngo_homesuite/web/test_campaign_routes.py::test_campaign_email_segment_delete_endpoint_removes_segment`).
+
+## Latest Validation Evidence (2026-06-02)
+
+Targeted maturity-contract validation executed:
+
+```bash
+.venv\Scripts\python.exe -m pytest ngo_homesuite/web/test_v2_route_contracts.py -k "donor_journey_and_soft_credit_contract or role_based_dashboard_intelligence_contract or financial_guardrails_intelligence_contract or donor_journey_automation_run_and_audit_contract or integrated_form_ecosystem_ingest_dedupe_and_tenant_isolation_contract" -v
+```
+
+Outcome:
+
+- `5 passed`
+- `0 skipped`
+- `0 failed`
+
+Coverage of this lane includes:
+
+- Unified donor journey timeline and relational soft-credit contract behavior.
+- Role-aware dashboard intelligence with secure role-preview restrictions.
+- Financial guardrails intelligence with period/date validation and role constraints.
+- Donor-journey automation execution plus durable audit retrieval.
+- Integrated form ecosystem ingestion: internal ingest, idempotent dedupe replay, tenant isolation, and public token-auth ingest path.
 
 ## Explicit Production-Release Blockers
 
