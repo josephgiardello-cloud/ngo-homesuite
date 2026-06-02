@@ -434,7 +434,7 @@ def run_donor_journey_automations(
 
     # Trigger 1: First gift follow-up (donor gave first gift recently).
     first_cutoff = now - timedelta(days=max(1, int(first_gift_window_days)))
-    first_rows = db.session.execute(
+    first_rows_stmt = (
         select(
             Donation.donor_id,
             func.count(Donation.id).label("gift_count"),
@@ -447,7 +447,8 @@ def run_donor_journey_automations(
         )
         .group_by(Donation.donor_id)
         .having(func.count(Donation.id) == 1)
-    ).all()
+    )
+    first_rows = db.session.execute(first_rows_stmt).all()
     for row in first_rows:
         donor_id = int(row.donor_id or 0)
         if donor_id <= 0:
@@ -540,7 +541,7 @@ def run_donor_journey_automations(
 
     # Trigger 2: Lapsing donor reactivation (last gift stale and at least two total gifts).
     lapsing_cutoff = now - timedelta(days=max(30, int(lapsing_days)))
-    lapsing_rows = db.session.execute(
+    lapsing_rows_stmt = (
         select(
             Donation.donor_id,
             func.count(Donation.id).label("gift_count"),
@@ -553,7 +554,8 @@ def run_donor_journey_automations(
         )
         .group_by(Donation.donor_id)
         .having(func.count(Donation.id) >= 2)
-    ).all()
+    )
+    lapsing_rows = db.session.execute(lapsing_rows_stmt).all()
     for row in lapsing_rows:
         donor_id = int(row.donor_id or 0)
         if donor_id <= 0:
@@ -622,7 +624,7 @@ def run_donor_journey_automations(
         actions.append({"trigger": trigger, "donor_id": donor_id, "task_id": int(task.id), "email_sent": bool(sent)})
 
     # Trigger 3: Recurring failure recovery (failed/struggling recurring plan).
-    recurring_rows = db.session.execute(
+    recurring_rows_stmt = (
         select(RecurringDonationPlan)
         .where(
             RecurringDonationPlan.organization_id == organization_id,
@@ -631,7 +633,8 @@ def run_donor_journey_automations(
             RecurringDonationPlan.fail_count >= max(1, int(recurring_fail_threshold)),
         )
         .order_by(RecurringDonationPlan.fail_count.desc(), RecurringDonationPlan.updated_at.desc())
-    ).scalars().all()
+    )
+    recurring_rows = db.session.execute(recurring_rows_stmt).scalars().all()
     for plan in recurring_rows:
         donor_id = int(plan.donor_id or 0)
         if donor_id <= 0:

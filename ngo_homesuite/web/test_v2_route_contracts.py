@@ -10,6 +10,7 @@ from ngo_homesuite.grants.models import GrantBudgetLine, GrantBudgetTransaction
 from ngo_homesuite.grants.services import lifecycle as grant_service
 from ngo_homesuite.grants.services.preaward import PreawardService
 from ngo_homesuite.models.core import (
+    Beneficiary,
     Donation,
     Donor,
     Expense,
@@ -20,7 +21,9 @@ from ngo_homesuite.models.core import (
     Project,
     RecurringDonationPlan,
     Task,
+    TaskDependency,
     User,
+    Volunteer,
     db,
 )
 
@@ -434,6 +437,373 @@ def test_v2_grants_external_search_profiles_alerts_and_ai_context_contract(clien
     alerts_payload = alerts_resp.get_json()
     assert alerts_payload["count"] == 1
     assert alerts_payload["results"][0]["external_source"] == "grants_gov"
+
+
+def test_v2_dedupe_workbench_surfaces_cross_entity_candidates_contract(client, app):
+    _login_admin(client)
+
+    with app.app_context():
+        admin_user = db.session.scalar(select(User).where(User.username == "admin").limit(1))
+        assert admin_user is not None
+        org_id = int(admin_user.organization_id)
+
+        donor = Donor(
+            organization_id=org_id,
+            name="Alex Duplicate",
+            email="alex.duplicate@example.org",
+            phone="+1 (555) 010-9000",
+            donor_type="individual",
+        )
+        beneficiary = Beneficiary(
+            organization_id=org_id,
+            first_name="Alex",
+            last_name="Duplicate",
+            email="alex.duplicate@example.org",
+            phone="5550109000",
+            status="active",
+        )
+        volunteer = Volunteer(
+            organization_id=org_id,
+            name="Alex Duplicate",
+            email="alex.duplicate@example.org",
+            phone="555-010-9000",
+            status="active",
+        )
+        db.session.add_all([donor, beneficiary, volunteer])
+        db.session.commit()
+
+    rv = client.get("/api/v2/dedupe/workbench?entity_scope=all&limit=50")
+    assert rv.status_code == 200
+    payload = rv.get_json()
+    assert isinstance(payload, dict)
+    assert int(payload.get("count") or 0) >= 1
+
+    candidates = payload.get("candidates") or []
+    assert isinstance(candidates, list)
+    match = next((item for item in candidates if str(item.get("reason") or "") == "matching_email"), None)
+    assert match is not None
+    records = match.get("records") or []
+    entity_types = {str(item.get("entity_type") or "") for item in records}
+    assert "donor" in entity_types
+    assert "beneficiary" in entity_types
+    assert "volunteer" in entity_types
+
+
+def test_v2_dedupe_workbench_merge_contract_relinks_and_removes_duplicate(client, app):
+    _login_admin(client)
+
+    with app.app_context():
+        admin_user = db.session.scalar(select(User).where(User.username == "admin").limit(1))
+        assert admin_user is not None
+        org_id = int(admin_user.organization_id)
+
+        primary = Donor(
+            organization_id=org_id,
+            name="Merge Primary",
+            email="merge.primary.contract@example.org",
+            donor_type="individual",
+        )
+        duplicate = Donor(
+            organization_id=org_id,
+            name="Merge Duplicate",
+            email="merge.duplicate.contract@example.org",
+            donor_type="individual",
+        )
+        db.session.add_all([primary, duplicate])
+        db.session.flush()
+
+        donation = Donation(
+            organization_id=org_id,
+            donor_id=int(duplicate.id),
+            donor_name=str(duplicate.name),
+            donor_email=str(duplicate.email),
+            donor_phone=str(duplicate.phone or ""),
+            amount=125.0,
+            currency="USD",
+            donation_date=date.today(),
+            status="received",
+        )
+        db.session.add(donation)
+        db.session.commit()
+
+        primary_id = int(primary.id)
+        duplicate_id = int(duplicate.id)
+        donation_id = int(donation.id)
+
+    dry_run = client.post(
+        "/api/v2/dedupe/workbench/merge",
+        json={
+            "primary_donor_id": primary_id,
+            "duplicate_donor_id": duplicate_id,
+            "dry_run": True,
+        },
+    )
+    assert dry_run.status_code == 200
+    dry_run_payload = dry_run.get_json()
+    assert dry_run_payload["dry_run"] is True
+    assert int(dry_run_payload["impact"]["duplicate_donation_count"]) == 1
+
+    merge_rv = client.post(
+        "/api/v2/dedupe/workbench/merge",
+        json={
+            "primary_donor_id": primary_id,
+            "duplicate_donor_id": duplicate_id,
+        },
+    )
+    assert merge_rv.status_code == 200
+    merge_payload = merge_rv.get_json()
+    assert merge_payload["merged"] is True
+    assert int(merge_payload["primary_donor_id"]) == primary_id
+    assert int(merge_payload["removed_donor_id"]) == duplicate_id
+    assert int(merge_payload["relinked"]["donations"]) == 1
+
+    with app.app_context():
+        assert db.session.get(Donor, duplicate_id) is None
+        updated = db.session.get(Donation, donation_id)
+        assert updated is not None
+        assert int(updated.donor_id) == primary_id
+
+
+def test_v2_project_board_milestones_and_dependencies_contract(client, app):
+    _login_admin(client)
+
+    with app.app_context():
+        admin_user = db.session.scalar(select(User).where(User.username == "admin").limit(1))
+        assert admin_user is not None
+        org_id = int(admin_user.organization_id)
+
+        project = Project(
+            organization_id=org_id,
+            name="Wave C Board Project",
+            status="active",
+            budget=0.0,
+            spent=0.0,
+            currency="USD",
+        )
+        db.session.add(project)
+        db.session.flush()
+
+        prereq = Task(
+            organization_id=org_id,
+            project_id=int(project.id),
+            title="Define scope",
+            status="open",
+            priority="high",
+            task_type="general",
+        )
+        dependent = Task(
+            organization_id=org_id,
+            project_id=int(project.id),
+            title="Launch pilot",
+            status="open",
+            priority="medium",
+            task_type="general",
+        )
+        db.session.add_all([prereq, dependent])
+        db.session.commit()
+
+        project_id = int(project.id)
+        prereq_id = int(prereq.id)
+        dependent_id = int(dependent.id)
+
+    add_dep = client.post(
+        f"/api/v2/tasks/{dependent_id}/dependencies",
+        json={"depends_on_task_id": prereq_id, "dependency_type": "blocks"},
+    )
+    assert add_dep.status_code == 201
+    dep_payload = add_dep.get_json()
+    assert int(dep_payload["task_id"]) == dependent_id
+    assert int(dep_payload["depends_on_task_id"]) == prereq_id
+
+    board_before = client.get(f"/api/v2/projects/{project_id}/board")
+    assert board_before.status_code == 200
+    board_before_payload = board_before.get_json()
+    assert int(board_before_payload["summary"]["total_tasks"]) == 2
+    assert int(board_before_payload["summary"]["blocked_tasks"]) == 1
+    dep_task_before = next(item for item in board_before_payload["tasks"] if int(item["id"]) == dependent_id)
+    assert dep_task_before["blocked"] is True
+
+    create_milestone = client.post(
+        f"/api/v2/projects/{project_id}/milestones",
+        json={
+            "title": "Pilot ready",
+            "description": "Must complete scope and comms before launch",
+            "due_date": "2099-07-01T00:00:00",
+            "status": "planned",
+        },
+    )
+    assert create_milestone.status_code == 201
+    milestone_payload = create_milestone.get_json()
+    milestone_id = int(milestone_payload["id"])
+
+    update_milestone = client.patch(
+        f"/api/v2/projects/{project_id}/milestones/{milestone_id}",
+        json={"status": "completed"},
+    )
+    assert update_milestone.status_code == 200
+    assert update_milestone.get_json()["status"] == "completed"
+
+    milestone_list = client.get(f"/api/v2/projects/{project_id}/milestones")
+    assert milestone_list.status_code == 200
+    milestone_list_payload = milestone_list.get_json()
+    assert int(milestone_list_payload["count"]) >= 1
+    assert any(int(item["id"]) == milestone_id and item["status"] == "completed" for item in milestone_list_payload["milestones"])
+
+    with app.app_context():
+        prereq_task = db.session.get(Task, prereq_id)
+        assert prereq_task is not None
+        prereq_task.status = "done"
+        db.session.commit()
+
+    board_after = client.get(f"/api/v2/projects/{project_id}/board")
+    assert board_after.status_code == 200
+    board_after_payload = board_after.get_json()
+    assert int(board_after_payload["summary"]["blocked_tasks"]) == 0
+    dep_task_after = next(item for item in board_after_payload["tasks"] if int(item["id"]) == dependent_id)
+    assert dep_task_after["blocked"] is False
+
+    remove_dep = client.delete(f"/api/v2/tasks/{dependent_id}/dependencies/{prereq_id}")
+    assert remove_dep.status_code == 200
+    assert remove_dep.get_json()["removed"] is True
+
+    with app.app_context():
+        remaining = db.session.scalar(
+            select(TaskDependency).where(
+                TaskDependency.organization_id == org_id,
+                TaskDependency.task_id == dependent_id,
+                TaskDependency.depends_on_task_id == prereq_id,
+            ).limit(1)
+        )
+        assert remaining is None
+
+
+def test_v2_collaboration_channels_messages_and_presence_contract(client, app):
+    _login_admin(client)
+
+    with app.app_context():
+        admin_user = db.session.scalar(select(User).where(User.username == "admin").limit(1))
+        assert admin_user is not None
+        org_id = int(admin_user.organization_id)
+
+    _ensure_user(app, "collab_staff_peer", "collab_staff_peer@test.local", "staff", "CollabPeer123!", org_id)
+
+    with app.app_context():
+        peer = db.session.scalar(select(User).where(User.username == "collab_staff_peer").limit(1))
+        assert peer is not None
+        peer_id = int(peer.id)
+        admin_id = int(admin_user.id)
+
+    direct_create = client.post(
+        "/api/v2/collab/channels",
+        json={"channel_type": "direct", "participant_user_id": peer_id},
+    )
+    assert direct_create.status_code in {200, 201}
+    direct_payload = direct_create.get_json()
+    direct_channel = direct_payload["channel"]
+    direct_channel_id = int(direct_channel["id"])
+
+    direct_message = client.post(
+        f"/api/v2/collab/channels/{direct_channel_id}/messages",
+        json={"body": "Hello from Wave E contract"},
+    )
+    assert direct_message.status_code == 201
+    message_payload = direct_message.get_json()
+    assert int(message_payload["channel_id"]) == direct_channel_id
+    assert int(message_payload["sender_user_id"]) == admin_id
+
+    list_messages = client.get(f"/api/v2/collab/channels/{direct_channel_id}/messages")
+    assert list_messages.status_code == 200
+    list_messages_payload = list_messages.get_json()
+    assert int(list_messages_payload["count"]) >= 1
+    assert any(str(item.get("body") or "") == "Hello from Wave E contract" for item in list_messages_payload["messages"])
+
+    team_create = client.post(
+        "/api/v2/collab/channels",
+        json={"channel_type": "team", "name": "Ops War Room", "member_user_ids": [peer_id]},
+    )
+    assert team_create.status_code == 201
+    team_payload = team_create.get_json()
+    assert team_payload["created"] is True
+    team_channel_id = int(team_payload["channel"]["id"])
+
+    channels_list = client.get("/api/v2/collab/channels")
+    assert channels_list.status_code == 200
+    channels_payload = channels_list.get_json()
+    assert int(channels_payload["count"]) >= 1
+    channel_ids = {int(item["id"]) for item in channels_payload["channels"]}
+    assert direct_channel_id in channel_ids
+    assert team_channel_id in channel_ids
+
+    presence_upsert = client.post(
+        "/api/v2/collab/presence",
+        json={"status": "away", "status_message": "Reviewing grants"},
+    )
+    assert presence_upsert.status_code == 200
+    presence_payload = presence_upsert.get_json()
+    assert presence_payload["status"] == "away"
+    assert int(presence_payload["user_id"]) == admin_id
+
+    presence_list = client.get(f"/api/v2/collab/presence?user_ids={admin_id},{peer_id}")
+    assert presence_list.status_code == 200
+    presence_list_payload = presence_list.get_json()
+    assert int(presence_list_payload["count"]) >= 1
+    by_user = {int(item["user_id"]): item for item in presence_list_payload["items"]}
+    assert by_user[admin_id]["status"] == "away"
+    assert int(by_user[peer_id]["user_id"]) == peer_id
+
+
+def test_v2_collaboration_message_endpoints_block_cross_tenant_access(client, app):
+    with app.app_context():
+        org_a = Organization.query.filter_by(slug="collab-route-org-a").first()
+        if org_a is None:
+            org_a = Organization(name="Collab Route Org A", slug="collab-route-org-a", is_active=True)
+            db.session.add(org_a)
+            db.session.flush()
+
+        org_b = Organization.query.filter_by(slug="collab-route-org-b").first()
+        if org_b is None:
+            org_b = Organization(name="Collab Route Org B", slug="collab-route-org-b", is_active=True)
+            db.session.add(org_b)
+            db.session.flush()
+
+        org_a_id = int(org_a.id)
+        org_b_id = int(org_b.id)
+        db.session.commit()
+
+    _ensure_user(app, "collab_tenant_a", "collab_tenant_a@test.local", "staff", "CollabTenant123!", org_a_id)
+    _ensure_user(app, "collab_tenant_b", "collab_tenant_b@test.local", "staff", "CollabTenant123!", org_b_id)
+
+    _login_user(client, "collab_tenant_b", "CollabTenant123!")
+    created = client.post(
+        "/api/v2/collab/channels",
+        json={"channel_type": "team", "name": "Tenant B Private", "member_user_ids": []},
+    )
+    assert created.status_code == 201
+    channel_id = int(created.get_json()["channel"]["id"])
+
+    message = client.post(
+        f"/api/v2/collab/channels/{channel_id}/messages",
+        json={"body": "Tenant B only"},
+    )
+    assert message.status_code == 201
+
+    client.post("/auth/logout")
+    _login_user(client, "collab_tenant_a", "CollabTenant123!")
+
+    blocked_list = client.get(f"/api/v2/collab/channels/{channel_id}/messages")
+    assert blocked_list.status_code == 404
+    assert blocked_list.get_json() == {"error": "channel not found"}
+
+    blocked_post = client.post(
+        f"/api/v2/collab/channels/{channel_id}/messages",
+        json={"body": "Should fail"},
+    )
+    assert blocked_post.status_code == 404
+    assert blocked_post.get_json() == {"error": "channel not found"}
+
+    listed = client.get("/api/v2/collab/channels")
+    assert listed.status_code == 200
+    assert all(int(item["id"]) != channel_id for item in listed.get_json()["channels"])
 
 
 def test_v2_p2p_detail_endpoints_require_auth(client):

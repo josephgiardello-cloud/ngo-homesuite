@@ -20,6 +20,14 @@ def _setting(name: str, default: str | None = None) -> str | None:
     return os.getenv(name, default)
 
 
+def _is_test_mode() -> bool:
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return True
+    if has_app_context() and bool(current_app.config.get("TESTING", False)):
+        return True
+    return False
+
+
 def _render_message(template: str | None, context: dict[str, Any] | None) -> str:
     context = context or {}
     if template and has_app_context():
@@ -117,6 +125,10 @@ def email_connectivity_smoke(*, probe: bool = False) -> dict[str, Any]:
 
 def send_email(*, to: str, subject: str, template: str | None = None, context: dict[str, Any] | None = None) -> bool:
     """Send email via SendGrid when configured, otherwise SMTP fallback."""
+    if _is_test_mode():
+        # Tests should not depend on external mail providers or network availability.
+        return False
+
     to_email = (to or "").strip()
     if not to_email:
         return False
@@ -162,7 +174,7 @@ def send_email(*, to: str, subject: str, template: str | None = None, context: d
     msg.set_content(body)
 
     try:
-        with smtplib.SMTP(smtp_host, smtp_port) as server:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
             if use_tls:
                 server.starttls()
             if smtp_user and smtp_password:

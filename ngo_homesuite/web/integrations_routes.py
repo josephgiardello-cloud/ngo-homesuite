@@ -9,6 +9,11 @@ from flask_login import current_user, login_required
 from sqlalchemy import text
 
 from ngo_homesuite.services.calendar_sync_service import InMemoryCalendarProvider, sync_task_deadlines
+from ngo_homesuite.services.calendar_sync_service import (
+    InMemoryDavSyncProvider,
+    sync_donor_contacts_to_carddav,
+    sync_task_deadlines_to_caldav,
+)
 from ngo_homesuite.services.integration_ops_service import (
     get_background_job,
     list_background_jobs,
@@ -41,6 +46,14 @@ def _calendar_provider() -> InMemoryCalendarProvider:
     if provider is None:
         provider = InMemoryCalendarProvider()
         current_app.extensions["calendar_sync_provider"] = provider
+    return provider
+
+
+def _dav_provider() -> InMemoryDavSyncProvider:
+    provider = current_app.extensions.get("dav_sync_provider")
+    if provider is None:
+        provider = InMemoryDavSyncProvider()
+        current_app.extensions["dav_sync_provider"] = provider
     return provider
 
 
@@ -355,6 +368,95 @@ def calendar_sync_async_route():
         details={"organization_id": org_id, "job_id": job["job_id"]},
     )
     return jsonify({"ok": True, "organization_id": org_id, "job": job}), 202
+
+
+@integrations_bp.post("/calendar/caldav/sync")
+@login_required
+@roles_required("admin", "staff")
+def caldav_sync_route():
+    org_id = int(current_user.organization_id)
+    data = request.get_json(silent=True) or {}
+    dry_run = bool(data.get("dry_run", False))
+
+    if dry_run:
+        # Dry-run returns counts without mutating provider state.
+        task_count = db.session.execute(
+            text(
+                """
+                SELECT COUNT(1) AS count
+                FROM tasks
+                WHERE organization_id = :org_id
+                  AND status IN ('open', 'in_progress')
+                  AND due_date IS NOT NULL
+                """
+            ),
+            {"org_id": org_id},
+        ).scalar() or 0
+        result = {"synced": int(task_count), "skipped": 0, "dry_run": True}
+    else:
+        try:
+            result = sync_task_deadlines_to_caldav(org_id, _dav_provider())
+            result["dry_run"] = False
+        except Exception as exc:
+            record_integration_event(
+                current_app,
+                kind="caldav_sync",
+                status="error",
+                details={"organization_id": org_id, "error": str(exc)},
+            )
+            return jsonify({"error": "CalDAV sync failed."}), 500
+
+    record_integration_event(
+        current_app,
+        kind="caldav_sync",
+        status="ok",
+        details={"organization_id": org_id, **result},
+    )
+    return jsonify({"ok": True, "organization_id": org_id, **result}), 200
+
+
+@integrations_bp.post("/contacts/carddav/sync")
+@login_required
+@roles_required("admin", "staff")
+def carddav_sync_route():
+    org_id = int(current_user.organization_id)
+    data = request.get_json(silent=True) or {}
+    dry_run = bool(data.get("dry_run", False))
+
+    if dry_run:
+        donor_count = db.session.execute(
+            text(
+                """
+                SELECT COUNT(1) AS count
+                FROM donors
+                WHERE organization_id = :org_id
+                  AND email IS NOT NULL
+                  AND TRIM(email) != ''
+                """
+            ),
+            {"org_id": org_id},
+        ).scalar() or 0
+        result = {"synced": int(donor_count), "skipped": 0, "dry_run": True}
+    else:
+        try:
+            result = sync_donor_contacts_to_carddav(org_id, _dav_provider())
+            result["dry_run"] = False
+        except Exception as exc:
+            record_integration_event(
+                current_app,
+                kind="carddav_sync",
+                status="error",
+                details={"organization_id": org_id, "error": str(exc)},
+            )
+            return jsonify({"error": "CardDAV sync failed."}), 500
+
+    record_integration_event(
+        current_app,
+        kind="carddav_sync",
+        status="ok",
+        details={"organization_id": org_id, **result},
+    )
+    return jsonify({"ok": True, "organization_id": org_id, **result}), 200
 
 
 @integrations_bp.get("/ops/status")

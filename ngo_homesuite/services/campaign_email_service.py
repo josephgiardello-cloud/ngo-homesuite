@@ -22,6 +22,7 @@ from sqlalchemy import case, func, select, text
 from ngo_homesuite.policy import enforce_error_contract
 from ngo_homesuite.models.core import (
     Campaign,
+    CampaignCommunicationPreference,
     CampaignEmailBatch,
     CampaignEmailDelivery,
     CampaignEmailOptOut,
@@ -36,6 +37,7 @@ from ngo_homesuite.utils.email import email_connectivity_smoke
 
 logger = logging.getLogger(__name__)
 _EMAIL_ADDRESS_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_VALID_DIGEST_FREQUENCIES = {"immediate", "daily", "weekly", "monthly"}
 
 
 def _utcnow() -> datetime:
@@ -244,6 +246,19 @@ def _unsub_signature(*, email: str, donor_id: int, campaign_id: int, issued_at: 
     return hmac.new(_tracking_secret(), payload.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
+def _preference_signature(*, email: str, organization_id: int, donor_id: int, issued_at: int) -> str:
+    payload = "|".join(
+        [
+            "pref",
+            str(email).lower(),
+            str(int(organization_id)),
+            str(int(donor_id)),
+            str(int(issued_at)),
+        ]
+    )
+    return hmac.new(_tracking_secret(), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
 def verify_unsub_signature(
     *,
     email: str,
@@ -266,6 +281,158 @@ def verify_unsub_signature(
         issued_at=issued_at,
     )
     return hmac.compare_digest(str(signature or ""), expected)
+
+
+def verify_preference_signature(
+    *,
+    email: str,
+    organization_id: int,
+    donor_id: int,
+    issued_at: int,
+    signature: str,
+    max_age_seconds: int = 2592000,
+) -> bool:
+    now_ts = int(time.time())
+    if issued_at <= 0 or issued_at > now_ts:
+        return False
+    if now_ts - int(issued_at) > int(max(1, max_age_seconds)):
+        return False
+    expected = _preference_signature(
+        email=email,
+        organization_id=organization_id,
+        donor_id=donor_id,
+        issued_at=issued_at,
+    )
+    return hmac.compare_digest(str(signature or ""), expected)
+
+
+def preference_center_url(*, email: str, organization_id: int, donor_id: int) -> str:
+    base = _tracking_base_url()
+    issued_at = int(time.time())
+    normalized_email = str(email or "").strip().lower()
+    signature = _preference_signature(
+        email=normalized_email,
+        organization_id=int(organization_id),
+        donor_id=int(donor_id),
+        issued_at=issued_at,
+    )
+    return (
+        f"{base}/api/v2/campaigns/email/preferences"
+        f"?email={quote_plus(normalized_email)}"
+        f"&organization_id={int(organization_id)}"
+        f"&donor_id={int(donor_id)}"
+        f"&ts={issued_at}&sig={signature}"
+    )
+
+
+def get_campaign_communication_preference(
+    organization_id: int,
+    *,
+    email: str,
+    donor_id: int | None = None,
+) -> dict[str, Any]:
+    normalized_email = _normalized_email(email)
+    if not _looks_like_email(normalized_email):
+        raise ValueError("valid email is required")
+
+    preference = db.session.scalars(
+        select(CampaignCommunicationPreference).where(
+            CampaignCommunicationPreference.organization_id == int(organization_id),
+            CampaignCommunicationPreference.email == normalized_email,
+        ).limit(1)
+    ).first()
+
+    if preference is None:
+        return {
+            "organization_id": int(organization_id),
+            "donor_id": int(donor_id) if donor_id else None,
+            "email": normalized_email,
+            "newsletter_opt_in": True,
+            "campaign_opt_in": True,
+            "events_opt_in": True,
+            "volunteer_opt_in": True,
+            "digest_frequency": "weekly",
+            "source": "default",
+            "updated_at": None,
+        }
+
+    return {
+        "organization_id": int(preference.organization_id),
+        "donor_id": int(preference.donor_id) if preference.donor_id else None,
+        "email": str(preference.email or "").strip().lower(),
+        "newsletter_opt_in": bool(preference.newsletter_opt_in),
+        "campaign_opt_in": bool(preference.campaign_opt_in),
+        "events_opt_in": bool(preference.events_opt_in),
+        "volunteer_opt_in": bool(preference.volunteer_opt_in),
+        "digest_frequency": str(preference.digest_frequency or "weekly"),
+        "source": str(preference.source or "preference_center"),
+        "updated_at": preference.updated_at.isoformat() if preference.updated_at else None,
+    }
+
+
+def upsert_campaign_communication_preference(
+    organization_id: int,
+    *,
+    email: str,
+    donor_id: int | None = None,
+    newsletter_opt_in: bool | None = None,
+    campaign_opt_in: bool | None = None,
+    events_opt_in: bool | None = None,
+    volunteer_opt_in: bool | None = None,
+    digest_frequency: str | None = None,
+    source: str | None = None,
+) -> dict[str, Any]:
+    normalized_email = _normalized_email(email)
+    if not _looks_like_email(normalized_email):
+        raise ValueError("valid email is required")
+
+    preference = db.session.scalars(
+        select(CampaignCommunicationPreference).where(
+            CampaignCommunicationPreference.organization_id == int(organization_id),
+            CampaignCommunicationPreference.email == normalized_email,
+        ).limit(1)
+    ).first()
+
+    if preference is None:
+        preference = CampaignCommunicationPreference(
+            organization_id=int(organization_id),
+            donor_id=int(donor_id) if donor_id else None,
+            email=normalized_email,
+            newsletter_opt_in=True,
+            campaign_opt_in=True,
+            events_opt_in=True,
+            volunteer_opt_in=True,
+            digest_frequency="weekly",
+            source=str(source or "preference_center")[:40],
+        )
+        db.session.add(preference)
+    elif donor_id and not preference.donor_id:
+        preference.donor_id = int(donor_id)
+
+    if newsletter_opt_in is not None:
+        preference.newsletter_opt_in = bool(newsletter_opt_in)
+    if campaign_opt_in is not None:
+        preference.campaign_opt_in = bool(campaign_opt_in)
+    if events_opt_in is not None:
+        preference.events_opt_in = bool(events_opt_in)
+    if volunteer_opt_in is not None:
+        preference.volunteer_opt_in = bool(volunteer_opt_in)
+
+    if digest_frequency is not None:
+        normalized_frequency = str(digest_frequency or "").strip().lower()
+        if normalized_frequency not in _VALID_DIGEST_FREQUENCIES:
+            raise ValueError("digest_frequency must be one of immediate, daily, weekly, monthly")
+        preference.digest_frequency = normalized_frequency
+
+    if source is not None:
+        preference.source = str(source or "")[:40] or None
+
+    db.session.commit()
+    return get_campaign_communication_preference(
+        int(organization_id),
+        email=normalized_email,
+        donor_id=donor_id,
+    )
 
 
 def verify_tracking_signature(
@@ -298,6 +465,7 @@ def verify_tracking_signature(
 def _with_tracking_links(
     body: str,
     *,
+    organization_id: int,
     campaign_id: int,
     donor_id: int,
     delivery_id: int,
@@ -358,13 +526,20 @@ def _with_tracking_links(
             f"&donor_id={int(donor_id)}&campaign_id={int(campaign_id)}"
             f"&ts={unsub_ts}&sig={unsub_sig}"
         )
+        pref_url = preference_center_url(
+            email=str(recipient_email).lower(),
+            organization_id=int(organization_id),
+            donor_id=int(donor_id),
+        )
         footer = (
             "\n\n<div style=\"margin-top:2em;padding-top:1em;border-top:1px solid #e0e0e0;"
             "font-size:12px;color:#999;text-align:center;font-family:Arial,sans-serif;\">"
             "<p style=\"margin:0 0 4px;\">You are receiving this email as a valued supporter.</p>"
             f"<p style=\"margin:0;\"><a href=\"{unsub_url}\" "
             "style=\"color:#999;text-decoration:underline;\">Unsubscribe</a> "
-            "from campaign emails.</p></div>"
+            "from campaign emails. "
+            f"<a href=\"{pref_url}\" style=\"color:#999;text-decoration:underline;\">Manage preferences</a>."
+            "</p></div>"
         )
 
     return f"{tracked_body}\n\n{pixel_html}{footer}"
@@ -514,11 +689,16 @@ def _resolve_recipients(
         if not smart_group_member_ids:
             return []
 
+    include_communication_opt_out = bool(audience.get("include_communication_opt_out", False))
+    channel = str(audience.get("channel") or "campaign").strip().lower() or "campaign"
+
     stmt = select(Donor).where(
         Donor.organization_id == int(organization_id),
         Donor.email.is_not(None),
         func.length(func.trim(Donor.email)) > 0,
     )
+    if not include_communication_opt_out:
+        stmt = stmt.where(Donor.communication_opt_in.is_(True))
 
     if smart_group_member_ids is not None:
         stmt = stmt.where(Donor.id.in_(smart_group_member_ids))
@@ -665,6 +845,41 @@ def _resolve_recipients(
     except Exception as exc:
         logger.warning(
             "Unable to apply campaign email opt-out suppression for organization_id=%s: %s",
+            int(organization_id),
+            exc,
+        )
+
+    # Respect preference-center channel opt-out choices.
+    try:
+        pref_rows = db.session.execute(
+            select(
+                CampaignCommunicationPreference.email,
+                CampaignCommunicationPreference.newsletter_opt_in,
+                CampaignCommunicationPreference.campaign_opt_in,
+                CampaignCommunicationPreference.events_opt_in,
+                CampaignCommunicationPreference.volunteer_opt_in,
+            ).where(CampaignCommunicationPreference.organization_id == int(organization_id))
+        ).all()
+
+        blocked: set[str] = set()
+        for email, newsletter_opt_in, campaign_opt_in, events_opt_in, volunteer_opt_in in pref_rows:
+            normalized_email = _normalized_email(email)
+            if not normalized_email:
+                continue
+            if channel == "newsletter" and not bool(newsletter_opt_in):
+                blocked.add(normalized_email)
+            elif channel == "events" and not bool(events_opt_in):
+                blocked.add(normalized_email)
+            elif channel == "volunteer" and not bool(volunteer_opt_in):
+                blocked.add(normalized_email)
+            elif channel in {"campaign", "fundraising"} and not bool(campaign_opt_in):
+                blocked.add(normalized_email)
+
+        if blocked:
+            deduped = {k: v for k, v in deduped.items() if k not in blocked}
+    except Exception as exc:
+        logger.warning(
+            "Unable to apply communication preference suppression for organization_id=%s: %s",
             int(organization_id),
             exc,
         )
@@ -1135,6 +1350,7 @@ def send_campaign_bulk_email(
                 rendered = _render_body(body_value, donor=donor, campaign=campaign)
                 rendered = _with_tracking_links(
                     rendered,
+                    organization_id=int(organization_id),
                     campaign_id=int(campaign.id),
                     donor_id=int(donor.id),
                     delivery_id=int(delivery.id),
@@ -1327,6 +1543,7 @@ def process_scheduled_campaign_email_batches(*, limit: int = 100, now: datetime 
                         rendered = _render_body(str(batch.body), donor=donor, campaign=campaign)
                         rendered = _with_tracking_links(
                             rendered,
+                            organization_id=int(batch.organization_id),
                             campaign_id=int(campaign.id),
                             donor_id=int(donor.id),
                             delivery_id=int(delivery.id),

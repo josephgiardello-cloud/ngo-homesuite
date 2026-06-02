@@ -14,6 +14,7 @@ from ngo_homesuite.app_factory import create_app
 from ngo_homesuite.flask_config import TestingConfig
 from ngo_homesuite.models.core import (
     Campaign,
+    CampaignCommunicationPreference,
     CampaignEmailBatch,
     CampaignEmailDelivery,
     CampaignEmailOptOut,
@@ -1753,6 +1754,14 @@ def test_campaign_unsubscribe_creates_opt_out_and_suppresses_future_send(client,
             ).limit(1)
         ).first()
         assert opt_out is not None
+        preference = db.session.scalars(
+            db.select(CampaignCommunicationPreference).where(
+                CampaignCommunicationPreference.organization_id == org_id,
+                CampaignCommunicationPreference.email == email,
+            ).limit(1)
+        ).first()
+        assert preference is not None
+        assert bool(preference.campaign_opt_in) is False
 
     with mock.patch("ngo_homesuite.services.campaign_email_service.send_email", return_value=True) as send_mock:
         send_rv = client.post(
@@ -1810,6 +1819,121 @@ def test_campaign_send_skips_addresses_marked_by_suppression_webhook(client, app
     payload = send_rv.get_json() or {}
     assert int(payload.get("total_recipients") or 0) == 0
     assert send_mock.call_count == 0
+
+
+def test_campaign_public_preference_center_link_reads_and_updates_preferences(client, app):
+    from ngo_homesuite.services.campaign_email_service import _preference_signature
+
+    _login_admin(client)
+    org_id = _admin_org_id(app)
+
+    with app.app_context():
+        donor = Donor(
+            organization_id=org_id,
+            name="Preference Center Donor",
+            email="preference-center@example.org",
+            donor_type="individual",
+        )
+        db.session.add(donor)
+        db.session.commit()
+        donor_id = int(donor.id)
+
+    ts = int(time.time())
+    email = "preference-center@example.org"
+    with app.app_context():
+        sig = _preference_signature(email=email, organization_id=org_id, donor_id=donor_id, issued_at=ts)
+
+    get_rv = client.get(
+        "/api/v2/campaigns/email/preferences",
+        query_string={
+            "email": email,
+            "organization_id": org_id,
+            "donor_id": donor_id,
+            "ts": ts,
+            "sig": sig,
+        },
+    )
+    assert get_rv.status_code == 200
+    initial_payload = get_rv.get_json() or {}
+    assert bool(initial_payload.get("campaign_opt_in")) is True
+    assert str(initial_payload.get("digest_frequency") or "") == "weekly"
+
+    patch_rv = client.patch(
+        "/api/v2/campaigns/email/preferences",
+        json={
+            "email": email,
+            "organization_id": org_id,
+            "donor_id": donor_id,
+            "ts": ts,
+            "sig": sig,
+            "newsletter_opt_in": False,
+            "campaign_opt_in": True,
+            "digest_frequency": "monthly",
+        },
+    )
+    assert patch_rv.status_code == 200
+    payload = patch_rv.get_json() or {}
+    assert bool(payload.get("newsletter_opt_in")) is False
+    assert bool(payload.get("campaign_opt_in")) is True
+    assert str(payload.get("digest_frequency") or "") == "monthly"
+
+
+def test_campaign_send_respects_channel_specific_preferences(client, app):
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "Channel Preference Campaign"})
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+    org_id = _admin_org_id(app)
+
+    with app.app_context():
+        donor = Donor(
+            organization_id=org_id,
+            name="Channel Preference Donor",
+            email="channel-pref@example.org",
+            donor_type="individual",
+        )
+        db.session.add(donor)
+        db.session.commit()
+        donor_id = int(donor.id)
+        pref = CampaignCommunicationPreference(
+            organization_id=org_id,
+            donor_id=donor_id,
+            email="channel-pref@example.org",
+            newsletter_opt_in=False,
+            campaign_opt_in=True,
+            digest_frequency="weekly",
+            source="test",
+        )
+        db.session.add(pref)
+        db.session.commit()
+
+    with mock.patch("ngo_homesuite.services.campaign_email_service.send_email", return_value=True) as send_mock:
+        newsletter_rv = client.post(
+            f"/api/v2/campaigns/{campaign_id}/emails/send",
+            json={
+                "subject": "Newsletter update",
+                "body": "Hello {name}, newsletter content for {campaign_name}.",
+                "audience": {"donor_ids": [donor_id], "channel": "newsletter"},
+                "compliance": _human_authorization_payload(),
+            },
+        )
+        assert newsletter_rv.status_code == 200
+        newsletter_payload = newsletter_rv.get_json() or {}
+        assert int(newsletter_payload.get("total_recipients") or 0) == 0
+
+        campaign_rv = client.post(
+            f"/api/v2/campaigns/{campaign_id}/emails/send",
+            json={
+                "subject": "Campaign update",
+                "body": "Hello {name}, campaign content for {campaign_name}.",
+                "audience": {"donor_ids": [donor_id], "channel": "campaign"},
+                "compliance": _human_authorization_payload(),
+            },
+        )
+        assert campaign_rv.status_code == 200
+        campaign_payload = campaign_rv.get_json() or {}
+        assert int(campaign_payload.get("total_recipients") or 0) == 1
+        assert send_mock.call_count == 1
 
 
 def test_process_scheduled_campaign_batches_dispatches_due_batch(client, app):

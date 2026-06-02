@@ -250,6 +250,69 @@ def test_calendar_sync_and_ops_routes(client, app):
     assert jobs_payload["count"] >= 1
 
 
+def test_caldav_and_carddav_sync_routes(client, app):
+    org_id = _ensure_user(app, "dav_staff", "dav_staff@test.local", "staff", "dav_staff_pass_123")
+    _login(client, "dav_staff", "dav_staff_pass_123")
+
+    app.extensions.pop("dav_sync_provider", None)
+
+    with app.app_context():
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        task = Task(
+            organization_id=org_id,
+            title="DAV due task",
+            status="open",
+            priority="medium",
+            due_date=now + timedelta(days=2),
+        )
+        donor = Donor(
+            organization_id=org_id,
+            name="DAV Contact",
+            email="dav.contact@example.org",
+            phone="+15550101010",
+            donor_type="individual",
+        )
+        db.session.add_all([task, donor])
+        db.session.commit()
+
+    caldav_rv = client.post("/integrations/calendar/caldav/sync", json={})
+    assert caldav_rv.status_code == 200
+    caldav_payload = caldav_rv.get_json()
+    assert caldav_payload["ok"] is True
+    assert caldav_payload["dry_run"] is False
+    assert int(caldav_payload["synced"]) >= 0
+    assert int(caldav_payload["skipped"]) >= 0
+
+    carddav_rv = client.post("/integrations/contacts/carddav/sync", json={})
+    assert carddav_rv.status_code == 200
+    carddav_payload = carddav_rv.get_json()
+    assert carddav_payload["ok"] is True
+    assert carddav_payload["dry_run"] is False
+    assert int(carddav_payload["synced"]) >= 0
+    assert int(carddav_payload["skipped"]) >= 0
+
+    provider = app.extensions.get("dav_sync_provider")
+    assert provider is not None
+    assert hasattr(provider, "caldav_events")
+    assert hasattr(provider, "carddav_contacts")
+
+    dry_caldav = client.post("/integrations/calendar/caldav/sync", json={"dry_run": True})
+    assert dry_caldav.status_code == 200
+    assert dry_caldav.get_json()["dry_run"] is True
+    assert int(dry_caldav.get_json()["synced"]) >= 0
+
+    dry_carddav = client.post("/integrations/contacts/carddav/sync", json={"dry_run": True})
+    assert dry_carddav.status_code == 200
+    assert dry_carddav.get_json()["dry_run"] is True
+    assert int(dry_carddav.get_json()["synced"]) >= 0
+
+    status_rv = client.get("/integrations/ops/status")
+    assert status_rv.status_code == 200
+    status_payload = status_rv.get_json()
+    assert "caldav_sync" in status_payload["by_kind"]
+    assert "carddav_sync" in status_payload["by_kind"]
+
+
 
 def test_ops_routes_require_authentication(client):
     rv = client.get("/integrations/ops/status")

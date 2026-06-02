@@ -946,6 +946,53 @@ class TaskReminder(db.Model):
         return f'<TaskReminder task_id={self.task_id} {self.channel} [{self.delivery_status}]>'
 
 
+class ProjectMilestone(db.Model):
+    """Project-level milestone used for board and delivery tracking."""
+
+    __tablename__ = 'project_milestones'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    project_id = db.Column(db.Integer, db.ForeignKey('projects.id'), nullable=False, index=True)
+    title = db.Column(db.String(300), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    due_date = db.Column(db.DateTime, nullable=True, index=True)
+    status = db.Column(db.String(20), default='planned', nullable=False, index=True)  # planned, in_progress, completed, blocked
+    owner_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+    completed_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
+
+    project = db.relationship('Project', backref='milestones')
+    owner = db.relationship('User', backref='owned_project_milestones')
+
+    def __repr__(self):
+        return f'<ProjectMilestone project={self.project_id} title={self.title} status={self.status}>'
+
+
+class TaskDependency(db.Model):
+    """Directed dependency edge where a task depends on another task."""
+
+    __tablename__ = 'task_dependencies'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    task_id = db.Column(db.Integer, db.ForeignKey('tasks.id'), nullable=False, index=True)
+    depends_on_task_id = db.Column(db.Integer, db.ForeignKey('tasks.id'), nullable=False, index=True)
+    dependency_type = db.Column(db.String(20), default='blocks', nullable=False)  # blocks, related
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+
+    task = db.relationship('Task', foreign_keys=[task_id], backref='dependencies')
+    depends_on_task = db.relationship('Task', foreign_keys=[depends_on_task_id], backref='dependent_tasks')
+
+    __table_args__ = (
+        db.UniqueConstraint('organization_id', 'task_id', 'depends_on_task_id', name='uq_task_dependency_org_task_depends_on'),
+    )
+
+    def __repr__(self):
+        return f'<TaskDependency task={self.task_id} depends_on={self.depends_on_task_id}>'
+
+
 # ---------------------------------------------------------------------------
 # Program / Impact Case Tracking
 # ---------------------------------------------------------------------------
@@ -1376,6 +1423,35 @@ class CampaignEmailOptOut(db.Model):
         return f'<CampaignEmailOptOut email={self.email}>'
 
 
+class CampaignCommunicationPreference(db.Model):
+    """Communication preferences used by campaign/newsletter preference center."""
+
+    __tablename__ = 'campaign_communication_preferences'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    donor_id = db.Column(db.Integer, db.ForeignKey('donors.id'), nullable=True, index=True)
+    email = db.Column(db.String(255), nullable=False, index=True)
+    newsletter_opt_in = db.Column(db.Boolean, nullable=False, default=True)
+    campaign_opt_in = db.Column(db.Boolean, nullable=False, default=True)
+    events_opt_in = db.Column(db.Boolean, nullable=False, default=True)
+    volunteer_opt_in = db.Column(db.Boolean, nullable=False, default=True)
+    digest_frequency = db.Column(db.String(20), nullable=False, default='weekly')
+    source = db.Column(db.String(40), nullable=True)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
+
+    organization = db.relationship('Organization', backref='campaign_communication_preferences')
+    donor = db.relationship('Donor', backref='campaign_communication_preferences')
+
+    __table_args__ = (
+        db.UniqueConstraint('organization_id', 'email', name='uq_campaign_comm_pref_org_email'),
+    )
+
+    def __repr__(self):
+        return f'<CampaignCommunicationPreference email={self.email}>'
+
+
 class EventDiscountCode(db.Model):
     """Event-scoped discount code for registration/payment checkout flows."""
 
@@ -1617,6 +1693,94 @@ class ScheduledReport(db.Model):
         return f'<ScheduledReport {self.name} [{self.frequency}]>'
 
 
+class CollaborationChannel(db.Model):
+    """A collaboration channel for team threads or direct messages."""
+
+    __tablename__ = 'collaboration_channels'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    channel_type = db.Column(db.String(20), default='team', nullable=False, index=True)  # team, direct
+    name = db.Column(db.String(200), nullable=True)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+    is_archived = db.Column(db.Boolean, default=False, nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
+
+    created_by = db.relationship('User', backref='created_collaboration_channels')
+
+    def __repr__(self):
+        return f'<CollaborationChannel id={self.id} type={self.channel_type}>'
+
+
+class CollaborationChannelMember(db.Model):
+    """Membership row linking users to collaboration channels."""
+
+    __tablename__ = 'collaboration_channel_members'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    channel_id = db.Column(db.Integer, db.ForeignKey('collaboration_channels.id'), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    role = db.Column(db.String(20), default='member', nullable=False)  # owner, member
+    joined_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False)
+    last_read_at = db.Column(db.DateTime, nullable=True)
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+
+    channel = db.relationship('CollaborationChannel', backref='memberships')
+    user = db.relationship('User', backref='collaboration_memberships')
+
+    __table_args__ = (
+        db.UniqueConstraint('organization_id', 'channel_id', 'user_id', name='uq_collab_channel_member_org_channel_user'),
+    )
+
+    def __repr__(self):
+        return f'<CollaborationChannelMember channel={self.channel_id} user={self.user_id}>'
+
+
+class CollaborationMessage(db.Model):
+    """Message posted to a collaboration channel."""
+
+    __tablename__ = 'collaboration_messages'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    channel_id = db.Column(db.Integer, db.ForeignKey('collaboration_channels.id'), nullable=False, index=True)
+    sender_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    body = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False, index=True)
+    edited_at = db.Column(db.DateTime, nullable=True)
+
+    channel = db.relationship('CollaborationChannel', backref='messages')
+    sender = db.relationship('User', backref='sent_collaboration_messages')
+
+    def __repr__(self):
+        return f'<CollaborationMessage channel={self.channel_id} sender={self.sender_user_id}>'
+
+
+class CollaborationPresence(db.Model):
+    """Latest presence snapshot for an organization user."""
+
+    __tablename__ = 'collaboration_presence'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    status = db.Column(db.String(20), default='offline', nullable=False, index=True)  # online, away, dnd, offline
+    status_message = db.Column(db.String(300), nullable=True)
+    last_seen_at = db.Column(db.DateTime, nullable=True)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
+
+    user = db.relationship('User', backref='presence_rows')
+
+    __table_args__ = (
+        db.UniqueConstraint('organization_id', 'user_id', name='uq_collab_presence_org_user'),
+    )
+
+    def __repr__(self):
+        return f'<CollaborationPresence user={self.user_id} status={self.status}>'
+
+
 # Export all models
 class VolunteerShift(db.Model):
     """A scheduled or completed volunteer shift."""
@@ -1753,6 +1917,9 @@ __all__ = [
     'DonorJourneyAutomationEvent',
     'FormSubmissionEvent',
     'Task',
+    'TaskReminder',
+    'ProjectMilestone',
+    'TaskDependency',
     'ProgramCase',
     'CaseActivity',
     'BeneficiaryServiceLog',
@@ -1764,6 +1931,11 @@ __all__ = [
     'DonorEngagementScore',
     'SmartGroup',
     'Campaign',
+    'CampaignEmailBatch',
+    'CampaignEmailDelivery',
+    'CampaignEmailOptOut',
+    'CampaignCommunicationPreference',
+    'ExternalCommunicationAuthorization',
     'EventDiscountCode',
     'P2PPage',
     'P2PPageDonation',
@@ -1771,6 +1943,10 @@ __all__ = [
     'BeneficiaryReferral',
     'BeneficiaryAppointment',
     'ScheduledReport',
+    'CollaborationChannel',
+    'CollaborationChannelMember',
+    'CollaborationMessage',
+    'CollaborationPresence',
     'VolunteerShift',
     'TrainingCourse',
     'VolunteerTraining',

@@ -15,6 +15,8 @@ PUBLIC_MUTATING_ROUTES = {
     "/auth/password/forgot",
     "/give",
     "/integrations/stripe/webhook",
+    "/api/v2/forms/submissions/public",
+    "/api/v2/campaigns/email/preferences",
 }
 SENSITIVE_PREFIXES = (
     "/admin",

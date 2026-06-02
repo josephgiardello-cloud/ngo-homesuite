@@ -17,7 +17,7 @@ import warnings
 
 from flask import Blueprint, Response, current_app, g, jsonify, redirect, request
 from flask_login import current_user, login_required
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from werkzeug.utils import secure_filename
 
@@ -74,6 +74,756 @@ def _json_or_400(required: list[str] | None = None) -> dict[str, Any]:
             from flask import abort
             abort(400, description=f"Missing required fields: {missing}")
     return data
+
+
+def _bool_or_none(value: Any, *, field_name: str) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    lowered = str(value).strip().lower()
+    if lowered in {"1", "true", "yes", "on"}:
+        return True
+    if lowered in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{field_name} must be a boolean")
+
+
+def _normalize_email(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _normalize_text(value: Any) -> str:
+    return " ".join(str(value or "").strip().lower().split())
+
+
+def _normalize_phone(value: Any) -> str:
+    return "".join(ch for ch in str(value or "") if ch.isdigit())
+
+
+def _dedupe_confidence(reason: str, size: int) -> float:
+    if reason == "matching_email":
+        return min(0.99, 0.85 + (0.03 * max(0, int(size) - 2)))
+    if reason == "matching_name_phone":
+        return min(0.95, 0.72 + (0.03 * max(0, int(size) - 2)))
+    return 0.6
+
+
+def _parse_user_ids_csv(raw: str) -> list[int]:
+    values: list[int] = []
+    for token in str(raw or "").split(","):
+        stripped = token.strip()
+        if not stripped:
+            continue
+        try:
+            values.append(int(stripped))
+        except (TypeError, ValueError):
+            continue
+    return values
+
+
+def _collab_message_dict(message) -> dict[str, Any]:
+    return {
+        "id": int(message.id),
+        "organization_id": int(message.organization_id),
+        "channel_id": int(message.channel_id),
+        "sender_user_id": int(message.sender_user_id),
+        "body": str(message.body or ""),
+        "created_at": message.created_at.isoformat() if message.created_at else None,
+        "edited_at": message.edited_at.isoformat() if message.edited_at else None,
+    }
+
+
+@v2_bp.get("/collab/channels")
+@login_required
+@roles_required("admin", "staff", "viewer")
+def list_collaboration_channels():
+    from ngo_homesuite.models.core import CollaborationChannel, CollaborationChannelMember, CollaborationMessage
+
+    org_id = _org_id()
+    current_user_id = int(getattr(current_user, "id", 0) or 0)
+    memberships = list(
+        db.session.scalars(
+            select(CollaborationChannelMember)
+            .where(
+                CollaborationChannelMember.organization_id == org_id,
+                CollaborationChannelMember.user_id == current_user_id,
+                CollaborationChannelMember.is_active.is_(True),
+            )
+            .order_by(CollaborationChannelMember.joined_at.desc())
+        )
+    )
+    channel_ids = [int(item.channel_id) for item in memberships]
+    if not channel_ids:
+        return jsonify({"count": 0, "channels": []})
+
+    channels = list(
+        db.session.scalars(
+            select(CollaborationChannel)
+            .where(
+                CollaborationChannel.organization_id == org_id,
+                CollaborationChannel.id.in_(channel_ids),
+                CollaborationChannel.is_archived.is_(False),
+            )
+            .order_by(CollaborationChannel.updated_at.desc(), CollaborationChannel.id.desc())
+        )
+    )
+
+    member_rows = list(
+        db.session.scalars(
+            select(CollaborationChannelMember)
+            .where(
+                CollaborationChannelMember.organization_id == org_id,
+                CollaborationChannelMember.channel_id.in_(channel_ids),
+                CollaborationChannelMember.is_active.is_(True),
+            )
+            .order_by(CollaborationChannelMember.channel_id.asc(), CollaborationChannelMember.user_id.asc())
+        )
+    )
+    members_by_channel: dict[int, list[int]] = defaultdict(list)
+    for item in member_rows:
+        members_by_channel[int(item.channel_id)].append(int(item.user_id))
+
+    last_read_by_channel = {
+        int(item.channel_id): item.last_read_at
+        for item in memberships
+    }
+
+    latest_messages = list(
+        db.session.scalars(
+            select(CollaborationMessage)
+            .where(
+                CollaborationMessage.organization_id == org_id,
+                CollaborationMessage.channel_id.in_(channel_ids),
+            )
+            .order_by(CollaborationMessage.channel_id.asc(), CollaborationMessage.created_at.desc(), CollaborationMessage.id.desc())
+        )
+    )
+    latest_by_channel: dict[int, Any] = {}
+    for message in latest_messages:
+        latest_by_channel.setdefault(int(message.channel_id), message)
+
+    unread_by_channel: dict[int, int] = {}
+    for channel_id in channel_ids:
+        last_read_at = last_read_by_channel.get(int(channel_id))
+        query = select(func.count(CollaborationMessage.id)).where(
+            CollaborationMessage.organization_id == org_id,
+            CollaborationMessage.channel_id == int(channel_id),
+            CollaborationMessage.sender_user_id != current_user_id,
+        )
+        if last_read_at is not None:
+            query = query.where(CollaborationMessage.created_at > last_read_at)
+        unread_by_channel[int(channel_id)] = int(db.session.scalar(query) or 0)
+
+    payload = []
+    for channel in channels:
+        channel_id = int(channel.id)
+        latest = latest_by_channel.get(channel_id)
+        payload.append(
+            {
+                "id": channel_id,
+                "organization_id": int(channel.organization_id),
+                "channel_type": str(channel.channel_type or "team"),
+                "name": channel.name,
+                "is_archived": bool(channel.is_archived),
+                "member_user_ids": members_by_channel.get(channel_id, []),
+                "unread_count": int(unread_by_channel.get(channel_id, 0)),
+                "latest_message": _collab_message_dict(latest) if latest is not None else None,
+                "updated_at": channel.updated_at.isoformat() if channel.updated_at else None,
+            }
+        )
+
+    return jsonify({"count": len(payload), "channels": payload})
+
+
+@v2_bp.post("/collab/channels")
+@login_required
+@roles_required("admin", "staff")
+def create_collaboration_channel():
+    from ngo_homesuite.models.core import CollaborationChannel, CollaborationChannelMember
+
+    org_id = _org_id()
+    current_user_id = int(getattr(current_user, "id", 0) or 0)
+    data = _json_or_400(required=["channel_type"])
+
+    channel_type = str(data.get("channel_type") or "").strip().lower()
+    if channel_type not in {"team", "direct"}:
+        return jsonify({"error": "channel_type must be one of: team, direct"}), 400
+
+    channel_name = (str(data.get("name") or "").strip() or None)
+
+    member_user_ids: list[int] = []
+    if channel_type == "direct":
+        participant_raw = data.get("participant_user_id")
+        try:
+            participant_user_id = int(participant_raw)
+        except (TypeError, ValueError):
+            return jsonify({"error": "participant_user_id must be an integer"}), 400
+        if participant_user_id == current_user_id:
+            return jsonify({"error": "direct channel requires another participant"}), 400
+        user_ids_sorted = sorted([current_user_id, participant_user_id])
+
+        direct_channel_candidates_stmt = (
+            select(
+                CollaborationChannelMember.channel_id,
+            )
+            .where(
+                CollaborationChannelMember.organization_id == org_id,
+                CollaborationChannelMember.user_id.in_(user_ids_sorted),
+                CollaborationChannelMember.is_active.is_(True),
+            )
+            .group_by(CollaborationChannelMember.channel_id)
+            .having(func.count(func.distinct(CollaborationChannelMember.user_id)) == 2)
+        )
+        candidate_channel_ids = [
+            int(row[0])
+            for row in db.session.execute(direct_channel_candidates_stmt).all()
+        ]
+        if candidate_channel_ids:
+            candidates = list(
+                db.session.scalars(
+                    select(CollaborationChannel)
+                    .where(
+                        CollaborationChannel.organization_id == org_id,
+                        CollaborationChannel.channel_type == "direct",
+                        CollaborationChannel.id.in_(candidate_channel_ids),
+                        CollaborationChannel.is_archived.is_(False),
+                    )
+                )
+            )
+            for candidate in candidates:
+                member_count = int(
+                    db.session.scalar(
+                        select(func.count(CollaborationChannelMember.id)).where(
+                            CollaborationChannelMember.organization_id == org_id,
+                            CollaborationChannelMember.channel_id == int(candidate.id),
+                            CollaborationChannelMember.is_active.is_(True),
+                        )
+                    )
+                    or 0
+                )
+                if member_count == 2:
+                    return jsonify(
+                        {
+                            "created": False,
+                            "channel": {
+                                "id": int(candidate.id),
+                                "channel_type": "direct",
+                                "member_user_ids": user_ids_sorted,
+                                "name": candidate.name,
+                            },
+                        }
+                    ), 200
+
+        member_user_ids = user_ids_sorted
+    else:
+        provided_member_ids = data.get("member_user_ids") or []
+        parsed_members: list[int] = []
+        for item in provided_member_ids:
+            try:
+                parsed_members.append(int(item))
+            except (TypeError, ValueError):
+                return jsonify({"error": "member_user_ids must contain integers"}), 400
+        member_user_ids = sorted(set(parsed_members + [current_user_id]))
+        if channel_name is None:
+            return jsonify({"error": "name is required for team channels"}), 400
+
+    if member_user_ids:
+        valid_user_ids = {
+            int(user_id)
+            for user_id in db.session.scalars(
+                select(User.id).where(
+                    User.organization_id == org_id,
+                    User.id.in_(member_user_ids),
+                    User.is_active.is_(True),
+                )
+            )
+        }
+        if valid_user_ids != set(member_user_ids):
+            return jsonify({"error": "one or more members are invalid for this organization"}), 400
+
+    channel = CollaborationChannel(
+        organization_id=org_id,
+        channel_type=channel_type,
+        name=channel_name,
+        created_by_user_id=current_user_id,
+    )
+    db.session.add(channel)
+    db.session.flush()
+
+    for user_id in member_user_ids:
+        db.session.add(
+            CollaborationChannelMember(
+                organization_id=org_id,
+                channel_id=int(channel.id),
+                user_id=int(user_id),
+                role=("owner" if int(user_id) == current_user_id else "member"),
+            )
+        )
+
+    db.session.commit()
+    return jsonify(
+        {
+            "created": True,
+            "channel": {
+                "id": int(channel.id),
+                "organization_id": int(channel.organization_id),
+                "channel_type": str(channel.channel_type),
+                "name": channel.name,
+                "member_user_ids": member_user_ids,
+                "created_at": channel.created_at.isoformat() if channel.created_at else None,
+            },
+        }
+    ), 201
+
+
+@v2_bp.get("/collab/channels/<int:channel_id>/messages")
+@login_required
+@roles_required("admin", "staff", "viewer")
+def list_collaboration_messages(channel_id: int):
+    from ngo_homesuite.models.core import CollaborationChannelMember, CollaborationMessage
+
+    org_id = _org_id()
+    current_user_id = int(getattr(current_user, "id", 0) or 0)
+    membership = db.session.scalar(
+        select(CollaborationChannelMember).where(
+            CollaborationChannelMember.organization_id == org_id,
+            CollaborationChannelMember.channel_id == int(channel_id),
+            CollaborationChannelMember.user_id == current_user_id,
+            CollaborationChannelMember.is_active.is_(True),
+        ).limit(1)
+    )
+    if membership is None:
+        return jsonify({"error": "channel not found"}), 404
+
+    limit = max(1, min(200, int(request.args.get("limit", 100) or 100)))
+    before_id = request.args.get("before_id", type=int)
+
+    query = select(CollaborationMessage).where(
+        CollaborationMessage.organization_id == org_id,
+        CollaborationMessage.channel_id == int(channel_id),
+    )
+    if before_id is not None:
+        query = query.where(CollaborationMessage.id < int(before_id))
+
+    rows = list(
+        db.session.scalars(
+            query.order_by(CollaborationMessage.id.desc()).limit(limit)
+        )
+    )
+    rows.reverse()
+
+    membership.last_read_at = _utcnow_naive()
+    db.session.commit()
+    return jsonify({"count": len(rows), "messages": [_collab_message_dict(row) for row in rows]})
+
+
+@v2_bp.post("/collab/channels/<int:channel_id>/messages")
+@login_required
+@roles_required("admin", "staff", "viewer")
+def create_collaboration_message(channel_id: int):
+    from ngo_homesuite.models.core import CollaborationChannelMember, CollaborationMessage
+
+    org_id = _org_id()
+    current_user_id = int(getattr(current_user, "id", 0) or 0)
+    membership = db.session.scalar(
+        select(CollaborationChannelMember).where(
+            CollaborationChannelMember.organization_id == org_id,
+            CollaborationChannelMember.channel_id == int(channel_id),
+            CollaborationChannelMember.user_id == current_user_id,
+            CollaborationChannelMember.is_active.is_(True),
+        ).limit(1)
+    )
+    if membership is None:
+        return jsonify({"error": "channel not found"}), 404
+
+    data = _json_or_400(required=["body"])
+    body = str(data.get("body") or "").strip()
+    if not body:
+        return jsonify({"error": "body is required"}), 400
+    if len(body) > 4000:
+        return jsonify({"error": "body must be <= 4000 characters"}), 400
+
+    message = CollaborationMessage(
+        organization_id=org_id,
+        channel_id=int(channel_id),
+        sender_user_id=current_user_id,
+        body=body,
+    )
+    db.session.add(message)
+    membership.last_read_at = _utcnow_naive()
+    db.session.commit()
+    return jsonify(_collab_message_dict(message)), 201
+
+
+@v2_bp.post("/collab/presence")
+@login_required
+@roles_required("admin", "staff", "viewer")
+def upsert_collaboration_presence():
+    from ngo_homesuite.models.core import CollaborationPresence
+
+    org_id = _org_id()
+    current_user_id = int(getattr(current_user, "id", 0) or 0)
+    data = _json_or_400(required=["status"])
+
+    status = str(data.get("status") or "").strip().lower()
+    if status not in {"online", "away", "dnd", "offline"}:
+        return jsonify({"error": "status must be one of: online, away, dnd, offline"}), 400
+
+    status_message = (str(data.get("status_message") or "").strip() or None)
+    if status_message and len(status_message) > 300:
+        return jsonify({"error": "status_message must be <= 300 characters"}), 400
+
+    row = db.session.scalar(
+        select(CollaborationPresence).where(
+            CollaborationPresence.organization_id == org_id,
+            CollaborationPresence.user_id == current_user_id,
+        ).limit(1)
+    )
+    if row is None:
+        row = CollaborationPresence(
+            organization_id=org_id,
+            user_id=current_user_id,
+            status=status,
+            status_message=status_message,
+            last_seen_at=_utcnow_naive(),
+        )
+        db.session.add(row)
+    else:
+        row.status = status
+        row.status_message = status_message
+        row.last_seen_at = _utcnow_naive()
+
+    db.session.commit()
+    return jsonify(
+        {
+            "organization_id": int(row.organization_id),
+            "user_id": int(row.user_id),
+            "status": str(row.status),
+            "status_message": row.status_message,
+            "last_seen_at": row.last_seen_at.isoformat() if row.last_seen_at else None,
+            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        }
+    ), 200
+
+
+@v2_bp.get("/collab/presence")
+@login_required
+@roles_required("admin", "staff", "viewer")
+def list_collaboration_presence():
+    from ngo_homesuite.models.core import CollaborationPresence
+
+    org_id = _org_id()
+    limit = max(1, min(500, int(request.args.get("limit", 100) or 100)))
+    user_ids_filter = _parse_user_ids_csv(str(request.args.get("user_ids") or ""))
+
+    users_query = select(User).where(User.organization_id == org_id, User.is_active.is_(True))
+    if user_ids_filter:
+        users_query = users_query.where(User.id.in_(user_ids_filter))
+    users = list(db.session.scalars(users_query.order_by(User.id.asc()).limit(limit)))
+    if not users:
+        return jsonify({"count": 0, "items": []})
+
+    user_ids = [int(user.id) for user in users]
+    presence_rows = list(
+        db.session.scalars(
+            select(CollaborationPresence)
+            .where(
+                CollaborationPresence.organization_id == org_id,
+                CollaborationPresence.user_id.in_(user_ids),
+            )
+            .order_by(CollaborationPresence.user_id.asc())
+        )
+    )
+    by_user_id = {int(row.user_id): row for row in presence_rows}
+
+    payload = []
+    for user in users:
+        row = by_user_id.get(int(user.id))
+        display_name = ((str(user.first_name or "").strip() + " " + str(user.last_name or "").strip()).strip() or str(user.username))
+        payload.append(
+            {
+                "user_id": int(user.id),
+                "username": str(user.username),
+                "display_name": display_name,
+                "status": str(row.status) if row is not None else "offline",
+                "status_message": row.status_message if row is not None else None,
+                "last_seen_at": row.last_seen_at.isoformat() if row is not None and row.last_seen_at else None,
+                "updated_at": row.updated_at.isoformat() if row is not None and row.updated_at else None,
+            }
+        )
+
+    return jsonify({"count": len(payload), "items": payload})
+
+
+@v2_bp.get("/dedupe/workbench")
+@login_required
+@roles_required("admin", "staff")
+def dedupe_workbench_route():
+    """Return cross-entity duplicate candidates and donor merge opportunities."""
+    from ngo_homesuite.models.core import Beneficiary, Volunteer
+
+    entity_scope = str(request.args.get("entity_scope") or "all").strip().lower()
+    if entity_scope not in {"all", "donor", "beneficiary", "volunteer"}:
+        return jsonify({"error": "entity_scope must be one of all, donor, beneficiary, volunteer"}), 400
+
+    limit_raw = request.args.get("limit", "100")
+    max_scan_raw = request.args.get("max_scan", "2000")
+    try:
+        limit = max(1, min(500, int(limit_raw)))
+        max_scan = max(100, min(20000, int(max_scan_raw)))
+    except (TypeError, ValueError):
+        return jsonify({"error": "limit and max_scan must be integers"}), 400
+
+    org_id = _org_id()
+    include_donor = entity_scope in {"all", "donor"}
+    include_beneficiary = entity_scope in {"all", "beneficiary"}
+    include_volunteer = entity_scope in {"all", "volunteer"}
+
+    records: list[dict[str, Any]] = []
+
+    donor_gift_counts: dict[int, int] = {}
+    if include_donor:
+        donor_rows = list(
+            db.session.scalars(
+                select(Donor)
+                .where(Donor.organization_id == org_id)
+                .order_by(Donor.id.asc())
+                .limit(max_scan)
+            )
+        )
+        donor_ids = [int(row.id) for row in donor_rows]
+        if donor_ids:
+            donor_gift_counts_stmt = (
+                select(Donation.donor_id, func.count(Donation.id))
+                .where(
+                    Donation.organization_id == org_id,
+                    Donation.donor_id.in_(donor_ids),
+                )
+                .group_by(Donation.donor_id)
+            )
+            gift_rows = db.session.execute(donor_gift_counts_stmt).all()
+            donor_gift_counts = {int(donor_id): int(count or 0) for donor_id, count in gift_rows}
+
+        for donor in donor_rows:
+            records.append(
+                {
+                    "entity_type": "donor",
+                    "entity_id": int(donor.id),
+                    "name": str(donor.name or "").strip(),
+                    "email": _normalize_email(donor.email),
+                    "phone": _normalize_phone(donor.phone),
+                    "raw_phone": str(donor.phone or "").strip(),
+                    "donation_count": int(donor_gift_counts.get(int(donor.id), 0)),
+                }
+            )
+
+    if include_beneficiary:
+        beneficiary_rows = list(
+            db.session.scalars(
+                select(Beneficiary)
+                .where(Beneficiary.organization_id == org_id)
+                .order_by(Beneficiary.id.asc())
+                .limit(max_scan)
+            )
+        )
+        for beneficiary in beneficiary_rows:
+            full_name = f"{str(beneficiary.first_name or '').strip()} {str(beneficiary.last_name or '').strip()}".strip()
+            records.append(
+                {
+                    "entity_type": "beneficiary",
+                    "entity_id": int(beneficiary.id),
+                    "name": full_name,
+                    "email": _normalize_email(beneficiary.email),
+                    "phone": _normalize_phone(beneficiary.phone),
+                    "raw_phone": str(beneficiary.phone or "").strip(),
+                    "donation_count": 0,
+                }
+            )
+
+    if include_volunteer:
+        volunteer_rows = list(
+            db.session.scalars(
+                select(Volunteer)
+                .where(Volunteer.organization_id == org_id)
+                .order_by(Volunteer.id.asc())
+                .limit(max_scan)
+            )
+        )
+        for volunteer in volunteer_rows:
+            records.append(
+                {
+                    "entity_type": "volunteer",
+                    "entity_id": int(volunteer.id),
+                    "name": str(volunteer.name or "").strip(),
+                    "email": _normalize_email(volunteer.email),
+                    "phone": _normalize_phone(volunteer.phone),
+                    "raw_phone": str(volunteer.phone or "").strip(),
+                    "donation_count": 0,
+                }
+            )
+
+    by_email: dict[str, list[dict[str, Any]]] = {}
+    by_name_phone: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        email_key = _normalize_email(record.get("email"))
+        if email_key:
+            by_email.setdefault(email_key, []).append(record)
+
+        name_key = _normalize_text(record.get("name"))
+        phone_key = _normalize_phone(record.get("phone"))
+        if name_key and phone_key:
+            by_name_phone.setdefault(f"{name_key}::{phone_key}", []).append(record)
+
+    candidate_map: dict[str, dict[str, Any]] = {}
+
+    def _add_candidates(reason: str, key_prefix: str, groups: dict[str, list[dict[str, Any]]]) -> None:
+        for key, rows in groups.items():
+            if len(rows) < 2:
+                continue
+            candidate_records = [
+                {
+                    "entity_type": str(item.get("entity_type") or ""),
+                    "entity_id": int(item.get("entity_id") or 0),
+                    "name": str(item.get("name") or ""),
+                    "email": str(item.get("email") or ""),
+                    "phone": str(item.get("raw_phone") or ""),
+                    "donation_count": int(item.get("donation_count") or 0),
+                }
+                for item in rows
+            ]
+            candidate_records.sort(
+                key=lambda row: (
+                    str(row.get("entity_type") or ""),
+                    int(row.get("entity_id") or 0),
+                )
+            )
+            signature = "|".join(
+                f"{row['entity_type']}:{row['entity_id']}"
+                for row in candidate_records
+            )
+            candidate_key = f"{reason}:{signature}"
+            mergeable_donors = [r for r in candidate_records if r["entity_type"] == "donor"]
+            best_primary = None
+            if len(mergeable_donors) >= 2:
+                best_primary = sorted(
+                    mergeable_donors,
+                    key=lambda r: (
+                        -int(r.get("donation_count") or 0),
+                        int(r.get("entity_id") or 0),
+                    ),
+                )[0]
+
+            candidate_map[candidate_key] = {
+                "reason": reason,
+                "match_key": f"{key_prefix}:{key}",
+                "confidence": round(_dedupe_confidence(reason, len(candidate_records)), 2),
+                "records": candidate_records,
+                "record_count": int(len(candidate_records)),
+                "merge_supported": bool(len(mergeable_donors) >= 2),
+                "suggested_primary_donor_id": int(best_primary["entity_id"]) if best_primary else None,
+            }
+
+    _add_candidates("matching_email", "email", by_email)
+    _add_candidates("matching_name_phone", "name_phone", by_name_phone)
+
+    candidates = list(candidate_map.values())
+    candidates.sort(
+        key=lambda row: (
+            -float(row.get("confidence") or 0.0),
+            -int(row.get("record_count") or 0),
+            str(row.get("match_key") or ""),
+        )
+    )
+
+    return jsonify(
+        {
+            "organization_id": int(org_id),
+            "entity_scope": entity_scope,
+            "count": int(len(candidates)),
+            "candidates": candidates[:limit],
+            "meta": {
+                "limit": int(limit),
+                "max_scan": int(max_scan),
+                "implemented_actions": ["donor_merge", "cross_entity_review"],
+            },
+        }
+    ), 200
+
+
+@v2_bp.post("/dedupe/workbench/merge")
+@login_required
+@roles_required("admin", "staff")
+def dedupe_workbench_merge_route():
+    """Merge duplicate donor records from the dedupe workbench."""
+    from ngo_homesuite.services.donor_service import DonorNotFound, DonorService
+
+    data = _json_or_400(["primary_donor_id", "duplicate_donor_id"])
+    try:
+        primary_donor_id = int(data.get("primary_donor_id") or 0)
+        duplicate_donor_id = int(data.get("duplicate_donor_id") or 0)
+    except (TypeError, ValueError):
+        return jsonify({"error": "primary_donor_id and duplicate_donor_id must be integers"}), 400
+
+    if primary_donor_id <= 0 or duplicate_donor_id <= 0 or primary_donor_id == duplicate_donor_id:
+        return jsonify({"error": "primary_donor_id and duplicate_donor_id must be distinct positive integers"}), 400
+
+    dry_run = bool(data.get("dry_run", False))
+    service = DonorService()
+    org_id = _org_id()
+
+    try:
+        primary = service.get_donor(primary_donor_id, org_id)
+        duplicate = service.get_donor(duplicate_donor_id, org_id)
+    except DonorNotFound:
+        return jsonify({"error": "donor not found"}), 404
+
+    duplicate_donation_count = int(
+        db.session.scalar(
+            select(func.count(Donation.id)).where(
+                Donation.organization_id == org_id,
+                Donation.donor_id == int(duplicate.id),
+            )
+        )
+        or 0
+    )
+
+    if dry_run:
+        return jsonify(
+            {
+                "dry_run": True,
+                "merge_supported": True,
+                "primary": {
+                    "id": int(primary.id),
+                    "name": str(primary.name or ""),
+                    "email": str(primary.email or ""),
+                },
+                "duplicate": {
+                    "id": int(duplicate.id),
+                    "name": str(duplicate.name or ""),
+                    "email": str(duplicate.email or ""),
+                },
+                "impact": {
+                    "duplicate_donation_count": duplicate_donation_count,
+                },
+            }
+        ), 200
+
+    try:
+        merged_primary, merged_duplicate = service.merge_donors(org_id, int(primary.id), int(duplicate.id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify(
+        {
+            "merged": True,
+            "primary_donor_id": int(merged_primary.id),
+            "removed_donor_id": int(merged_duplicate.id),
+            "relinked": {
+                "donations": duplicate_donation_count,
+            },
+        }
+    ), 200
 
 
 def _tracking_ip_limited() -> bool:
@@ -806,6 +1556,346 @@ def task_board():
             "summary": board["summary"],
             "tasks": [_task_dict(t, labels=labels) for t in tasks],
             "reminder_candidates": reminders,
+        }
+    )
+
+
+def _parse_optional_iso_datetime(value: Any, *, field_name: str) -> datetime | None:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    try:
+        normalized = raw.replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must be ISO datetime") from exc
+    if parsed.tzinfo is not None:
+        return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+def _project_milestone_dict(milestone) -> dict[str, Any]:
+    return {
+        "id": int(milestone.id),
+        "organization_id": int(milestone.organization_id),
+        "project_id": int(milestone.project_id),
+        "title": str(milestone.title),
+        "description": milestone.description,
+        "due_date": milestone.due_date.isoformat() if milestone.due_date else None,
+        "status": str(milestone.status or "planned"),
+        "owner_user_id": int(milestone.owner_user_id) if milestone.owner_user_id else None,
+        "completed_at": milestone.completed_at.isoformat() if milestone.completed_at else None,
+        "created_at": milestone.created_at.isoformat() if milestone.created_at else None,
+        "updated_at": milestone.updated_at.isoformat() if milestone.updated_at else None,
+    }
+
+
+@v2_bp.route("/projects/<int:project_id>/milestones", methods=["GET"])
+@login_required
+@roles_required("admin", "staff", "viewer")
+def list_project_milestones(project_id: int):
+    from ngo_homesuite.models.core import Project, ProjectMilestone
+
+    project = db.session.scalar(
+        select(Project).where(Project.id == project_id, Project.organization_id == _org_id()).limit(1)
+    )
+    if project is None:
+        return jsonify({"error": "project not found"}), 404
+
+    milestones = list(
+        db.session.scalars(
+            select(ProjectMilestone)
+            .where(
+                ProjectMilestone.organization_id == _org_id(),
+                ProjectMilestone.project_id == int(project_id),
+            )
+            .order_by(ProjectMilestone.due_date.asc(), ProjectMilestone.created_at.asc())
+        )
+    )
+    return jsonify({"count": len(milestones), "milestones": [_project_milestone_dict(item) for item in milestones]})
+
+
+@v2_bp.route("/projects/<int:project_id>/milestones", methods=["POST"])
+@login_required
+@roles_required("admin", "staff")
+def create_project_milestone(project_id: int):
+    from ngo_homesuite.models.core import Project, ProjectMilestone
+
+    project = db.session.scalar(
+        select(Project).where(Project.id == project_id, Project.organization_id == _org_id()).limit(1)
+    )
+    if project is None:
+        return jsonify({"error": "project not found"}), 404
+
+    data = _json_or_400(required=["title"])
+    title = str(data.get("title") or "").strip()
+    if not title:
+        return jsonify({"error": "title is required"}), 400
+
+    status = str(data.get("status") or "planned").strip().lower()
+    if status not in {"planned", "in_progress", "completed", "blocked"}:
+        return jsonify({"error": "status must be one of: planned, in_progress, completed, blocked"}), 400
+
+    try:
+        due_date = _parse_optional_iso_datetime(data.get("due_date"), field_name="due_date")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    owner_user_id = data.get("owner_user_id")
+    if owner_user_id is not None:
+        try:
+            owner_user_id = int(owner_user_id)
+        except (TypeError, ValueError):
+            return jsonify({"error": "owner_user_id must be an integer"}), 400
+
+    completed_at = _utcnow_naive() if status == "completed" else None
+    milestone = ProjectMilestone(
+        organization_id=_org_id(),
+        project_id=int(project_id),
+        title=title,
+        description=(str(data.get("description") or "").strip() or None),
+        due_date=due_date,
+        status=status,
+        owner_user_id=owner_user_id,
+        completed_at=completed_at,
+    )
+    db.session.add(milestone)
+    db.session.commit()
+    return jsonify(_project_milestone_dict(milestone)), 201
+
+
+@v2_bp.route("/projects/<int:project_id>/milestones/<int:milestone_id>", methods=["PATCH"])
+@login_required
+@roles_required("admin", "staff")
+def update_project_milestone(project_id: int, milestone_id: int):
+    from ngo_homesuite.models.core import ProjectMilestone
+
+    milestone = db.session.scalar(
+        select(ProjectMilestone).where(
+            ProjectMilestone.id == milestone_id,
+            ProjectMilestone.project_id == project_id,
+            ProjectMilestone.organization_id == _org_id(),
+        ).limit(1)
+    )
+    if milestone is None:
+        return jsonify({"error": "milestone not found"}), 404
+
+    data = _json_or_400()
+
+    if "title" in data:
+        title = str(data.get("title") or "").strip()
+        if not title:
+            return jsonify({"error": "title cannot be empty"}), 400
+        milestone.title = title
+    if "description" in data:
+        milestone.description = (str(data.get("description") or "").strip() or None)
+    if "status" in data:
+        status = str(data.get("status") or "").strip().lower()
+        if status not in {"planned", "in_progress", "completed", "blocked"}:
+            return jsonify({"error": "status must be one of: planned, in_progress, completed, blocked"}), 400
+        milestone.status = status
+        milestone.completed_at = _utcnow_naive() if status == "completed" else None
+    if "owner_user_id" in data:
+        owner_raw = data.get("owner_user_id")
+        if owner_raw in (None, ""):
+            milestone.owner_user_id = None
+        else:
+            try:
+                milestone.owner_user_id = int(owner_raw)
+            except (TypeError, ValueError):
+                return jsonify({"error": "owner_user_id must be an integer"}), 400
+    if "due_date" in data:
+        try:
+            milestone.due_date = _parse_optional_iso_datetime(data.get("due_date"), field_name="due_date")
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+
+    db.session.commit()
+    return jsonify(_project_milestone_dict(milestone)), 200
+
+
+@v2_bp.route("/tasks/<int:task_id>/dependencies", methods=["POST"])
+@login_required
+@roles_required("admin", "staff")
+def create_task_dependency(task_id: int):
+    from ngo_homesuite.models.core import Task, TaskDependency
+
+    task = db.session.scalar(
+        select(Task).where(Task.id == task_id, Task.organization_id == _org_id()).limit(1)
+    )
+    if task is None:
+        return jsonify({"error": "task not found"}), 404
+
+    data = _json_or_400(required=["depends_on_task_id"])
+    try:
+        depends_on_task_id = int(data.get("depends_on_task_id"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "depends_on_task_id must be an integer"}), 400
+
+    if int(task_id) == int(depends_on_task_id):
+        return jsonify({"error": "task cannot depend on itself"}), 400
+
+    depends_on = db.session.scalar(
+        select(Task).where(Task.id == depends_on_task_id, Task.organization_id == _org_id()).limit(1)
+    )
+    if depends_on is None:
+        return jsonify({"error": "depends_on task not found"}), 404
+    if task.project_id and depends_on.project_id and int(task.project_id) != int(depends_on.project_id):
+        return jsonify({"error": "dependency tasks must belong to the same project"}), 400
+
+    dependency_type = str(data.get("dependency_type") or "blocks").strip().lower()
+    if dependency_type not in {"blocks", "related"}:
+        return jsonify({"error": "dependency_type must be one of: blocks, related"}), 400
+
+    dependency = TaskDependency(
+        organization_id=_org_id(),
+        task_id=int(task.id),
+        depends_on_task_id=int(depends_on.id),
+        dependency_type=dependency_type,
+    )
+    db.session.add(dependency)
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"error": "dependency already exists"}), 409
+
+    return jsonify(
+        {
+            "id": int(dependency.id),
+            "task_id": int(dependency.task_id),
+            "depends_on_task_id": int(dependency.depends_on_task_id),
+            "dependency_type": str(dependency.dependency_type),
+            "created_at": dependency.created_at.isoformat() if dependency.created_at else None,
+        }
+    ), 201
+
+
+@v2_bp.route("/tasks/<int:task_id>/dependencies/<int:depends_on_task_id>", methods=["DELETE"])
+@login_required
+@roles_required("admin", "staff")
+def delete_task_dependency(task_id: int, depends_on_task_id: int):
+    from ngo_homesuite.models.core import TaskDependency
+
+    dependency = db.session.scalar(
+        select(TaskDependency).where(
+            TaskDependency.organization_id == _org_id(),
+            TaskDependency.task_id == int(task_id),
+            TaskDependency.depends_on_task_id == int(depends_on_task_id),
+        ).limit(1)
+    )
+    if dependency is None:
+        return jsonify({"error": "dependency not found"}), 404
+
+    db.session.delete(dependency)
+    db.session.commit()
+    return jsonify({"removed": True, "task_id": int(task_id), "depends_on_task_id": int(depends_on_task_id)}), 200
+
+
+@v2_bp.route("/projects/<int:project_id>/board", methods=["GET"])
+@login_required
+@roles_required("admin", "staff", "viewer")
+def project_board(project_id: int):
+    from ngo_homesuite.models.core import Project, ProjectMilestone, Task, TaskDependency
+
+    project = db.session.scalar(
+        select(Project).where(Project.id == int(project_id), Project.organization_id == _org_id()).limit(1)
+    )
+    if project is None:
+        return jsonify({"error": "project not found"}), 404
+
+    tasks = list(
+        db.session.scalars(
+            select(Task)
+            .where(Task.organization_id == _org_id(), Task.project_id == int(project_id))
+            .order_by(Task.status.asc(), Task.priority.asc(), Task.created_at.asc())
+        )
+    )
+    labels = _task_labels(_org_id(), tasks)
+
+    task_ids = [int(task.id) for task in tasks]
+    dependencies = []
+    dependency_by_task: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    blocked_task_ids: set[int] = set()
+    prerequisite_ids: set[int] = set()
+
+    if task_ids:
+        dependency_rows = list(
+            db.session.scalars(
+                select(TaskDependency).where(
+                    TaskDependency.organization_id == _org_id(),
+                    TaskDependency.task_id.in_(task_ids),
+                )
+            )
+        )
+        prerequisite_ids = {int(row.depends_on_task_id) for row in dependency_rows}
+        prerequisite_map = {
+            int(row.id): row
+            for row in db.session.scalars(
+                select(Task).where(Task.organization_id == _org_id(), Task.id.in_(prerequisite_ids))
+            )
+        }
+
+        for row in dependency_rows:
+            prereq = prerequisite_map.get(int(row.depends_on_task_id))
+            dependency_payload = {
+                "depends_on_task_id": int(row.depends_on_task_id),
+                "dependency_type": str(row.dependency_type),
+                "depends_on_status": str(prereq.status) if prereq is not None else None,
+                "is_blocking": bool(
+                    row.dependency_type == "blocks"
+                    and prereq is not None
+                    and str(prereq.status or "").lower() != "done"
+                ),
+            }
+            dependency_by_task[int(row.task_id)].append(dependency_payload)
+            dependencies.append({"task_id": int(row.task_id), **dependency_payload})
+            if dependency_payload["is_blocking"]:
+                blocked_task_ids.add(int(row.task_id))
+
+    milestones = list(
+        db.session.scalars(
+            select(ProjectMilestone)
+            .where(
+                ProjectMilestone.organization_id == _org_id(),
+                ProjectMilestone.project_id == int(project_id),
+            )
+            .order_by(ProjectMilestone.due_date.asc(), ProjectMilestone.created_at.asc())
+        )
+    )
+
+    task_payload = []
+    for task in tasks:
+        item = _task_dict(task, labels=labels)
+        item["dependencies"] = dependency_by_task.get(int(task.id), [])
+        item["blocked"] = int(task.id) in blocked_task_ids
+        task_payload.append(item)
+
+    status_counts: dict[str, int] = defaultdict(int)
+    for task in tasks:
+        status_counts[str(task.status or "open")] += 1
+
+    milestone_completed = sum(1 for milestone in milestones if str(milestone.status or "").lower() == "completed")
+
+    return jsonify(
+        {
+            "project": {
+                "id": int(project.id),
+                "name": str(project.name),
+                "status": str(project.status or "planned"),
+            },
+            "summary": {
+                "total_tasks": len(tasks),
+                "blocked_tasks": len(blocked_task_ids),
+                "status_counts": dict(status_counts),
+                "milestones_total": len(milestones),
+                "milestones_completed": milestone_completed,
+            },
+            "tasks": task_payload,
+            "dependencies": dependencies,
+            "milestones": [_project_milestone_dict(item) for item in milestones],
         }
     )
 
@@ -2505,7 +3595,7 @@ def campaign_email_click_redirect():
 @v2_bp.get("/campaigns/email/unsubscribe")
 def campaign_email_unsubscribe():
     """Process an unsubscribe request via a signed link from a campaign email."""
-    from ngo_homesuite.services.campaign_email_service import verify_unsub_signature
+    from ngo_homesuite.services.campaign_email_service import upsert_campaign_communication_preference, verify_unsub_signature
     from ngo_homesuite.models.core import CampaignEmailOptOut
 
     email = request.args.get("email", "").strip().lower()
@@ -2559,6 +3649,17 @@ def campaign_email_unsubscribe():
         except Exception:
             db.session.rollback()
 
+    try:
+        upsert_campaign_communication_preference(
+            org_id,
+            email=email,
+            donor_id=donor_id if donor_id > 0 else None,
+            campaign_opt_in=False,
+            source="unsubscribe_link",
+        )
+    except Exception:
+        db.session.rollback()
+
     return (
         "<html><head><title>Unsubscribed</title>"
         "<style>body{font-family:Arial,sans-serif;max-width:480px;margin:80px auto;text-align:center;}</style></head>"
@@ -2566,6 +3667,128 @@ def campaign_email_unsubscribe():
         "<p>You will no longer receive campaign emails from this organization.</p>"
         "</body></html>"
     ), 200
+
+
+@v2_bp.route("/campaigns/email/preferences", methods=["GET", "POST", "PATCH"])
+def campaign_email_preferences_public_route():
+    """Public, signed preference-center endpoint used by outbound campaign links."""
+    from ngo_homesuite.services.campaign_email_service import (
+        get_campaign_communication_preference,
+        upsert_campaign_communication_preference,
+        verify_preference_signature,
+    )
+
+    body = request.get_json(silent=True) or {}
+    email = str(request.args.get("email") or body.get("email") or "").strip().lower()
+    org_id_raw = request.args.get("organization_id") or body.get("organization_id") or "0"
+    donor_id_raw = request.args.get("donor_id") or body.get("donor_id") or "0"
+    ts_raw = request.args.get("ts") or body.get("ts") or "0"
+    sig = str(request.args.get("sig") or body.get("sig") or "").strip()
+
+    try:
+        organization_id = int(org_id_raw)
+        donor_id = int(donor_id_raw)
+        issued_at = int(ts_raw)
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid signed preference link"}), 400
+
+    if organization_id <= 0 or not email or not sig:
+        return jsonify({"error": "invalid signed preference link"}), 400
+
+    if not verify_preference_signature(
+        email=email,
+        organization_id=organization_id,
+        donor_id=donor_id,
+        issued_at=issued_at,
+        signature=sig,
+    ):
+        return jsonify({"error": "invalid or expired preference link"}), 400
+
+    if request.method == "GET":
+        payload = get_campaign_communication_preference(
+            organization_id,
+            email=email,
+            donor_id=donor_id if donor_id > 0 else None,
+        )
+        payload["signed"] = {
+            "email": email,
+            "organization_id": organization_id,
+            "donor_id": donor_id,
+            "ts": issued_at,
+        }
+        return jsonify(payload), 200
+
+    try:
+        payload = upsert_campaign_communication_preference(
+            organization_id,
+            email=email,
+            donor_id=donor_id if donor_id > 0 else None,
+            newsletter_opt_in=_bool_or_none(body.get("newsletter_opt_in"), field_name="newsletter_opt_in"),
+            campaign_opt_in=_bool_or_none(body.get("campaign_opt_in"), field_name="campaign_opt_in"),
+            events_opt_in=_bool_or_none(body.get("events_opt_in"), field_name="events_opt_in"),
+            volunteer_opt_in=_bool_or_none(body.get("volunteer_opt_in"), field_name="volunteer_opt_in"),
+            digest_frequency=str(body.get("digest_frequency") or "").strip().lower() or None,
+            source="public_preference_center",
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify(payload), 200
+
+
+@v2_bp.get("/campaigns/email/preferences/donors/<int:donor_id>")
+@login_required
+@roles_required("admin", "staff")
+def campaign_email_preferences_donor_get_route(donor_id: int):
+    """Authenticated preference lookup for internal campaign/newsletter operations."""
+    from ngo_homesuite.services.campaign_email_service import get_campaign_communication_preference
+
+    donor = db.session.get(Donor, int(donor_id))
+    if donor is None or int(donor.organization_id) != _org_id():
+        return jsonify({"error": "Donor not found"}), 404
+    if not donor.email:
+        return jsonify({"error": "Donor does not have an email address"}), 400
+
+    payload = get_campaign_communication_preference(
+        _org_id(),
+        email=str(donor.email),
+        donor_id=int(donor.id),
+    )
+    payload["donor"] = {"id": int(donor.id), "name": str(donor.name or "")}
+    return jsonify(payload), 200
+
+
+@v2_bp.patch("/campaigns/email/preferences/donors/<int:donor_id>")
+@login_required
+@roles_required("admin", "staff")
+def campaign_email_preferences_donor_patch_route(donor_id: int):
+    """Authenticated preference update for internal campaign/newsletter operations."""
+    from ngo_homesuite.services.campaign_email_service import upsert_campaign_communication_preference
+
+    donor = db.session.get(Donor, int(donor_id))
+    if donor is None or int(donor.organization_id) != _org_id():
+        return jsonify({"error": "Donor not found"}), 404
+    if not donor.email:
+        return jsonify({"error": "Donor does not have an email address"}), 400
+
+    data = request.get_json(silent=True) or {}
+    try:
+        payload = upsert_campaign_communication_preference(
+            _org_id(),
+            email=str(donor.email),
+            donor_id=int(donor.id),
+            newsletter_opt_in=_bool_or_none(data.get("newsletter_opt_in"), field_name="newsletter_opt_in"),
+            campaign_opt_in=_bool_or_none(data.get("campaign_opt_in"), field_name="campaign_opt_in"),
+            events_opt_in=_bool_or_none(data.get("events_opt_in"), field_name="events_opt_in"),
+            volunteer_opt_in=_bool_or_none(data.get("volunteer_opt_in"), field_name="volunteer_opt_in"),
+            digest_frequency=str(data.get("digest_frequency") or "").strip().lower() or None,
+            source="staff_console",
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    payload["donor"] = {"id": int(donor.id), "name": str(donor.name or "")}
+    return jsonify(payload), 200
 
 
 # ---------------------------------------------------------------------------
