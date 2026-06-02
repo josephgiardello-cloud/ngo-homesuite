@@ -83,6 +83,67 @@ Note on depth and maturity:
 - Source spec file is maintained in `docs/openapi.yaml`
 - Includes stable `operationId` values and reusable component schemas for tooling/client generation
 
+#### Campaign Email API Quick Examples
+
+Preview recipients with advanced audience filters:
+
+```bash
+curl -X POST "http://localhost:5000/api/v2/campaigns/42/emails/preview" \
+   -H "Content-Type: application/json" \
+   -b "session=dev-admin-session" \
+   -d '{
+      "subject": "Filtered preview message",
+      "body": "Hi {name}, here is your impact update for {campaign_name}.",
+      "audience": {
+         "min_total_given": 300,
+         "max_total_given": 500,
+         "min_gift_count": 2,
+         "max_gift_count": 3,
+         "gifted_between_days_min": 1,
+         "gifted_between_days_max": 90
+      }
+   }'
+```
+
+Expected preview response highlights:
+- `total_recipients`
+- `recipient_breakdown.by_donor_type`
+- `recipient_breakdown.by_total_giving_band`
+- `recipient_breakdown.by_gift_count_band`
+- `recipient_breakdown.by_recency_band`
+- `audience_applied`
+- `quality_hints`
+- `sample_preview`
+
+Send to an advanced audience segment:
+
+```bash
+curl -X POST "http://localhost:5000/api/v2/campaigns/42/emails/send" \
+   -H "Content-Type: application/json" \
+   -b "session=dev-admin-session" \
+   -d '{
+      "subject": "Quarterly impact update",
+      "body": "Hi {name}, your support powers {campaign_name}.",
+      "audience": {
+         "donor_types": ["individual"],
+         "min_total_given": 300,
+         "max_total_given": 1500,
+         "min_gift_count": 2,
+         "max_gift_count": 8,
+         "gifted_between_days_min": 7,
+         "gifted_between_days_max": 180,
+         "lapsed_days_min": 30
+      },
+      "compliance": {
+         "reviewer_name": "Ops Reviewer",
+         "reviewer_role": "Staff"
+      },
+      "dry_run": false
+   }'
+```
+
+See `docs/openapi.yaml` for complete schema details and all optional audience keys (including `smart_group_id` and `smart_group_rules`).
+
 ### 🚀 High-ROI Workflow Layer
 - Experimental domain graph snapshot endpoint at `/api/domain/snapshot` (Donor/Campaign/Grant/Beneficiary/Program/Outcome)
 - Experimental semantic task context endpoint at `/api/semantic/context?task=...`

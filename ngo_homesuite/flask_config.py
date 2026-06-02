@@ -134,7 +134,16 @@ class Config:
 
     # 2FA enforcement policy
     # Roles in this list are required to enroll in TOTP before accessing the app.
-    ROLES_REQUIRING_2FA: list[str] = ['admin']
+    # Set ROLES_REQUIRING_2FA="" in local dev to disable forced enrollment.
+    _roles_requiring_2fa_raw = os.environ.get('ROLES_REQUIRING_2FA')
+    if _roles_requiring_2fa_raw is None:
+        ROLES_REQUIRING_2FA: list[str] = ['admin']
+    else:
+        ROLES_REQUIRING_2FA: list[str] = [
+            role.strip()
+            for role in _roles_requiring_2fa_raw.split(',')
+            if role.strip()
+        ]
     # Step-up auth session window in seconds (15 minutes).
     STEP_UP_AUTH_TTL_SECONDS: int = 900
 

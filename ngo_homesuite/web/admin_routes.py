@@ -4,11 +4,11 @@ All endpoints require the 'admin' role.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timedelta
 import re
 from typing import Any
 
-from flask import Blueprint, jsonify, render_template, request
+from flask import Blueprint, current_app, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 from sqlalchemy import func, select
 
@@ -571,6 +571,129 @@ def grant_budget_workbench_page():
         "admin/grant_budget_workbench.html",
         active_page="grant_budget_workbench",
     )
+
+
+@admin_bp.get("/grants/intelligence")
+@login_required
+@roles_required("admin", "staff")
+def grant_intelligence_workbench_page():
+    """Render the grant intelligence workbench UI."""
+    return render_template(
+        "admin/grant_intelligence_workbench.html",
+        active_page="grant_intelligence_workbench",
+    )
+
+
+@admin_bp.get("/grants/list")
+@login_required
+@roles_required("admin", "staff")
+def grants_list_route():
+    """List internal grants for readiness selection in Grant Intelligence UI."""
+    from ngo_homesuite.models.core import Grant, db
+
+    grants = db.session.scalars(
+        select(Grant)
+        .where(Grant.organization_id == _org_id())
+        .order_by(Grant.created_at.desc(), Grant.id.desc())
+        .limit(100)
+    ).all()
+
+    rows = [
+        {
+            "id": int(grant.id),
+            "title": str(grant.title or "Untitled Grant"),
+            "status": str(grant.status or ""),
+            "funder_name": str(grant.funder_name or ""),
+        }
+        for grant in grants
+    ]
+    return jsonify({"count": len(rows), "results": rows}), 200
+
+
+@admin_bp.post("/grants/demo-seed")
+@login_required
+@roles_required("admin", "staff")
+def grants_demo_seed_route():
+    """Create a demo internal grant for local readiness exploration."""
+    from ngo_homesuite.models.core import Grant, db
+
+    existing = db.session.scalars(
+        select(Grant)
+        .where(Grant.organization_id == _org_id())
+        .order_by(Grant.id.asc())
+        .limit(1)
+    ).first()
+    if existing is not None:
+        return jsonify({"created": False, "grant_id": int(existing.id), "title": str(existing.title or "Untitled Grant")}), 200
+
+    grant = Grant(
+        organization_id=_org_id(),
+        title="Community Services Expansion FY2026",
+        funder_name="State Community Development Office",
+        funder_type="government",
+        description="Demo grant record for readiness checks in Grant Intelligence.",
+        amount_requested=120000.0,
+        status="in_progress",
+        application_deadline=(date.today() + timedelta(days=21)),
+        report_due_date=(date.today() + timedelta(days=120)),
+        requirements="Narrative, budget detail, safeguarding policy, and outcomes baseline.",
+        notes="Auto-seeded from Grant Intelligence demo flow.",
+    )
+    db.session.add(grant)
+    db.session.commit()
+
+    return jsonify({"created": True, "grant_id": int(grant.id), "title": str(grant.title)}), 201
+
+
+@admin_bp.get("/grants/opportunities/search")
+@login_required
+@roles_required("admin", "staff")
+def grant_opportunity_search_route():
+    """Search external grant opportunities from the grant section."""
+    from ngo_homesuite.grants.services.facade import GrantsFacade
+
+    # If this endpoint is opened directly in a browser tab, route back to the
+    # workbench and let the page render results in-place instead of showing raw JSON.
+    if "text/html" in str(request.headers.get("Accept") or "") and not request.args.get("format"):
+        passthrough_params: dict[str, str] = {}
+        for key in ("q", "applicant_profile", "requested_amount", "limit"):
+            value = (request.args.get(key) or "").strip()
+            if value:
+                passthrough_params[key] = value
+        passthrough_params["auto_search"] = "1"
+        return redirect(url_for("admin.grant_intelligence_workbench_page", **passthrough_params))
+
+    q = (request.args.get("q") or "").strip() or None
+    applicant_profile = (request.args.get("applicant_profile") or "").strip() or None
+    requested_amount_raw = request.args.get("requested_amount")
+    limit = request.args.get("limit", 25, type=int)
+
+    requested_amount = None
+    if requested_amount_raw not in (None, ""):
+        try:
+            requested_amount = float(requested_amount_raw)
+        except (TypeError, ValueError):
+            return jsonify({"error": "requested_amount must be numeric"}), 400
+
+    facade = GrantsFacade()
+    try:
+        results = facade.search_grants_gov_opportunities(
+            _org_id(),
+            q=q,
+            applicant_profile=applicant_profile,
+            requested_amount=requested_amount,
+            limit=max(1, min(limit, 100)),
+        )
+    except Exception:
+        current_app.logger.exception("grant_opportunity_search_failed")
+        return jsonify(
+            {
+                "count": 0,
+                "results": [],
+                "warning": "Opportunity feed is temporarily unavailable. Please retry in a moment.",
+            }
+        ), 200
+    return jsonify({"count": len(results), "results": results})
 
 
 @admin_bp.get("/compliance/p2p/<int:page_id>/fraud-score")

@@ -1,11 +1,17 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
+import io
 import json
 import logging
+import re
+from threading import Lock
+from time import monotonic
 from typing import Any, Optional
+from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 import xml.etree.ElementTree as ET
+import zipfile
 
 from flask import current_app, has_app_context
 from sqlalchemy import select
@@ -17,6 +23,9 @@ from ngo_homesuite.models.core import db
 logger = logging.getLogger(__name__)
 
 _DEFAULT_XML_EXTRACT_URL = "https://www.grants.gov/xml-extract"
+_DEFAULT_CACHE_TTL_SECONDS = 900
+_GRANTS_FEED_CACHE_LOCK = Lock()
+_GRANTS_FEED_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 
 # ---------------------------------------------------------------------------
 # Grants.gov XML feed field constants
@@ -46,6 +55,15 @@ _FIELD_CLOSE_DATE = (
     "ApplicationDueDate",
     "closeDate",
     "ClosingDate",
+)
+_FIELD_POST_DATE = (
+    "PostDate",
+    "PostedDate",
+    "OpenDate",
+)
+_FIELD_ARCHIVE_DATE = (
+    "ArchiveDate",
+    "ArchivedDate",
 )
 _FIELD_AWARD_FLOOR = (
     "AwardFloor",
@@ -128,6 +146,31 @@ def _normalize_tag(tag: str) -> str:
 def _tokenize(text: str) -> set[str]:
     raw = "".join(ch.lower() if ch.isalnum() else " " for ch in str(text or ""))
     return {token for token in raw.split() if len(token) >= 3}
+
+
+def _infer_record_year(record: dict[str, Any]) -> int | None:
+    text = " ".join(
+        [
+            str(record.get("title") or ""),
+            str(record.get("summary") or ""),
+            str(record.get("program_name") or ""),
+        ]
+    )
+    years: set[int] = set()
+
+    for match in re.findall(r"\b(19\d{2}|20\d{2})\b", text):
+        try:
+            years.add(int(match))
+        except ValueError:
+            continue
+
+    for match in re.findall(r"\bFY\s*[-_ ]?(\d{2})\b", text, flags=re.IGNORECASE):
+        value = int(match)
+        years.add(2000 + value if value <= 30 else 1900 + value)
+
+    if not years:
+        return None
+    return max(years)
 
 
 def _coerce_date(value: Any) -> date | None:
@@ -221,6 +264,8 @@ def _normalize_grants_gov_record(node: ET.Element) -> dict[str, Any]:
         "funder_name": funder_name,
         "program_name": program_name,
         "deadline": _coerce_date(_find_text(node, *_FIELD_CLOSE_DATE)),
+        "post_date": _coerce_date(_find_text(node, *_FIELD_POST_DATE)),
+        "archive_date": _coerce_date(_find_text(node, *_FIELD_ARCHIVE_DATE)),
         "amount_min": _coerce_float(_find_text(node, *_FIELD_AWARD_FLOOR)),
         "amount_max": _coerce_float(_find_text(node, *_FIELD_AWARD_CEILING)),
         "summary": summary,
@@ -240,7 +285,49 @@ def _normalize_grants_gov_record(node: ET.Element) -> dict[str, Any]:
 def _fetch_xml_text(url: str) -> str:
     request = Request(url, headers={"User-Agent": "NGOHomeSuite/1.0 Grants Connector"})
     with urlopen(request, timeout=30) as response:
-        return response.read().decode("utf-8", errors="ignore")
+        body = response.read()
+        content_type = str(response.headers.get("Content-Type") or "").lower()
+
+    # Direct ZIP payload support for GrantsDBExtract*.zip links.
+    if body.startswith(b"PK") or "zip" in content_type:
+        with zipfile.ZipFile(io.BytesIO(body)) as archive:
+            xml_names = [name for name in archive.namelist() if str(name).lower().endswith(".xml")]
+            if not xml_names:
+                raise ValueError("No XML file found inside Grants.gov ZIP extract")
+            chosen = sorted(xml_names)[0]
+            return archive.read(chosen).decode("utf-8", errors="ignore")
+
+    text = body.decode("utf-8", errors="ignore")
+
+    # If this is the Grants.gov landing HTML, discover latest ZIP and fetch it.
+    if "<html" in text.lower() and "grantsdbextract" in text.lower():
+        zip_urls = re.findall(r"https://prod-grants-gov-chatbot\.s3\.amazonaws\.com/extracts/[^\"'\s>]+\.zip", text, flags=re.IGNORECASE)
+        if zip_urls:
+            latest_zip = sorted(set(zip_urls))[-1]
+            nested_request = Request(latest_zip, headers={"User-Agent": "NGOHomeSuite/1.0 Grants Connector"})
+            with urlopen(nested_request, timeout=30) as nested_response:
+                nested_body = nested_response.read()
+            with zipfile.ZipFile(io.BytesIO(nested_body)) as archive:
+                xml_names = [name for name in archive.namelist() if str(name).lower().endswith(".xml")]
+                if not xml_names:
+                    raise ValueError("No XML file found in discovered Grants.gov ZIP extract")
+                chosen = sorted(xml_names)[0]
+                return archive.read(chosen).decode("utf-8", errors="ignore")
+
+    # If the provided URL was a relative landing path, still allow callers to pass explicit XML URLs.
+    if text.lower().startswith("http") and text.lower().endswith(".zip"):
+        absolute = urljoin(url, text.strip())
+        nested_request = Request(absolute, headers={"User-Agent": "NGOHomeSuite/1.0 Grants Connector"})
+        with urlopen(nested_request, timeout=30) as nested_response:
+            nested_body = nested_response.read()
+        with zipfile.ZipFile(io.BytesIO(nested_body)) as archive:
+            xml_names = [name for name in archive.namelist() if str(name).lower().endswith(".xml")]
+            if not xml_names:
+                raise ValueError("No XML file found in linked ZIP extract")
+            chosen = sorted(xml_names)[0]
+            return archive.read(chosen).decode("utf-8", errors="ignore")
+
+    return text
 
 
 def _effective_xml_extract_url() -> str:
@@ -249,11 +336,149 @@ def _effective_xml_extract_url() -> str:
     return _DEFAULT_XML_EXTRACT_URL
 
 
+def _effective_cache_ttl_seconds() -> int:
+    raw = _DEFAULT_CACHE_TTL_SECONDS
+    if has_app_context():
+        raw = current_app.config.get("GRANTS_GOV_CACHE_TTL_SECONDS", _DEFAULT_CACHE_TTL_SECONDS)
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return _DEFAULT_CACHE_TTL_SECONDS
+
+
+def _read_cached_opportunities(cache_key: str, ttl_seconds: int) -> list[dict[str, Any]] | None:
+    if ttl_seconds <= 0:
+        return None
+    now = monotonic()
+    with _GRANTS_FEED_CACHE_LOCK:
+        entry = _GRANTS_FEED_CACHE.get(cache_key)
+        if entry is None:
+            return None
+        fetched_at, opportunities = entry
+        if (now - fetched_at) > float(ttl_seconds):
+            _GRANTS_FEED_CACHE.pop(cache_key, None)
+            return None
+        # Do not serve cached empty sets; they are often transient upstream failures.
+        if not opportunities:
+            _GRANTS_FEED_CACHE.pop(cache_key, None)
+            return None
+        return opportunities
+
+
+def _write_cached_opportunities(cache_key: str, opportunities: list[dict[str, Any]], ttl_seconds: int) -> None:
+    if ttl_seconds <= 0:
+        return
+    with _GRANTS_FEED_CACHE_LOCK:
+        _GRANTS_FEED_CACHE[cache_key] = (monotonic(), opportunities)
+
+
+def _sanitize_xml_payload(payload: str) -> str:
+    raw = str(payload or "").lstrip("\ufeff")
+    first_tag_idx = raw.find("<")
+    if first_tag_idx > 0:
+        raw = raw[first_tag_idx:]
+    # Replace bare ampersands that are not part of a valid XML/HTML entity.
+    return re.sub(r"&(?!#\d+;|#x[0-9A-Fa-f]+;|[A-Za-z_][A-Za-z0-9_.:-]*;)", "&amp;", raw)
+
+
+def _demo_grants_gov_opportunities() -> list[dict[str, Any]]:
+    today = date.today()
+    return [
+        {
+            "external_source": "grants_gov",
+            "external_opportunity_id": "DEMO-CHILDCARE-001",
+            "title": "Community Childcare Access Expansion",
+            "funder_name": "Department of Health and Human Services",
+            "program_name": "Childcare Services",
+            "deadline": today + timedelta(days=45),
+            "amount_min": 50000.0,
+            "amount_max": 350000.0,
+            "summary": "Expand affordable childcare access for low-income families through local nonprofit providers.",
+            "eligibility": ["Nonprofit organizations", "Community-based service providers"],
+            "disqualifications": [],
+            "application_guidance": ["Describe service area", "Include staffing plan", "Show sustainability"],
+            "applicable_conditions": ["Quarterly outcome reporting"],
+            "requirements": ["Budget narrative", "Logic model", "Impact metrics"],
+            "categories": ["Education", "Family Services"],
+            "external_url": "https://www.grants.gov/search-results-detail/DEMO-CHILDCARE-001",
+            "agency_contact_email": "childcare-grants@example.gov",
+            "agency_contact_name": "Program Office",
+            "source_payload": "<demo-opportunity id='DEMO-CHILDCARE-001' />",
+        },
+        {
+            "external_source": "grants_gov",
+            "external_opportunity_id": "DEMO-YOUTH-002",
+            "title": "Youth Learning and After-School Support",
+            "funder_name": "Department of Education",
+            "program_name": "Youth Development",
+            "deadline": today + timedelta(days=60),
+            "amount_min": 75000.0,
+            "amount_max": 500000.0,
+            "summary": "Fund nonprofit-led tutoring, mentoring, and after-school enrichment services.",
+            "eligibility": ["Nonprofit organizations", "Educational partnerships"],
+            "disqualifications": [],
+            "application_guidance": ["Show beneficiary baseline", "Define outcomes and milestones"],
+            "applicable_conditions": ["Annual financial review"],
+            "requirements": ["Monitoring plan", "Safeguarding policy"],
+            "categories": ["Education", "Youth"],
+            "external_url": "https://www.grants.gov/search-results-detail/DEMO-YOUTH-002",
+            "agency_contact_email": "youth-programs@example.gov",
+            "agency_contact_name": "Youth Grants Desk",
+            "source_payload": "<demo-opportunity id='DEMO-YOUTH-002' />",
+        },
+        {
+            "external_source": "grants_gov",
+            "external_opportunity_id": "DEMO-NUTRITION-003",
+            "title": "Neighborhood Nutrition and Food Security Initiative",
+            "funder_name": "USDA",
+            "program_name": "Food Security",
+            "deadline": today + timedelta(days=35),
+            "amount_min": 30000.0,
+            "amount_max": 200000.0,
+            "summary": "Support food access programs, pantry operations, and nutrition education in underserved areas.",
+            "eligibility": ["Nonprofit organizations", "Faith-based organizations"],
+            "disqualifications": [],
+            "application_guidance": ["Demonstrate need", "List partner organizations"],
+            "applicable_conditions": ["Monthly activity reporting"],
+            "requirements": ["Program budget", "Procurement controls"],
+            "categories": ["Food Security", "Community Health"],
+            "external_url": "https://www.grants.gov/search-results-detail/DEMO-NUTRITION-003",
+            "agency_contact_email": "nutrition-grants@example.gov",
+            "agency_contact_name": "Nutrition Programs Office",
+            "source_payload": "<demo-opportunity id='DEMO-NUTRITION-003' />",
+        },
+    ]
+
+
 def fetch_grants_gov_opportunities(*, xml_text: Optional[str] = None) -> list[dict[str, Any]]:
-    payload = str(xml_text or "").strip() or _fetch_xml_text(_effective_xml_extract_url())
-    root = ET.fromstring(payload)
+    payload = str(xml_text or "").strip()
+    xml_url = _effective_xml_extract_url()
+    cache_ttl_seconds = _effective_cache_ttl_seconds()
+
+    if not payload:
+        cached = _read_cached_opportunities(xml_url, cache_ttl_seconds)
+        if cached is not None:
+            return cached
+        payload = _fetch_xml_text(xml_url)
+
+    try:
+        root = ET.fromstring(payload)
+    except ET.ParseError:
+        sanitized = _sanitize_xml_payload(payload)
+        if sanitized != payload:
+            try:
+                root = ET.fromstring(sanitized)
+            except ET.ParseError:
+                logger.warning("grants_gov_xml_parse_failed_after_sanitize")
+                return []
+        else:
+            logger.warning("grants_gov_xml_parse_failed")
+            return []
     nodes = _extract_record_nodes(root)
-    return [_normalize_grants_gov_record(node) for node in nodes]
+    opportunities = [_normalize_grants_gov_record(node) for node in nodes]
+    if not xml_text:
+        _write_cached_opportunities(xml_url, opportunities, cache_ttl_seconds)
+    return opportunities
 
 
 def search_grants_gov_opportunities(
@@ -265,6 +490,7 @@ def search_grants_gov_opportunities(
     limit: int = 25,
     xml_text: Optional[str] = None,
 ) -> list[dict[str, Any]]:
+    limit_clamped = max(1, min(int(limit), 100))
     requested_amount_value = float(requested_amount) if requested_amount is not None else None
     if requested_amount_value is not None and requested_amount_value < 0:
         raise ValueError("requested_amount cannot be negative")
@@ -272,6 +498,28 @@ def search_grants_gov_opportunities(
     q_tokens = _tokenize(str(q or ""))
     applicant_tokens = _tokenize(str(applicant_profile or ""))
     opportunities = fetch_grants_gov_opportunities(xml_text=xml_text)
+    if not opportunities and has_app_context() and bool(current_app.config.get("GRANTS_GOV_USE_DEMO_FALLBACK", False)):
+        opportunities = _demo_grants_gov_opportunities()
+    today = date.today()
+    filtered_opportunities: list[dict[str, Any]] = []
+    for record in opportunities:
+        deadline = record.get("deadline")
+        archive_date = record.get("archive_date")
+
+        if archive_date is not None and archive_date < today:
+            continue
+
+        if deadline is not None:
+            if deadline >= today:
+                filtered_opportunities.append(record)
+            continue
+
+        inferred_year = _infer_record_year(record)
+        # Keep undated records unless they are clearly old (e.g., FY12 / 2012).
+        if inferred_year is None or inferred_year >= (today.year - 1):
+            filtered_opportunities.append(record)
+
+    opportunities = filtered_opportunities
     scored: list[dict[str, Any]] = []
     for record in opportunities:
         search_space = " ".join(
@@ -305,13 +553,14 @@ def search_grants_gov_opportunities(
         amount_min = record.get("amount_min")
         amount_max = record.get("amount_max")
         if requested_amount_value is not None:
-            if amount_min is not None and requested_amount_value < float(amount_min):
-                continue
-            if amount_max is not None and requested_amount_value > float(amount_max):
-                continue
+            outside_min = amount_min is not None and requested_amount_value < float(amount_min)
+            outside_max = amount_max is not None and requested_amount_value > float(amount_max)
             if amount_min is not None or amount_max is not None:
-                score += 20.0
-                reasons.append("Requested amount fits published range")
+                if outside_min or outside_max:
+                    reasons.append("Requested amount is outside published range")
+                else:
+                    score += 20.0
+                    reasons.append("Requested amount fits published range")
         if record.get("eligibility"):
             score += 5.0
             reasons.append("Eligibility details available")
@@ -323,8 +572,58 @@ def search_grants_gov_opportunities(
         normalized["match_reasons"] = reasons
         normalized["organization_id"] = int(organization_id)
         scored.append(normalized)
+
+    if not scored and opportunities and q_tokens:
+        relaxed: list[dict[str, Any]] = []
+        for record in opportunities:
+            search_space = " ".join(
+                [
+                    str(record.get("title") or ""),
+                    str(record.get("funder_name") or ""),
+                    str(record.get("program_name") or ""),
+                    str(record.get("summary") or ""),
+                    " ".join(record.get("eligibility") or []),
+                    " ".join(record.get("disqualifications") or []),
+                    " ".join(record.get("application_guidance") or []),
+                    " ".join(record.get("applicable_conditions") or []),
+                    " ".join(record.get("requirements") or []),
+                    " ".join(record.get("categories") or []),
+                ]
+            )
+            search_tokens = _tokenize(search_space)
+            score = 1.0
+            reasons = ["No direct keyword overlap; showing broader best-fit opportunities."]
+
+            if applicant_tokens:
+                overlap = applicant_tokens & search_tokens
+                if overlap:
+                    score += min(25.0, float(len(overlap) * 5))
+                    reasons.append(f"Applicant fit: {', '.join(sorted(overlap)[:6])}")
+
+            amount_min = record.get("amount_min")
+            amount_max = record.get("amount_max")
+            if requested_amount_value is not None:
+                outside_min = amount_min is not None and requested_amount_value < float(amount_min)
+                outside_max = amount_max is not None and requested_amount_value > float(amount_max)
+                if amount_min is not None or amount_max is not None:
+                    if outside_min or outside_max:
+                        reasons.append("Requested amount is outside published range")
+                    else:
+                        score += 20.0
+                        reasons.append("Requested amount fits published range")
+
+            normalized = dict(record)
+            normalized["applicability_score"] = round(score, 2)
+            normalized["match_reasons"] = reasons
+            normalized["organization_id"] = int(organization_id)
+            relaxed.append(normalized)
+
+        relaxed.sort(key=lambda item: float(item.get("applicability_score", 0)), reverse=True)
+        if relaxed:
+            return relaxed[:limit_clamped]
+
     scored.sort(key=lambda item: float(item.get("applicability_score", 0)), reverse=True)
-    return scored[: max(1, min(int(limit), 100))]
+    return scored[:limit_clamped]
 
 
 def _build_notes_for_sync(record: dict[str, Any]) -> str:

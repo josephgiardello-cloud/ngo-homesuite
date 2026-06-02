@@ -468,6 +468,27 @@ def _resolve_recipients(
 ) -> list[Donor]:
     audience = audience or {}
 
+    smart_group_rules_raw = audience.get("smart_group_rules")
+    smart_group_rules_member_ids: list[int] | None = None
+    if smart_group_rules_raw is not None:
+        if not isinstance(smart_group_rules_raw, list):
+            raise ValueError("smart_group_rules must be a list of rule objects")
+
+        from ngo_homesuite.services.smart_groups_service import evaluate_rules
+
+        try:
+            members = evaluate_rules(int(organization_id), smart_group_rules_raw)
+        except ValueError as exc:
+            raise ValueError(f"invalid smart_group_rules: {exc}") from exc
+
+        smart_group_rules_member_ids = [
+            int(item.get("donor_id"))
+            for item in members
+            if str(item.get("donor_id") or "").strip().isdigit()
+        ]
+        if not smart_group_rules_member_ids:
+            return []
+
     smart_group_id_raw = audience.get("smart_group_id")
     smart_group_member_ids: list[int] | None = None
     if smart_group_id_raw is not None:
@@ -501,6 +522,8 @@ def _resolve_recipients(
 
     if smart_group_member_ids is not None:
         stmt = stmt.where(Donor.id.in_(smart_group_member_ids))
+    if smart_group_rules_member_ids is not None:
+        stmt = stmt.where(Donor.id.in_(smart_group_rules_member_ids))
 
     donor_ids = audience.get("donor_ids")
     if isinstance(donor_ids, list):
@@ -534,29 +557,79 @@ def _resolve_recipients(
 
     now = _utcnow()
     min_total_given = float(audience.get("min_total_given") or 0.0)
+    max_total_given_raw = audience.get("max_total_given")
+    max_total_given = float(max_total_given_raw) if max_total_given_raw is not None else None
+    if max_total_given is not None and max_total_given < min_total_given:
+        raise ValueError("max_total_given must be greater than or equal to min_total_given")
+
     campaign_donors_only = bool(audience.get("campaign_donors_only", False))
     gifted_within_days = int(audience.get("gifted_within_days") or 0)
     lapsed_days_min = int(audience.get("lapsed_days_min") or 0)
 
+    min_gift_count_raw = audience.get("min_gift_count")
+    max_gift_count_raw = audience.get("max_gift_count")
+    min_gift_count = int(min_gift_count_raw) if min_gift_count_raw is not None else 0
+    max_gift_count = int(max_gift_count_raw) if max_gift_count_raw is not None else None
+    if min_gift_count < 0:
+        raise ValueError("min_gift_count must be greater than or equal to 0")
+    if max_gift_count is not None and max_gift_count < 0:
+        raise ValueError("max_gift_count must be greater than or equal to 0")
+    if max_gift_count is not None and max_gift_count < min_gift_count:
+        raise ValueError("max_gift_count must be greater than or equal to min_gift_count")
+
+    gifted_between_days_min_raw = audience.get("gifted_between_days_min")
+    gifted_between_days_max_raw = audience.get("gifted_between_days_max")
+    gifted_between_days_min = int(gifted_between_days_min_raw) if gifted_between_days_min_raw is not None else None
+    gifted_between_days_max = int(gifted_between_days_max_raw) if gifted_between_days_max_raw is not None else None
+    if gifted_between_days_min is not None and gifted_between_days_min < 0:
+        raise ValueError("gifted_between_days_min must be greater than or equal to 0")
+    if gifted_between_days_max is not None and gifted_between_days_max < 0:
+        raise ValueError("gifted_between_days_max must be greater than or equal to 0")
+    if (
+        gifted_between_days_min is not None
+        and gifted_between_days_max is not None
+        and gifted_between_days_max < gifted_between_days_min
+    ):
+        raise ValueError("gifted_between_days_max must be greater than or equal to gifted_between_days_min")
+
     recipients: list[Donor] = []
     for donor in base_recipients:
         donor_metrics = metrics.get(int(donor.id), {"total_given": 0.0, "gift_count": 0, "last_gift_at": None})
-        if float(donor_metrics.get("total_given", 0.0)) < min_total_given:
+        total_given = float(donor_metrics.get("total_given", 0.0))
+        gift_count = int(donor_metrics.get("gift_count", 0) or 0)
+
+        if total_given < min_total_given:
+            continue
+        if max_total_given is not None and total_given > max_total_given:
+            continue
+        if gift_count < min_gift_count:
+            continue
+        if max_gift_count is not None and gift_count > max_gift_count:
             continue
         if campaign_donors_only and float(campaign_totals.get(int(donor.id), 0.0)) <= 0.0:
             continue
 
         last_gift_at = donor_metrics.get("last_gift_at")
+        days_since_last_gift = (now - last_gift_at).days if last_gift_at else None
         if gifted_within_days > 0:
             if not last_gift_at:
                 continue
-            if (now - last_gift_at).days > gifted_within_days:
+            if days_since_last_gift is not None and days_since_last_gift > gifted_within_days:
                 continue
+
+        if gifted_between_days_min is not None or gifted_between_days_max is not None:
+            if days_since_last_gift is None:
+                continue
+            if gifted_between_days_min is not None and days_since_last_gift < gifted_between_days_min:
+                continue
+            if gifted_between_days_max is not None and days_since_last_gift > gifted_between_days_max:
+                continue
+
         if lapsed_days_min > 0:
             if not last_gift_at:
                 # No giving history counts as lapsed for this audience mode.
                 pass
-            elif (now - last_gift_at).days < lapsed_days_min:
+            elif days_since_last_gift is not None and days_since_last_gift < lapsed_days_min:
                 continue
 
         recipients.append(donor)
@@ -627,6 +700,7 @@ def preview_campaign_email(
     audience: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     campaign = _get_campaign_or_raise(campaign_id, organization_id)
+    audience = audience or {}
     recipients = _resolve_recipients(organization_id, campaign.id, audience)
 
     previews = [
@@ -645,11 +719,79 @@ def preview_campaign_email(
         key = str(donor.donor_type or "unknown").strip().lower() or "unknown"
         by_type[key] = by_type.get(key, 0) + 1
 
+    donor_id_list = [int(d.id) for d in recipients]
+    metrics = _donor_giving_metrics(int(organization_id), donor_id_list)
+    now = _utcnow()
+
+    total_giving_bands = {
+        "0-99": 0,
+        "100-499": 0,
+        "500-999": 0,
+        "1000+": 0,
+    }
+    gift_count_bands = {
+        "0": 0,
+        "1": 0,
+        "2-5": 0,
+        "6+": 0,
+    }
+    recency_bands = {
+        "0-30d": 0,
+        "31-90d": 0,
+        "91-365d": 0,
+        "365d+": 0,
+        "never": 0,
+    }
+
+    for donor in recipients:
+        donor_metrics = metrics.get(int(donor.id), {"total_given": 0.0, "gift_count": 0, "last_gift_at": None})
+        total_given = float(donor_metrics.get("total_given", 0.0) or 0.0)
+        gift_count = int(donor_metrics.get("gift_count", 0) or 0)
+        last_gift_at = donor_metrics.get("last_gift_at")
+
+        if total_given >= 1000.0:
+            total_giving_bands["1000+"] += 1
+        elif total_given >= 500.0:
+            total_giving_bands["500-999"] += 1
+        elif total_given >= 100.0:
+            total_giving_bands["100-499"] += 1
+        else:
+            total_giving_bands["0-99"] += 1
+
+        if gift_count >= 6:
+            gift_count_bands["6+"] += 1
+        elif gift_count >= 2:
+            gift_count_bands["2-5"] += 1
+        elif gift_count == 1:
+            gift_count_bands["1"] += 1
+        else:
+            gift_count_bands["0"] += 1
+
+        if not last_gift_at:
+            recency_bands["never"] += 1
+        else:
+            days_since = (now - last_gift_at).days
+            if days_since <= 30:
+                recency_bands["0-30d"] += 1
+            elif days_since <= 90:
+                recency_bands["31-90d"] += 1
+            elif days_since <= 365:
+                recency_bands["91-365d"] += 1
+            else:
+                recency_bands["365d+"] += 1
+
     return {
         "campaign_id": int(campaign.id),
         "campaign_name": campaign.name,
         "total_recipients": len(recipients),
         "segment_breakdown": by_type,
+        "recipient_breakdown": {
+            "by_donor_type": by_type,
+            "by_total_giving_band": total_giving_bands,
+            "by_gift_count_band": gift_count_bands,
+            "by_recency_band": recency_bands,
+        },
+        "audience_applied": dict(audience),
         "quality_hints": _quality_hints(str(subject), str(body)),
         "sample_preview": previews,
     }

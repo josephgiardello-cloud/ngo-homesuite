@@ -3,6 +3,8 @@
 from __future__ import annotations
 import os
 import atexit
+import base64
+import binascii
 import getpass
 import hashlib
 import hmac
@@ -248,12 +250,41 @@ def _ensure_metadata_table(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 def _get_hmac_key() -> bytes:
-    # In production, consider integrating with a KMS or vault for key retrieval.
-    key = os.environ.get("NGO_HOMESUITE_SCHEMA_HMAC_KEY")
-    # TODO: Integrate with KMS or vault for key retrieval in production deployments.
-    if not key:
-        raise FatalDBError("NGO_HOMESUITE_SCHEMA_HMAC_KEY must be set for tamper-evident schema hashing.")
-    return key.encode("utf-8")
+    key_plain = (os.environ.get("NGO_HOMESUITE_SCHEMA_HMAC_KEY") or "").strip()
+    if key_plain:
+        return key_plain.encode("utf-8")
+
+    key_b64 = (os.environ.get("NGO_HOMESUITE_SCHEMA_HMAC_KEY_B64") or "").strip()
+    if key_b64:
+        try:
+            decoded = base64.b64decode(key_b64, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise FatalDBError(
+                "NGO_HOMESUITE_SCHEMA_HMAC_KEY_B64 is not valid base64."
+            ) from exc
+        if not decoded:
+            raise FatalDBError("NGO_HOMESUITE_SCHEMA_HMAC_KEY_B64 decoded to empty key material.")
+        return decoded
+
+    key_file = (os.environ.get("NGO_HOMESUITE_SCHEMA_HMAC_KEY_FILE") or "").strip()
+    if key_file:
+        key_path = Path(key_file)
+        try:
+            file_bytes = key_path.read_bytes().strip()
+        except OSError as exc:
+            raise FatalDBError(
+                f"Failed to read NGO_HOMESUITE_SCHEMA_HMAC_KEY_FILE at {key_path}: {exc}"
+            ) from exc
+        if not file_bytes:
+            raise FatalDBError(
+                "NGO_HOMESUITE_SCHEMA_HMAC_KEY_FILE is empty after trimming whitespace."
+            )
+        return file_bytes
+
+    raise FatalDBError(
+        "Schema HMAC key is missing. Set one of NGO_HOMESUITE_SCHEMA_HMAC_KEY, "
+        "NGO_HOMESUITE_SCHEMA_HMAC_KEY_B64, or NGO_HOMESUITE_SCHEMA_HMAC_KEY_FILE."
+    )
 
 def _schema_hmac(items: list[tuple[str, str | None]]) -> str:
     # items: list of (name, sql)
@@ -467,7 +498,7 @@ _logged_kdf_iter: int | None = None
 _logged_pool: bool = False
 _logged_sqlcipher_mem_security: bool = False
 
-# TODO: Consider an async-compatible pool (e.g., using asyncio.Queue or external async pool libraries)
+# Thread-safe LIFO pool optimized for sync Flask request handling.
 _pool_lock = threading.Lock()
 _pool_max_size_value: int | None = None
 _pool_created = 0
@@ -537,7 +568,6 @@ def _is_db_corruption_error(exc: BaseException) -> bool:
 
 def _backup_corrupt_db_copy() -> Path | None:
     """Best-effort copy of the DB file for forensics/recovery, with audit logging."""
-    # TODO: Consider atomic copy or retry logic for more robust backup handling.
     src = Path(DB_PATH)
     if not src.exists():
         return None
@@ -545,37 +575,57 @@ def _backup_corrupt_db_copy() -> Path | None:
     backup_dir.mkdir(parents=True, exist_ok=True)
     _set_secure_permissions(backup_dir, is_dir=True)
     dest = backup_dir / f"{src.stem}_CORRUPT_{_utc_now_compact()}{src.suffix or '.db'}"
-    try:
-        shutil.copy2(src, dest)
-        _set_secure_permissions(dest)
-        if BackupHook:
-            BackupHook(dest)
-        entry = {
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "event": "backup_corrupt_db_copy",
-            "src": str(src),
-            "dest": str(dest),
-            "operator": os.environ.get("NGO_HOMESUITE_OPERATOR") or getpass.getuser(),
-        }
+    max_attempts = 3
+    last_error: OSError | None = None
+    for attempt in range(1, max_attempts + 1):
+        tmp_dest = dest.with_suffix(f"{dest.suffix}.tmp{attempt}")
         try:
-            _append_external_audit_log(entry, log_type="backup")
-        except Exception as e:
-            logger.error(
-                f"Failed to write external backup log: {e}",
-                extra={"event_id": "backup.log.write_failed", "extra_fields": {"error": str(e)}}
+            shutil.copy2(src, tmp_dest)
+            src_size = src.stat().st_size
+            dst_size = tmp_dest.stat().st_size
+            if src_size > 0 and dst_size == 0:
+                raise OSError("backup copy has zero bytes while source is non-empty")
+
+            tmp_dest.replace(dest)
+            _set_secure_permissions(dest)
+            if BackupHook:
+                BackupHook(dest)
+            entry = {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "event": "backup_corrupt_db_copy",
+                "src": str(src),
+                "dest": str(dest),
+                "operator": os.environ.get("NGO_HOMESUITE_OPERATOR") or getpass.getuser(),
+                "attempt": attempt,
+            }
+            try:
+                _append_external_audit_log(entry, log_type="backup")
+            except Exception as e:
+                logger.error(
+                    f"Failed to write external backup log: {e}",
+                    extra={"event_id": "backup.log.write_failed", "extra_fields": {"error": str(e)}}
+                )
+                # Not fatal for backup, but should be monitored
+            logger.info(
+                "Corrupt DB backup created and logged",
+                extra={"event_id": "backup.corrupt_db_copy", "extra_fields": entry}
             )
-            # Not fatal for backup, but should be monitored
-        logger.info(
-            "Corrupt DB backup created and logged",
-            extra={"event_id": "backup.corrupt_db_copy", "extra_fields": entry}
-        )
-        return dest
-    except OSError as e:
-        logger.error(
-            f"Failed to create corrupt DB backup: {e}",
-            extra={"event_id": "backup.corrupt_db_copy_failed", "extra_fields": {"error": str(e)}}
-        )
-        return None
+            return dest
+        except OSError as e:
+            last_error = e
+            try:
+                if tmp_dest.exists():
+                    tmp_dest.unlink()
+            except OSError:
+                pass
+            if attempt < max_attempts:
+                time.sleep(0.2 * attempt)
+
+    logger.error(
+        f"Failed to create corrupt DB backup after {max_attempts} attempts: {last_error}",
+        extra={"event_id": "backup.corrupt_db_copy_failed", "extra_fields": {"error": str(last_error), "attempts": max_attempts}}
+    )
+    return None
 
 
 def _pool_acquire_connection() -> DBConnection:
@@ -939,7 +989,6 @@ def connect_db_at(path: str) -> DBConnection:
             )
             raise FatalDBError(f"Failed to open encrypted DB: {e}")
         # No fallback: if SQLCipher is required but fails, always fatal.
-    # ...existing code for sqlite3 fallback...
 
     # Ensure parent directory exists
     parent_dir = os.path.dirname(path)

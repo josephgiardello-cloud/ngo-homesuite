@@ -326,27 +326,33 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                subject:
-                  type: string
-                body:
-                  type: string
-                audience:
-                  type: object
-                  additionalProperties: true
-                compliance:
-                  type: object
-                  additionalProperties: true
-              required: [subject, body]
+              $ref: '#/components/schemas/CampaignEmailSendRequest'
+            examples:
+              advancedAudience:
+                summary: Send to advanced segmented audience
+                value:
+                  subject: Quarterly impact update
+                  body: "Hi {name}, your support powers {campaign_name}."
+                  audience:
+                    donor_types: [individual]
+                    min_total_given: 300
+                    max_total_given: 1500
+                    min_gift_count: 2
+                    max_gift_count: 8
+                    gifted_between_days_min: 7
+                    gifted_between_days_max: 180
+                    lapsed_days_min: 30
+                  compliance:
+                    reviewer_name: Ops Reviewer
+                    reviewer_role: Staff
+                  dry_run: false
       responses:
         '200':
           description: Campaign email send accepted and processed
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/CampaignEmailSendResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -373,24 +379,70 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                subject:
-                  type: string
-                body:
-                  type: string
-                audience:
-                  type: object
-                  additionalProperties: true
-              required: [subject, body]
+              $ref: '#/components/schemas/CampaignEmailPreviewRequest'
+            examples:
+              previewWithBands:
+                summary: Preview with advanced recency and giving filters
+                value:
+                  subject: Filtered preview message
+                  body: "Hi {name}, here is your impact update for {campaign_name}."
+                  audience:
+                    min_total_given: 300
+                    max_total_given: 500
+                    min_gift_count: 2
+                    max_gift_count: 3
+                    gifted_between_days_min: 1
+                    gifted_between_days_max: 90
       responses:
         '200':
           description: Email preview payload
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/CampaignEmailPreviewResponse'
+              examples:
+                filteredPreview:
+                  summary: Preview response with breakdown and audience echo
+                  value:
+                    campaign_id: 42
+                    campaign_name: Spring Appeal
+                    total_recipients: 1
+                    segment_breakdown:
+                      individual: 1
+                    recipient_breakdown:
+                      by_donor_type:
+                        individual: 1
+                      by_total_giving_band:
+                        0-99: 0
+                        100-499: 1
+                        500-999: 0
+                        1000+: 0
+                      by_gift_count_band:
+                        '0': 0
+                        '1': 0
+                        2-5: 1
+                        6+: 0
+                      by_recency_band:
+                        0-30d: 1
+                        31-90d: 0
+                        91-365d: 0
+                        365d+: 0
+                        never: 0
+                    audience_applied:
+                      min_total_given: 300
+                      max_total_given: 500
+                      min_gift_count: 2
+                      max_gift_count: 3
+                      gifted_between_days_min: 1
+                      gifted_between_days_max: 90
+                    quality_hints:
+                      - Subject is shorter than recommended 5 characters.
+                    sample_preview:
+                      - donor_id: 1001
+                        donor_name: Preview Match
+                        recipient_email: preview-match@example.org
+                        subject: Filtered preview message
+                        body: Hi Preview Match, here is your impact update for Spring Appeal.
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -660,6 +712,171 @@ components:
         mode:
           type: string
       required: [response, sources, actions, mode]
+    CampaignEmailAudience:
+      type: object
+      properties:
+        donor_ids:
+          type: array
+          items:
+            type: integer
+        donor_types:
+          type: array
+          items:
+            type: string
+        tags:
+          type: array
+          items:
+            type: string
+        smart_group_id:
+          type: integer
+        smart_group_rules:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        min_total_given:
+          type: number
+          minimum: 0
+        max_total_given:
+          type: number
+          minimum: 0
+        gifted_within_days:
+          type: integer
+          minimum: 0
+        lapsed_days_min:
+          type: integer
+          minimum: 0
+        min_gift_count:
+          type: integer
+          minimum: 0
+        max_gift_count:
+          type: integer
+          minimum: 0
+        gifted_between_days_min:
+          type: integer
+          minimum: 0
+        gifted_between_days_max:
+          type: integer
+          minimum: 0
+      additionalProperties: true
+    CampaignEmailSendRequest:
+      type: object
+      properties:
+        subject:
+          type: string
+        body:
+          type: string
+        audience:
+          $ref: '#/components/schemas/CampaignEmailAudience'
+        compliance:
+          type: object
+          additionalProperties: true
+        dry_run:
+          type: boolean
+        scheduled_at:
+          type: string
+          format: date-time
+      required: [subject, body]
+    CampaignEmailPreviewRequest:
+      type: object
+      properties:
+        subject:
+          type: string
+        body:
+          type: string
+        audience:
+          $ref: '#/components/schemas/CampaignEmailAudience'
+      required: [subject, body]
+    CampaignEmailSendResponse:
+      type: object
+      properties:
+        dry_run:
+          type: boolean
+        scheduled:
+          type: boolean
+        scheduled_at:
+          type: string
+          format: date-time
+        batch_id:
+          type: integer
+        campaign_id:
+          type: integer
+        campaign_name:
+          type: string
+        status:
+          type: string
+        total_recipients:
+          type: integer
+        sent:
+          type: integer
+        failed:
+          type: integer
+        quality_hints:
+          type: array
+          items:
+            type: string
+      additionalProperties: true
+    CampaignEmailPreviewSample:
+      type: object
+      properties:
+        donor_id:
+          type: integer
+        donor_name:
+          type: string
+        recipient_email:
+          type: string
+        subject:
+          type: string
+        body:
+          type: string
+      required: [donor_id, donor_name, recipient_email, subject, body]
+    CampaignEmailRecipientBreakdown:
+      type: object
+      properties:
+        by_donor_type:
+          type: object
+          additionalProperties:
+            type: integer
+        by_total_giving_band:
+          type: object
+          additionalProperties:
+            type: integer
+        by_gift_count_band:
+          type: object
+          additionalProperties:
+            type: integer
+        by_recency_band:
+          type: object
+          additionalProperties:
+            type: integer
+      required: [by_donor_type, by_total_giving_band, by_gift_count_band, by_recency_band]
+    CampaignEmailPreviewResponse:
+      type: object
+      properties:
+        campaign_id:
+          type: integer
+        campaign_name:
+          type: string
+        total_recipients:
+          type: integer
+        segment_breakdown:
+          type: object
+          additionalProperties:
+            type: integer
+        recipient_breakdown:
+          $ref: '#/components/schemas/CampaignEmailRecipientBreakdown'
+        audience_applied:
+          $ref: '#/components/schemas/CampaignEmailAudience'
+        quality_hints:
+          type: array
+          items:
+            type: string
+        sample_preview:
+          type: array
+          items:
+            $ref: '#/components/schemas/CampaignEmailPreviewSample'
+      required:
+        [campaign_id, campaign_name, total_recipients, segment_breakdown, recipient_breakdown, audience_applied, quality_hints, sample_preview]
   responses:
     BadRequest:
       description: Invalid request payload

@@ -146,7 +146,7 @@ Error handling nuances:
 Seal anchoring:
 - AWS S3 anchoring depends on bucket Object Lock configuration.
 - Email anchoring is not cryptographically verifiable; only human-auditable.
-- Public timestamping stub is unimplemented.
+- Public timestamp anchoring is best-effort and depends on reachable public calendars.
 
 Baseline updates:
 - DB baseline can be modified if attacker has DB write access and KMS access. This is expected (cannot defend against full root compromise), but important to note for threat modeling.
@@ -358,34 +358,80 @@ def anchor_seal_public_timestamp(last_seal):
     Anchor a seal entry to a public timestamping service (OpenTimestamps).
     Args:
         last_seal (dict): The last seal entry (dict) from the log.
+
+    Returns:
+        dict with status, attempted calendars, and submitted calendars.
     """
-    # Use the default OpenTimestamps calendar pool
+    msg_hash = ""
+    if isinstance(last_seal, dict):
+        msg_hash = str(last_seal.get('hash') or '').strip().lower()
+    if not msg_hash:
+        logger.warning("[ANCHOR] OpenTimestamps anchor skipped: missing seal hash.")
+        return {"anchored": False, "reason": "missing_hash", "attempted": 0, "submitted": []}
+    if any(ch not in "0123456789abcdef" for ch in msg_hash) or len(msg_hash) % 2 != 0:
+        logger.warning("[ANCHOR] OpenTimestamps anchor skipped: invalid hex seal hash.")
+        return {"anchored": False, "reason": "invalid_hash", "attempted": 0, "submitted": []}
+
+    # Use the default OpenTimestamps calendar pool.
     calendar_urls = [
         'https://a.pool.opentimestamps.org',
         'https://b.pool.opentimestamps.org',
         'https://a.pool.eternitywall.com',
         'https://ots.btc.catallaxy.com',
     ]
-    # Minimal submission: use the RemoteCalendar directly
-    import opentimestamps.calendar
+    urls = list(dict.fromkeys(calendar_urls))
+    msg_bytes = bytes.fromhex(msg_hash)
+
     try:
-        # You must define msg_bytes from last_seal, e.g. hash or data to anchor
-        # Example: msg_bytes = last_seal['hash'].encode('utf-8')
-        msg_bytes = last_seal.get('hash', '').encode('utf-8') if last_seal and 'hash' in last_seal else b''
-        for url in calendar_urls:
-            try:
-                remote = opentimestamps.calendar.RemoteCalendar(url)
-                remote.submit(msg_bytes)
-                logger.info(f"[ANCHOR] Seal anchored to OpenTimestamps calendar: {url} (hash: [redacted])")
-            except Exception as cal_exc:
-                logger.warning(f"[ANCHOR] OpenTimestamps calendar {url} failed: {cal_exc}")
-        # Optionally, save the .ots proof file or return the timestamp object
+        import opentimestamps.calendar
     except Exception as e:
-        logger.error("[ANCHOR] OpenTimestamps anchor failed (see alert log)")
+        logger.error("[ANCHOR] OpenTimestamps dependency unavailable; anchor skipped.")
         try:
-            alert_security_event("integrity.anchor_failed", {"error": str(e), "service": "OpenTimestamps"})
+            alert_security_event("integrity.anchor_failed", {"error": str(e), "service": "OpenTimestamps", "reason": "dependency_unavailable"})
         except Exception:
             pass
+        return {"anchored": False, "reason": "dependency_unavailable", "attempted": len(urls), "submitted": []}
+
+    submitted: list[str] = []
+    failures: dict[str, str] = {}
+    for url in urls:
+        try:
+            remote = opentimestamps.calendar.RemoteCalendar(url)
+            remote.submit(msg_bytes)
+            submitted.append(url)
+            logger.info(f"[ANCHOR] Seal anchored to OpenTimestamps calendar: {url} (hash: [redacted])")
+        except Exception as cal_exc:
+            failures[url] = str(cal_exc)
+            logger.warning(f"[ANCHOR] OpenTimestamps calendar {url} failed: {cal_exc}")
+
+    if not submitted:
+        logger.error("[ANCHOR] OpenTimestamps anchor failed across all calendars.")
+        try:
+            alert_security_event(
+                "integrity.anchor_failed",
+                {
+                    "service": "OpenTimestamps",
+                    "error": "all calendars failed",
+                    "attempted": len(urls),
+                },
+            )
+        except Exception:
+            pass
+        return {
+            "anchored": False,
+            "reason": "all_calendars_failed",
+            "attempted": len(urls),
+            "submitted": [],
+            "failures": failures,
+        }
+
+    return {
+        "anchored": True,
+        "reason": "ok",
+        "attempted": len(urls),
+        "submitted": submitted,
+        "failures": failures,
+    }
 
 # Pluggable anchor hook: set this to a function to call after each seal is written
 import os
@@ -394,6 +440,8 @@ anchor_seal_hook = None
 # Set anchor_seal_hook to AWS S3 anchor if configured
 if os.environ.get("INTEGRITY_S3_BUCKET"):
     anchor_seal_hook = anchor_seal_aws_s3_object_lock
+elif os.environ.get("INTEGRITY_ENABLE_PUBLIC_TIMESTAMP", "").lower() in {"1", "true", "yes", "on"}:
+    anchor_seal_hook = anchor_seal_public_timestamp
 
 # --- Integrity System Cryptographic Policy ---
 """
