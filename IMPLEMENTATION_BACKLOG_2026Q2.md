@@ -22,6 +22,29 @@ This snapshot reconciles backlog planning assumptions with current code state.
 
 Documentation drift note: some items listed as unchecked below are partially or fully implemented under evolved file names and structures. Keep this backlog as planning intent, not source-of-truth implementation evidence.
 
+## Progress Addendum (2026-06-02)
+
+The following strategic parity items were implemented end-to-end in the current codebase and validated with targeted route-contract tests:
+
+- Unified constituent journeys with donor 360 payloads and timeline aggregation.
+- Relational donor soft-credit attribution on donation records.
+- Role-based intelligence dashboard for admin/staff/viewer personas.
+- Donor journey automations with durable idempotency and cooldown auditing.
+- Smart financial guardrails intelligence with risk scoring and watchlists.
+- Integrated form ecosystem ingestion (internal + public token-auth) with dedupe/idempotency and CRM linkage.
+
+Primary implementation touchpoints:
+
+- `ngo_homesuite/web/v2_routes.py`
+- `ngo_homesuite/services/activity_timeline_service.py`
+- `ngo_homesuite/services/stewardship_service.py`
+- `ngo_homesuite/services/reporting_service.py`
+- `ngo_homesuite/services/form_ecosystem_service.py`
+- `ngo_homesuite/models/core.py`
+- `ngo_homesuite/migrations/0035_add_donor_soft_credits.sql`
+- `ngo_homesuite/migrations/0036_add_donor_journey_automation_events.sql`
+- `ngo_homesuite/migrations/0037_add_form_submission_events.sql`
+
 ---
 
 ## Milestone A: Security + Compliance (Sprint 1 – 2 weeks)

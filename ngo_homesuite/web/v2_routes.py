@@ -15,7 +15,7 @@ import uuid
 from urllib.parse import unquote
 import warnings
 
-from flask import Blueprint, Response, current_app, jsonify, redirect, request
+from flask import Blueprint, Response, current_app, g, jsonify, redirect, request
 from flask_login import current_user, login_required
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -23,7 +23,7 @@ from werkzeug.utils import secure_filename
 
 from ngo_homesuite.grants.facade import GrantsFacade
 from ngo_homesuite.grants.exceptions import GrantApprovalError, GrantNotFound, InvalidGrantTransition
-from ngo_homesuite.models.core import CampaignEmailDelivery, Donor, Grant, User, db
+from ngo_homesuite.models.core import CampaignEmailDelivery, Donation, Donor, DonorSoftCredit, Grant, Organization, User, db
 
 from ngo_homesuite.web.auth_routes import require_step_up_auth
 from ngo_homesuite.web.rbac import roles_required
@@ -46,6 +46,20 @@ _TRACKING_PIXEL = (
 
 def _org_id() -> int:
     return int(current_user.organization_id)
+
+
+def _form_ingest_token() -> str:
+    return str(current_app.config.get("FORM_ECOSYSTEM_INGEST_TOKEN") or "").strip()
+
+
+def _request_ingest_token() -> str:
+    token = str(request.headers.get("X-Form-Ingest-Token") or "").strip()
+    if token:
+        return token
+    auth = str(request.headers.get("Authorization") or "").strip()
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return ""
 
 
 def _utcnow_naive() -> datetime:
@@ -1221,6 +1235,299 @@ def get_donor_activity_timeline(donor_id: int):
     return jsonify([item.to_dict() for item in items])
 
 
+@v2_bp.route("/donors/<int:donor_id>/journey", methods=["GET"])
+@login_required
+def get_donor_journey(donor_id: int):
+    """Return a rich 360-degree donor journey snapshot and timeline."""
+    from ngo_homesuite.services.activity_timeline_service import ActivityTimelineService
+
+    limit = request.args.get("limit", 200, type=int)
+    offset = request.args.get("offset", 0, type=int)
+    search_query = (request.args.get("q") or "").strip() or None
+
+    limit = max(1, min(limit, 1000))
+    offset = max(offset, 0)
+
+    payload = ActivityTimelineService.get_donor_journey(
+        _org_id(),
+        donor_id,
+        limit=limit,
+        offset=offset,
+        search_query=search_query,
+    )
+    if payload is None:
+        return jsonify({"error": "donor not found"}), 404
+    return jsonify(payload)
+
+
+@v2_bp.route("/donor-journeys/automations/run", methods=["POST"])
+@login_required
+@roles_required("admin", "staff")
+def run_donor_journey_automations_route():
+    from ngo_homesuite.services.stewardship_service import run_donor_journey_automations
+
+    data = request.get_json(silent=True) or {}
+
+    def _safe_int(name: str, default: int, minimum: int, maximum: int) -> tuple[int | None, str | None]:
+        raw = data.get(name, default)
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            return None, f"{name} must be an integer"
+        if value < minimum or value > maximum:
+            return None, f"{name} must be between {minimum} and {maximum}"
+        return value, None
+
+    lapsing_days, err = _safe_int("lapsing_days", 120, 30, 3650)
+    if err:
+        return jsonify({"error": err}), 400
+    first_gift_window_days, err = _safe_int("first_gift_window_days", 7, 1, 90)
+    if err:
+        return jsonify({"error": err}), 400
+    recurring_fail_threshold, err = _safe_int("recurring_fail_threshold", 2, 1, 20)
+    if err:
+        return jsonify({"error": err}), 400
+    cooldown_days, err = _safe_int("cooldown_days", 21, 1, 365)
+    if err:
+        return jsonify({"error": err}), 400
+
+    payload = run_donor_journey_automations(
+        _org_id(),
+        actor_user_id=int(getattr(current_user, "id", 0) or 0) or None,
+        lapsing_days=int(lapsing_days),
+        first_gift_window_days=int(first_gift_window_days),
+        recurring_fail_threshold=int(recurring_fail_threshold),
+        cooldown_days=int(cooldown_days),
+    )
+    return jsonify(payload), 200
+
+
+@v2_bp.route("/donor-journeys/automations/events", methods=["GET"])
+@login_required
+@roles_required("admin", "staff", "viewer")
+def list_donor_journey_automation_events_route():
+    from ngo_homesuite.services.stewardship_service import list_donor_journey_automation_events
+
+    trigger_name = str(request.args.get("trigger") or "").strip() or None
+    status = str(request.args.get("status") or "").strip() or None
+    limit = request.args.get("limit", default=100, type=int)
+
+    payload = list_donor_journey_automation_events(
+        _org_id(),
+        trigger_name=trigger_name,
+        status=status,
+        limit=int(limit or 100),
+    )
+    return jsonify(payload), 200
+
+
+@v2_bp.route("/forms/submissions/public", methods=["POST"])
+def ingest_form_submission_public():
+    from ngo_homesuite.services.form_ecosystem_service import FormEcosystemService
+
+    expected_token = _form_ingest_token()
+    if not expected_token:
+        return jsonify({"error": "Form ingest token is not configured"}), 503
+
+    provided_token = _request_ingest_token()
+    if not provided_token or provided_token != expected_token:
+        return jsonify({"error": "Invalid ingest token"}), 401
+
+    data = _json_or_400(required=["organization_id", "source", "form_type"])
+    try:
+        org_id = int(data.get("organization_id"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "organization_id must be an integer"}), 400
+
+    org = db.session.scalar(
+        select(Organization).where(
+            Organization.id == org_id,
+            Organization.is_active.is_(True),
+        ).limit(1)
+    )
+    if org is None:
+        return jsonify({"error": "organization not found"}), 404
+
+    # Public ingestion is tenant-targeted by payload, not by authenticated session.
+    g.organization_id = int(org_id)
+
+    try:
+        result = FormEcosystemService.submit_form(
+            org_id=org_id,
+            source=str(data.get("source") or ""),
+            form_type=str(data.get("form_type") or ""),
+            payload=data,
+            actor_user_id=None,
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify(result), (200 if result.get("duplicate") else 201)
+
+
+@v2_bp.route("/forms/submissions", methods=["POST"])
+@login_required
+@roles_required("admin", "staff")
+def ingest_form_submission_internal():
+    from ngo_homesuite.services.form_ecosystem_service import FormEcosystemService
+
+    data = _json_or_400(required=["source", "form_type"])
+    try:
+        result = FormEcosystemService.submit_form(
+            org_id=_org_id(),
+            source=str(data.get("source") or ""),
+            form_type=str(data.get("form_type") or ""),
+            payload=data,
+            actor_user_id=int(getattr(current_user, "id", 0) or 0) or None,
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify(result), (200 if result.get("duplicate") else 201)
+
+
+@v2_bp.route("/forms/submissions", methods=["GET"])
+@login_required
+@roles_required("admin", "staff", "viewer")
+def list_integrated_form_submissions():
+    from ngo_homesuite.services.form_ecosystem_service import FormEcosystemService
+
+    source = str(request.args.get("source") or "").strip().lower() or None
+    form_type = str(request.args.get("form_type") or "").strip().lower() or None
+    status = str(request.args.get("status") or "").strip().lower() or None
+    limit = request.args.get("limit", default=100, type=int)
+
+    payload = FormEcosystemService.list_submissions(
+        org_id=_org_id(),
+        source=source,
+        form_type=form_type,
+        status=status,
+        limit=int(limit or 100),
+    )
+    return jsonify(payload), 200
+
+
+@v2_bp.route("/donations/<int:donation_id>/soft-credits", methods=["GET"])
+@login_required
+def list_donation_soft_credits(donation_id: int):
+    """List relational soft-credit attribution records for a donation."""
+    donation = db.session.scalar(
+        select(Donation).where(
+            Donation.id == donation_id,
+            Donation.organization_id == _org_id(),
+        ).limit(1)
+    )
+    if donation is None:
+        return jsonify({"error": "donation not found"}), 404
+
+    rows = (
+        db.session.query(DonorSoftCredit)
+        .filter(
+            DonorSoftCredit.organization_id == _org_id(),
+            DonorSoftCredit.donation_id == int(donation_id),
+        )
+        .order_by(DonorSoftCredit.created_at.desc(), DonorSoftCredit.id.desc())
+        .all()
+    )
+
+    return jsonify(
+        [
+            {
+                "id": int(row.id),
+                "organization_id": int(row.organization_id),
+                "donation_id": int(row.donation_id),
+                "donor_id": int(row.donor_id),
+                "role": str(row.role),
+                "credited_amount": float(row.credited_amount or 0.0),
+                "credit_weight": float(row.credit_weight or 1.0),
+                "rationale": row.rationale,
+                "attributed_by_user_id": int(row.attributed_by_user_id) if row.attributed_by_user_id else None,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+            for row in rows
+        ]
+    )
+
+
+@v2_bp.route("/donations/<int:donation_id>/soft-credits", methods=["POST"])
+@login_required
+@roles_required("admin", "staff")
+def create_donation_soft_credit(donation_id: int):
+    """Create an explicit soft-credit attribution record for a donation."""
+    data = _json_or_400(required=["donor_id"])
+
+    donation = db.session.scalar(
+        select(Donation).where(
+            Donation.id == donation_id,
+            Donation.organization_id == _org_id(),
+        ).limit(1)
+    )
+    if donation is None:
+        return jsonify({"error": "donation not found"}), 404
+
+    influencer_donor_id = int(data.get("donor_id"))
+    influencer = db.session.scalar(
+        select(Donor).where(
+            Donor.id == influencer_donor_id,
+            Donor.organization_id == _org_id(),
+        ).limit(1)
+    )
+    if influencer is None:
+        return jsonify({"error": "influencer donor not found"}), 404
+
+    role = str(data.get("role") or "influencer").strip().lower()
+    if role not in {"influencer", "solicitor", "steward"}:
+        return jsonify({"error": "role must be one of: influencer, solicitor, steward"}), 400
+
+    credited_amount_raw = data.get("credited_amount", donation.amount)
+    credit_weight_raw = data.get("credit_weight", 1.0)
+    try:
+        credited_amount = float(credited_amount_raw)
+    except (TypeError, ValueError):
+        return jsonify({"error": "credited_amount must be numeric"}), 400
+    try:
+        credit_weight = float(credit_weight_raw)
+    except (TypeError, ValueError):
+        return jsonify({"error": "credit_weight must be numeric"}), 400
+
+    if credited_amount < 0:
+        return jsonify({"error": "credited_amount must be >= 0"}), 400
+    if credit_weight <= 0:
+        return jsonify({"error": "credit_weight must be > 0"}), 400
+
+    soft_credit = DonorSoftCredit(
+        organization_id=_org_id(),
+        donation_id=int(donation.id),
+        donor_id=int(influencer.id),
+        role=role,
+        credited_amount=credited_amount,
+        credit_weight=credit_weight,
+        rationale=(str(data.get("rationale") or "").strip() or None),
+        attributed_by_user_id=int(getattr(current_user, "id", 0) or 0) or None,
+    )
+    db.session.add(soft_credit)
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"error": "soft credit already exists for this donor/donation/role"}), 409
+
+    return jsonify(
+        {
+            "id": int(soft_credit.id),
+            "organization_id": int(soft_credit.organization_id),
+            "donation_id": int(soft_credit.donation_id),
+            "donor_id": int(soft_credit.donor_id),
+            "role": soft_credit.role,
+            "credited_amount": float(soft_credit.credited_amount or 0.0),
+            "credit_weight": float(soft_credit.credit_weight or 1.0),
+            "rationale": soft_credit.rationale,
+            "attributed_by_user_id": int(soft_credit.attributed_by_user_id) if soft_credit.attributed_by_user_id else None,
+            "created_at": soft_credit.created_at.isoformat() if soft_credit.created_at else None,
+        }
+    ), 201
+
+
 @v2_bp.route("/activity/beneficiary/<int:beneficiary_id>", methods=["GET"])
 @login_required
 def get_beneficiary_activity_timeline(beneficiary_id: int):
@@ -1295,6 +1602,90 @@ def get_activity_insights():
             "organization_id": _org_id(),
             "actor": getattr(current_user, "username", "web"),
         },
+    )
+    return jsonify(payload)
+
+
+@v2_bp.route("/intelligence/dashboard", methods=["GET"])
+@login_required
+@roles_required("admin", "staff", "viewer")
+def role_based_dashboard_intelligence():
+    from ngo_homesuite.services.reporting_service import ReportingService
+
+    period = str(request.args.get("period", "30d") or "30d").strip().lower()
+    start_date_raw = str(request.args.get("start_date") or "").strip()
+    end_date_raw = str(request.args.get("end_date") or "").strip()
+
+    start_date = None
+    end_date = None
+    if start_date_raw:
+        try:
+            start_date = datetime.combine(_parse_iso_date(start_date_raw), datetime.min.time())
+        except ValueError:
+            return jsonify({"error": "start_date must be ISO format YYYY-MM-DD"}), 400
+    if end_date_raw:
+        try:
+            end_date = datetime.combine(_parse_iso_date(end_date_raw), datetime.min.time())
+        except ValueError:
+            return jsonify({"error": "end_date must be ISO format YYYY-MM-DD"}), 400
+
+    actor_role = str(getattr(current_user, "role", "viewer") or "viewer").strip().lower()
+    preview_role = str(request.args.get("role") or "").strip().lower()
+    effective_role = actor_role
+    if preview_role:
+        if actor_role != "admin":
+            return jsonify({"error": "Only admin users may preview alternate intelligence roles"}), 403
+        effective_role = preview_role
+
+    payload = ReportingService().role_based_intelligence(
+        _org_id(),
+        role=effective_role,
+        actor_user_id=int(getattr(current_user, "id", 0) or 0) or None,
+        period=period,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    return jsonify(payload)
+
+
+@v2_bp.route("/intelligence/financial-guardrails", methods=["GET"])
+@login_required
+@roles_required("admin", "staff", "viewer")
+def financial_guardrails_intelligence():
+    from ngo_homesuite.services.reporting_service import ReportingService
+
+    period = str(request.args.get("period", "30d") or "30d").strip().lower()
+    start_date_raw = str(request.args.get("start_date") or "").strip()
+    end_date_raw = str(request.args.get("end_date") or "").strip()
+
+    start_date = None
+    end_date = None
+    if start_date_raw:
+        try:
+            start_date = datetime.combine(_parse_iso_date(start_date_raw), datetime.min.time())
+        except ValueError:
+            return jsonify({"error": "start_date must be ISO format YYYY-MM-DD"}), 400
+    if end_date_raw:
+        try:
+            end_date = datetime.combine(_parse_iso_date(end_date_raw), datetime.min.time())
+        except ValueError:
+            return jsonify({"error": "end_date must be ISO format YYYY-MM-DD"}), 400
+
+    actor_role = str(getattr(current_user, "role", "viewer") or "viewer").strip().lower()
+    preview_role = str(request.args.get("role") or "").strip().lower()
+    effective_role = actor_role
+    if preview_role:
+        if actor_role != "admin":
+            return jsonify({"error": "Only admin users may preview alternate intelligence roles"}), 403
+        effective_role = preview_role
+
+    payload = ReportingService().financial_guardrails_intelligence(
+        _org_id(),
+        role=effective_role,
+        actor_user_id=int(getattr(current_user, "id", 0) or 0) or None,
+        period=period,
+        start_date=start_date,
+        end_date=end_date,
     )
     return jsonify(payload)
 

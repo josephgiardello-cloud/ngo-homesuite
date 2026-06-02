@@ -7,15 +7,18 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from typing import Any, List, Optional
 
-from sqlalchemy import select
-
+from sqlalchemy import func, select
 from ngo_homesuite.models.core import (
+    Donation,
+    DonorJourneyAutomationEvent,
     Donor,
+    RecurringDonationPlan,
     StewardshipEnrollment,
     StewardshipJourney,
     StewardshipStep,
+    Task,
     db,
 )
 
@@ -262,3 +265,496 @@ def _dispatch_sms(donor: Donor, step: StewardshipStep) -> None:
         send_sms(donor.phone, body)
     except Exception as exc:  # noqa: BLE001
         logger.error("SMS dispatch failed donor=%s: %s", donor.id, exc)
+
+
+# ---------------------------------------------------------------------------
+# Donor Journey Automations (Feature 3)
+# ---------------------------------------------------------------------------
+
+def _recent_automation_event(
+    *,
+    organization_id: int,
+    trigger_name: str,
+    donor_id: int | None,
+    recurring_plan_id: int | None,
+    since: datetime,
+) -> Optional[DonorJourneyAutomationEvent]:
+    query = select(DonorJourneyAutomationEvent).where(
+        DonorJourneyAutomationEvent.organization_id == organization_id,
+        DonorJourneyAutomationEvent.trigger_name == trigger_name,
+        DonorJourneyAutomationEvent.status == "executed",
+        DonorJourneyAutomationEvent.created_at >= since,
+    )
+    if donor_id is not None:
+        query = query.where(DonorJourneyAutomationEvent.donor_id == int(donor_id))
+    if recurring_plan_id is not None:
+        query = query.where(DonorJourneyAutomationEvent.recurring_plan_id == int(recurring_plan_id))
+    return db.session.scalars(
+        query.order_by(DonorJourneyAutomationEvent.created_at.desc()).limit(1)
+    ).first()
+
+
+def _idempotency_exists(organization_id: int, idempotency_key: str) -> bool:
+    count = db.session.scalar(
+        select(func.count(DonorJourneyAutomationEvent.id)).where(
+            DonorJourneyAutomationEvent.organization_id == organization_id,
+            DonorJourneyAutomationEvent.idempotency_key == idempotency_key,
+        )
+    )
+    return int(count or 0) > 0
+
+
+def _record_automation_event(
+    *,
+    organization_id: int,
+    trigger_name: str,
+    action_type: str,
+    status: str,
+    idempotency_key: str,
+    reason: str | None,
+    cooldown_until: datetime | None,
+    donor_id: int | None = None,
+    recurring_plan_id: int | None = None,
+    actor_user_id: int | None = None,
+    related_task_id: int | None = None,
+    related_enrollment_id: int | None = None,
+    payload: dict[str, Any] | None = None,
+) -> DonorJourneyAutomationEvent:
+    event = DonorJourneyAutomationEvent(
+        organization_id=int(organization_id),
+        donor_id=int(donor_id) if donor_id is not None else None,
+        recurring_plan_id=int(recurring_plan_id) if recurring_plan_id is not None else None,
+        trigger_name=str(trigger_name),
+        action_type=str(action_type),
+        status=str(status),
+        idempotency_key=str(idempotency_key),
+        cooldown_until=cooldown_until,
+        reason=(str(reason).strip() if reason else None),
+        payload_json=payload or None,
+        actor_user_id=int(actor_user_id) if actor_user_id is not None else None,
+        related_task_id=int(related_task_id) if related_task_id is not None else None,
+        related_enrollment_id=int(related_enrollment_id) if related_enrollment_id is not None else None,
+    )
+    db.session.add(event)
+    return event
+
+
+def _ensure_open_task(
+    *,
+    organization_id: int,
+    donor_id: int,
+    task_type: str,
+    title: str,
+    description: str,
+    due_in_days: int,
+) -> tuple[Task, bool]:
+    existing = db.session.scalars(
+        select(Task).where(
+            Task.organization_id == organization_id,
+            Task.donor_id == donor_id,
+            Task.task_type == task_type,
+            Task.status.in_(["open", "in_progress"]),
+        ).order_by(Task.created_at.desc()).limit(1)
+    ).first()
+    if existing:
+        return existing, False
+
+    now = _utcnow()
+    task = Task(
+        organization_id=organization_id,
+        donor_id=donor_id,
+        title=title,
+        description=description,
+        task_type=task_type,
+        priority="high",
+        status="open",
+        due_date=now + timedelta(days=max(0, int(due_in_days))),
+        reminder_channel="email",
+    )
+    db.session.add(task)
+    db.session.flush()
+    return task, True
+
+
+def _send_plain_email(donor: Donor, *, subject: str, body: str) -> tuple[bool, str | None]:
+    if not donor.email:
+        return False, "missing_email"
+    try:
+        from ngo_homesuite.utils.email import send_email
+
+        sent = bool(
+            send_email(
+                to=donor.email,
+                subject=subject.replace("{name}", str(donor.name or "friend")),
+                context={
+                    "text": body.replace("{name}", str(donor.name or "friend")),
+                },
+            )
+        )
+        return sent, None if sent else "delivery_unavailable"
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("automation email failed donor=%s err=%s", donor.id, exc)
+        return False, str(exc)
+
+
+def run_donor_journey_automations(
+    organization_id: int,
+    *,
+    actor_user_id: int | None = None,
+    lapsing_days: int = 120,
+    first_gift_window_days: int = 7,
+    recurring_fail_threshold: int = 2,
+    cooldown_days: int = 21,
+) -> dict[str, Any]:
+    """Run donor journey automations with idempotency, cooldowns, and audit trail."""
+    now = _utcnow()
+    cooldown_cutoff = now - timedelta(days=max(1, int(cooldown_days)))
+    cooldown_until = now + timedelta(days=max(1, int(cooldown_days)))
+
+    actions: list[dict[str, Any]] = []
+    summary = {
+        "evaluated": 0,
+        "executed": 0,
+        "skipped": 0,
+        "failed": 0,
+        "tasks_created": 0,
+        "emails_sent": 0,
+        "emails_failed": 0,
+        "by_trigger": {
+            "first_gift_followup": {"executed": 0, "skipped": 0, "failed": 0},
+            "lapsing_donor_reactivation": {"executed": 0, "skipped": 0, "failed": 0},
+            "recurring_failure_recovery": {"executed": 0, "skipped": 0, "failed": 0},
+        },
+    }
+
+    def _mark(trigger: str, status: str) -> None:
+        summary[status] = int(summary.get(status, 0)) + 1
+        trigger_bucket = summary["by_trigger"][trigger]
+        trigger_bucket[status] = int(trigger_bucket.get(status, 0)) + 1
+
+    # Trigger 1: First gift follow-up (donor gave first gift recently).
+    first_cutoff = now - timedelta(days=max(1, int(first_gift_window_days)))
+    first_rows = db.session.execute(
+        select(
+            Donation.donor_id,
+            func.count(Donation.id).label("gift_count"),
+            func.max(Donation.donation_date).label("last_gift"),
+            func.coalesce(func.sum(Donation.amount), 0.0).label("gift_total"),
+        )
+        .where(
+            Donation.organization_id == organization_id,
+            Donation.donor_id.is_not(None),
+        )
+        .group_by(Donation.donor_id)
+        .having(func.count(Donation.id) == 1)
+    ).all()
+    for row in first_rows:
+        donor_id = int(row.donor_id or 0)
+        if donor_id <= 0:
+            continue
+        summary["evaluated"] = int(summary["evaluated"]) + 1
+        last_gift = row.last_gift
+        if last_gift is None or last_gift < first_cutoff:
+            continue
+        trigger = "first_gift_followup"
+        idempotency_key = f"{trigger}:{donor_id}:{last_gift.date().isoformat()}"
+        donor = db.session.get(Donor, donor_id)
+        if donor is None or int(donor.organization_id or 0) != int(organization_id):
+            continue
+        if _idempotency_exists(organization_id, idempotency_key):
+            _record_automation_event(
+                organization_id=organization_id,
+                donor_id=donor_id,
+                trigger_name=trigger,
+                action_type="task_and_email",
+                status="skipped",
+                idempotency_key=f"{idempotency_key}:repeat",
+                reason="idempotency_hit",
+                cooldown_until=cooldown_until,
+                payload={"last_gift": last_gift.isoformat()},
+                actor_user_id=actor_user_id,
+            )
+            _mark(trigger, "skipped")
+            continue
+        recent = _recent_automation_event(
+            organization_id=organization_id,
+            trigger_name=trigger,
+            donor_id=donor_id,
+            recurring_plan_id=None,
+            since=cooldown_cutoff,
+        )
+        if recent is not None:
+            _record_automation_event(
+                organization_id=organization_id,
+                donor_id=donor_id,
+                trigger_name=trigger,
+                action_type="task_and_email",
+                status="skipped",
+                idempotency_key=f"{idempotency_key}:cooldown",
+                reason="cooldown_active",
+                cooldown_until=recent.cooldown_until,
+                payload={"recent_event_id": int(recent.id)},
+                actor_user_id=actor_user_id,
+            )
+            _mark(trigger, "skipped")
+            continue
+        task, created = _ensure_open_task(
+            organization_id=organization_id,
+            donor_id=donor_id,
+            task_type="first_gift_followup",
+            title=f"First-gift follow-up: {donor.name}",
+            description="Thank the donor, confirm impact preference, and invite second gift/recurring support.",
+            due_in_days=2,
+        )
+        sent, err = _send_plain_email(
+            donor,
+            subject="Thank You For Your First Gift, {name}",
+            body="Hi {name}, thank you for your first gift. We would love to share impact updates and hear your priorities.",
+        )
+        _record_automation_event(
+            organization_id=organization_id,
+            donor_id=donor_id,
+            trigger_name=trigger,
+            action_type="task_and_email",
+            status="executed",
+            idempotency_key=idempotency_key,
+            reason=None if sent else (err or "email_not_sent"),
+            cooldown_until=cooldown_until,
+            related_task_id=int(task.id),
+            payload={
+                "gift_total": float(row.gift_total or 0.0),
+                "last_gift": last_gift.isoformat(),
+                "task_created": bool(created),
+                "email_sent": bool(sent),
+            },
+            actor_user_id=actor_user_id,
+        )
+        if created:
+            summary["tasks_created"] = int(summary["tasks_created"]) + 1
+        if sent:
+            summary["emails_sent"] = int(summary["emails_sent"]) + 1
+        else:
+            summary["emails_failed"] = int(summary["emails_failed"]) + 1
+        _mark(trigger, "executed")
+        actions.append({"trigger": trigger, "donor_id": donor_id, "task_id": int(task.id), "email_sent": bool(sent)})
+
+    # Trigger 2: Lapsing donor reactivation (last gift stale and at least two total gifts).
+    lapsing_cutoff = now - timedelta(days=max(30, int(lapsing_days)))
+    lapsing_rows = db.session.execute(
+        select(
+            Donation.donor_id,
+            func.count(Donation.id).label("gift_count"),
+            func.max(Donation.donation_date).label("last_gift"),
+            func.coalesce(func.sum(Donation.amount), 0.0).label("gift_total"),
+        )
+        .where(
+            Donation.organization_id == organization_id,
+            Donation.donor_id.is_not(None),
+        )
+        .group_by(Donation.donor_id)
+        .having(func.count(Donation.id) >= 2)
+    ).all()
+    for row in lapsing_rows:
+        donor_id = int(row.donor_id or 0)
+        if donor_id <= 0:
+            continue
+        summary["evaluated"] = int(summary["evaluated"]) + 1
+        last_gift = row.last_gift
+        if last_gift is None or last_gift > lapsing_cutoff:
+            continue
+        trigger = "lapsing_donor_reactivation"
+        idempotency_key = f"{trigger}:{donor_id}:{last_gift.date().isoformat()}"
+        donor = db.session.get(Donor, donor_id)
+        if donor is None or int(donor.organization_id or 0) != int(organization_id):
+            continue
+        if _idempotency_exists(organization_id, idempotency_key):
+            _mark(trigger, "skipped")
+            continue
+        recent = _recent_automation_event(
+            organization_id=organization_id,
+            trigger_name=trigger,
+            donor_id=donor_id,
+            recurring_plan_id=None,
+            since=cooldown_cutoff,
+        )
+        if recent is not None:
+            _mark(trigger, "skipped")
+            continue
+        task, created = _ensure_open_task(
+            organization_id=organization_id,
+            donor_id=donor_id,
+            task_type="lapsed_donor_reactivation",
+            title=f"Reactivation plan: {donor.name}",
+            description="Donor is lapsing. Prepare a personalized impact update and re-engagement ask.",
+            due_in_days=3,
+        )
+        sent, err = _send_plain_email(
+            donor,
+            subject="We Miss You, {name}",
+            body="Hi {name}, we wanted to share recent impact and reconnect. Your support has made a meaningful difference.",
+        )
+        _record_automation_event(
+            organization_id=organization_id,
+            donor_id=donor_id,
+            trigger_name=trigger,
+            action_type="task_and_email",
+            status="executed",
+            idempotency_key=idempotency_key,
+            reason=None if sent else (err or "email_not_sent"),
+            cooldown_until=cooldown_until,
+            related_task_id=int(task.id),
+            payload={
+                "gift_count": int(row.gift_count or 0),
+                "gift_total": float(row.gift_total or 0.0),
+                "last_gift": last_gift.isoformat(),
+                "task_created": bool(created),
+                "email_sent": bool(sent),
+            },
+            actor_user_id=actor_user_id,
+        )
+        if created:
+            summary["tasks_created"] = int(summary["tasks_created"]) + 1
+        if sent:
+            summary["emails_sent"] = int(summary["emails_sent"]) + 1
+        else:
+            summary["emails_failed"] = int(summary["emails_failed"]) + 1
+        _mark(trigger, "executed")
+        actions.append({"trigger": trigger, "donor_id": donor_id, "task_id": int(task.id), "email_sent": bool(sent)})
+
+    # Trigger 3: Recurring failure recovery (failed/struggling recurring plan).
+    recurring_rows = db.session.execute(
+        select(RecurringDonationPlan)
+        .where(
+            RecurringDonationPlan.organization_id == organization_id,
+            RecurringDonationPlan.donor_id.is_not(None),
+            RecurringDonationPlan.status.in_(["failed", "paused", "active"]),
+            RecurringDonationPlan.fail_count >= max(1, int(recurring_fail_threshold)),
+        )
+        .order_by(RecurringDonationPlan.fail_count.desc(), RecurringDonationPlan.updated_at.desc())
+    ).scalars().all()
+    for plan in recurring_rows:
+        donor_id = int(plan.donor_id or 0)
+        if donor_id <= 0:
+            continue
+        summary["evaluated"] = int(summary["evaluated"]) + 1
+        trigger = "recurring_failure_recovery"
+        plan_anchor = str(plan.updated_at.date().isoformat() if plan.updated_at else "na")
+        idempotency_key = f"{trigger}:{int(plan.id)}:{int(plan.fail_count or 0)}:{plan_anchor}"
+        donor = db.session.get(Donor, donor_id)
+        if donor is None or int(donor.organization_id or 0) != int(organization_id):
+            continue
+        if _idempotency_exists(organization_id, idempotency_key):
+            _mark(trigger, "skipped")
+            continue
+        recent = _recent_automation_event(
+            organization_id=organization_id,
+            trigger_name=trigger,
+            donor_id=donor_id,
+            recurring_plan_id=int(plan.id),
+            since=cooldown_cutoff,
+        )
+        if recent is not None:
+            _mark(trigger, "skipped")
+            continue
+        task, created = _ensure_open_task(
+            organization_id=organization_id,
+            donor_id=donor_id,
+            task_type="recurring_failure_recovery",
+            title=f"Recurring recovery: {donor.name}",
+            description="Recurring gift plan has repeated failures. Reach out to update payment details and retain support.",
+            due_in_days=1,
+        )
+        sent, err = _send_plain_email(
+            donor,
+            subject="Action Needed To Resume Your Recurring Gift, {name}",
+            body="Hi {name}, we had trouble processing your recurring gift. Please update payment details so support continues uninterrupted.",
+        )
+        _record_automation_event(
+            organization_id=organization_id,
+            donor_id=donor_id,
+            recurring_plan_id=int(plan.id),
+            trigger_name=trigger,
+            action_type="task_and_email",
+            status="executed",
+            idempotency_key=idempotency_key,
+            reason=None if sent else (err or "email_not_sent"),
+            cooldown_until=cooldown_until,
+            related_task_id=int(task.id),
+            payload={
+                "fail_count": int(plan.fail_count or 0),
+                "plan_status": str(plan.status or ""),
+                "last_error": str(plan.last_error or "") or None,
+                "task_created": bool(created),
+                "email_sent": bool(sent),
+            },
+            actor_user_id=actor_user_id,
+        )
+        if created:
+            summary["tasks_created"] = int(summary["tasks_created"]) + 1
+        if sent:
+            summary["emails_sent"] = int(summary["emails_sent"]) + 1
+        else:
+            summary["emails_failed"] = int(summary["emails_failed"]) + 1
+        _mark(trigger, "executed")
+        actions.append({"trigger": trigger, "donor_id": donor_id, "plan_id": int(plan.id), "task_id": int(task.id), "email_sent": bool(sent)})
+
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        raise
+
+    return {
+        "summary": summary,
+        "actions": actions,
+        "parameters": {
+            "lapsing_days": int(lapsing_days),
+            "first_gift_window_days": int(first_gift_window_days),
+            "recurring_fail_threshold": int(recurring_fail_threshold),
+            "cooldown_days": int(cooldown_days),
+        },
+        "generated_at": now.isoformat(timespec="seconds"),
+    }
+
+
+def list_donor_journey_automation_events(
+    organization_id: int,
+    *,
+    trigger_name: str | None = None,
+    status: str | None = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    safe_limit = max(1, min(int(limit), 500))
+    query = select(DonorJourneyAutomationEvent).where(
+        DonorJourneyAutomationEvent.organization_id == organization_id,
+    )
+    if trigger_name:
+        query = query.where(DonorJourneyAutomationEvent.trigger_name == str(trigger_name).strip())
+    if status:
+        query = query.where(DonorJourneyAutomationEvent.status == str(status).strip())
+
+    rows = db.session.scalars(
+        query.order_by(DonorJourneyAutomationEvent.created_at.desc()).limit(safe_limit)
+    ).all()
+    return [
+        {
+            "id": int(item.id),
+            "organization_id": int(item.organization_id),
+            "donor_id": int(item.donor_id) if item.donor_id is not None else None,
+            "recurring_plan_id": int(item.recurring_plan_id) if item.recurring_plan_id is not None else None,
+            "trigger_name": str(item.trigger_name),
+            "action_type": str(item.action_type),
+            "status": str(item.status),
+            "idempotency_key": str(item.idempotency_key),
+            "cooldown_until": item.cooldown_until.isoformat() if item.cooldown_until else None,
+            "reason": item.reason,
+            "payload": item.payload_json,
+            "actor_user_id": int(item.actor_user_id) if item.actor_user_id is not None else None,
+            "related_task_id": int(item.related_task_id) if item.related_task_id is not None else None,
+            "related_enrollment_id": int(item.related_enrollment_id) if item.related_enrollment_id is not None else None,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+        }
+        for item in rows
+    ]
+
+

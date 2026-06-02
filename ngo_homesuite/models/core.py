@@ -497,6 +497,34 @@ class DonationReceipt(db.Model):
         return f'<DonationReceipt donation={self.donation_id} status={self.status}>'
 
 
+class DonorSoftCredit(db.Model):
+    """Relational attribution linking an influencer donor to a donation."""
+
+    __tablename__ = 'donor_soft_credits'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    donation_id = db.Column(db.Integer, db.ForeignKey('donations.id'), nullable=False, index=True)
+    donor_id = db.Column(db.Integer, db.ForeignKey('donors.id'), nullable=False, index=True)
+    role = db.Column(db.String(50), nullable=False, default='influencer')  # influencer, solicitor, steward
+    credited_amount = db.Column(db.Float, nullable=False, default=0.0)
+    credit_weight = db.Column(db.Float, nullable=False, default=1.0)
+    rationale = db.Column(db.Text, nullable=True)
+    attributed_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False, index=True)
+
+    donation = db.relationship('Donation', backref='soft_credits')
+    donor = db.relationship('Donor', backref='soft_credits')
+    attributed_by = db.relationship('User', backref='donor_soft_credits')
+
+    __table_args__ = (
+        db.UniqueConstraint('organization_id', 'donation_id', 'donor_id', 'role', name='uq_soft_credit_org_donation_donor_role'),
+    )
+
+    def __repr__(self):
+        return f'<DonorSoftCredit donation={self.donation_id} donor={self.donor_id} role={self.role}>'
+
+
 class Donor(db.Model):
     """Donor profile and contact information."""
 
@@ -760,6 +788,88 @@ class StewardshipEnrollment(db.Model):
 
     def __repr__(self):
         return f'<StewardshipEnrollment journey={self.journey_id} donor={self.donor_id}>'
+
+
+class DonorJourneyAutomationEvent(db.Model):
+    """Durable automation run log used for idempotency, cooldowns, and audit."""
+
+    __tablename__ = 'donor_journey_automation_events'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    donor_id = db.Column(db.Integer, db.ForeignKey('donors.id'), nullable=True, index=True)
+    recurring_plan_id = db.Column(db.Integer, db.ForeignKey('recurring_donation_plans.id'), nullable=True, index=True)
+    trigger_name = db.Column(db.String(80), nullable=False, index=True)
+    action_type = db.Column(db.String(80), nullable=False, index=True)
+    status = db.Column(db.String(30), default='executed', nullable=False, index=True)  # executed, skipped, failed
+    idempotency_key = db.Column(db.String(200), nullable=False)
+    cooldown_until = db.Column(db.DateTime, nullable=True)
+    reason = db.Column(db.Text, nullable=True)
+    payload_json = db.Column(JSON, nullable=True)
+    actor_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    related_task_id = db.Column(db.Integer, db.ForeignKey('tasks.id'), nullable=True)
+    related_enrollment_id = db.Column(db.Integer, db.ForeignKey('stewardship_enrollments.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False, index=True)
+
+    __table_args__ = (
+        db.UniqueConstraint('organization_id', 'idempotency_key', name='uq_donor_journey_automation_org_key'),
+    )
+
+    donor = db.relationship('Donor', backref='automation_events')
+    recurring_plan = db.relationship('RecurringDonationPlan', backref='automation_events')
+    actor_user = db.relationship('User', backref='automation_events')
+    related_task = db.relationship('Task', backref='automation_events')
+    related_enrollment = db.relationship('StewardshipEnrollment', backref='automation_events')
+
+    def __repr__(self):
+        return f'<DonorJourneyAutomationEvent trigger={self.trigger_name} action={self.action_type} status={self.status}>'
+
+
+class FormSubmissionEvent(db.Model):
+    """Durable integrated-form intake ledger with downstream CRM links."""
+
+    __tablename__ = 'form_submission_events'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    source = db.Column(db.String(80), nullable=False, index=True)
+    form_name = db.Column(db.String(200), nullable=True)
+    form_type = db.Column(db.String(50), nullable=False, index=True)
+    external_submission_id = db.Column(db.String(200), nullable=True, index=True)
+    idempotency_key = db.Column(db.String(200), nullable=False)
+
+    submitter_name = db.Column(db.String(200), nullable=True)
+    submitter_email = db.Column(db.String(255), nullable=True, index=True)
+    submitter_phone = db.Column(db.String(40), nullable=True)
+
+    donor_id = db.Column(db.Integer, db.ForeignKey('donors.id'), nullable=True, index=True)
+    donation_id = db.Column(db.Integer, db.ForeignKey('donations.id'), nullable=True, index=True)
+    task_id = db.Column(db.Integer, db.ForeignKey('tasks.id'), nullable=True, index=True)
+
+    amount = db.Column(db.Float, nullable=True)
+    currency = db.Column(db.String(3), nullable=True)
+    message = db.Column(db.Text, nullable=True)
+    metadata_json = db.Column(JSON, nullable=True)
+    raw_payload_json = db.Column(JSON, nullable=True)
+    submitted_at = db.Column(db.DateTime, nullable=True, index=True)
+    processed_at = db.Column(db.DateTime, nullable=True)
+    status = db.Column(db.String(30), default='processed', nullable=False, index=True)
+    error_message = db.Column(db.Text, nullable=True)
+    actor_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=_utcnow_naive, nullable=False, index=True)
+    updated_at = db.Column(db.DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
+
+    __table_args__ = (
+        db.UniqueConstraint('organization_id', 'idempotency_key', name='uq_form_submission_event_org_key'),
+    )
+
+    donor = db.relationship('Donor', backref='form_submission_events')
+    donation = db.relationship('Donation', backref='form_submission_events')
+    task = db.relationship('Task', backref='form_submission_events')
+    actor_user = db.relationship('User', backref='form_submission_events')
+
+    def __repr__(self):
+        return f'<FormSubmissionEvent source={self.source} type={self.form_type} status={self.status}>'
 
 
 # ---------------------------------------------------------------------------
@@ -1640,6 +1750,8 @@ __all__ = [
     'StewardshipJourney',
     'StewardshipStep',
     'StewardshipEnrollment',
+    'DonorJourneyAutomationEvent',
+    'FormSubmissionEvent',
     'Task',
     'ProgramCase',
     'CaseActivity',

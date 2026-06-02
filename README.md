@@ -6,6 +6,8 @@ A comprehensive nonprofit management system for managing donors, donations, fund
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
+Last updated: 2026-06-02
+
 ## Project Metadata
 
 - Description: Local-first nonprofit operations suite with integrated AI Copilot (RAG + internal tools)
@@ -22,6 +24,28 @@ Documentation index:
 - Dependency update policy: `docs/dependency_policy.md`
 - Architecture decisions (ADR): `docs/adr/README.md`
 - Release/versioning process: `docs/release_process.md`
+
+## Current Program State (June 2026)
+
+Recent parity and maturity work is now implemented in the production codepath (not placeholder scaffolding):
+
+- Unified constituent journey timelines with donor 360 summaries and soft-credit attribution.
+- Role-based dashboard intelligence tailored to admin/staff/viewer contexts.
+- Automated donor journey triggers with durable idempotency/cooldown/audit eventing.
+- Smart financial guardrails with risk scoring and actionable recommendations.
+- Integrated form ecosystem ingestion (internal and token-auth public intake) with dedupe, CRM linkage, and follow-up task creation.
+
+Primary v2 endpoints now active for these capabilities:
+
+- `GET /api/v2/donors/<donor_id>/journey`
+- `GET|POST /api/v2/donations/<donation_id>/soft-credits`
+- `GET /api/v2/intelligence/dashboard`
+- `GET /api/v2/intelligence/financial-guardrails`
+- `POST /api/v2/donor-journeys/automations/run`
+- `GET /api/v2/donor-journeys/automations/events`
+- `POST /api/v2/forms/submissions` (authenticated admin/staff)
+- `POST /api/v2/forms/submissions/public` (token-auth, tenant-targeted)
+- `GET /api/v2/forms/submissions`
 
 ### Screenshot Gallery
 
