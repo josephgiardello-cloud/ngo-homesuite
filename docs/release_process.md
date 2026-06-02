@@ -1,6 +1,6 @@
 # Release and Versioning Process
 
-Last updated: 2026-05-15
+Last updated: 2026-06-02
 
 This project uses a lightweight release process to keep rapid changes safe and traceable.
 

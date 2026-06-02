@@ -733,5 +733,4 @@ See `LICENSE` for the full text.
 
 ---
 
-**Last Updated**: May 15, 2026  
-**Version**: 0.1.0 (Beta)
+**Last Updated**: June 2, 2026
