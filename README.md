@@ -73,6 +73,13 @@ Note on depth and maturity:
 - The list below describes available capability areas.
 - Production maturity varies by module. See `docs/feature_status.md` for the authoritative status.
 
+## Known Tradeoffs
+
+- Mixed interaction surfaces are intentional: CLI, web routes, and API contracts coexist to support local-first operators and automation users in the same repo.
+- Jinja-first frontend favors delivery speed and operational simplicity over SPA-style client architecture.
+- Dependency breadth is intentionally broad to support payments, cloud integrations, analytics, and AI pathways; release lanes enforce regular audit/scanning.
+- Some legacy compatibility toggles remain available for controlled recovery scenarios and are expected to stay operator-governed.
+
 ### 💰 Financial Management
 - Donation tracking and management
 - Fund management with allocation tracking

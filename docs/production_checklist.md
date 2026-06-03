@@ -71,8 +71,8 @@ Status legend: `PASS`, `PARTIAL`, `FAIL`.
 | Auth hardening (MFA capability) | PARTIAL | TOTP/backup-code/2FA enforcement and step-up endpoints exist in `ngo_homesuite/web/auth_routes.py` and user fields exist in `ngo_homesuite/models/core.py`. Route-level step-up audit has been applied across high-risk destructive/export endpoints in `main_routes.py`, `reporting_routes.py`, `admin_grants_routes.py`, `program_routes.py`, `volunteer_routes.py`, and `v2_routes.py`. | TOTP secret encryption-at-rest path still needs explicit production documentation/evidence. |
 | External security assurance | FAIL | `docs/security_pentest_playbook.md` defines process and artifacts. | No in-repo evidence bundle of completed external formal security review/pentest sign-off. |
 | Tenant isolation and RBAC | PARTIAL | Cross-tenant and route-policy test lanes exist (`ngo_homesuite/web/test_cross_tenant_boundaries.py`, RBAC audit tests). | Continue exhaustive mutator-path verification and preserve AI-specific tenant-isolation evidence. |
-| Grants accounting readiness | PARTIAL | Budget lines, transactions, and reconciliation fields/models exist under `ngo_homesuite/grants/models.py` and migrations `0022/0023/0025`; lifecycle variance logic is implemented. | Full operational workflows/report UX and state/funder-specific automation remain incomplete. |
-| Bulk campaign maturity | PARTIAL | Campaign batch/delivery models, unsubscribe, suppression, and open/click metrics exist (`ngo_homesuite/models/core.py`, `ngo_homesuite/services/campaign_email_service.py`, `ngo_homesuite/web/v2_routes.py`). | Advanced segmentation/query builder and full queue-orchestration model from backlog remain incomplete. |
+| Grants accounting readiness | PARTIAL | Budget lines, transactions, reconciliation fields/models, lifecycle variance logic, and compliance package generation (`/api/v2/grants/<id>/compliance-package`) are implemented. | Remaining gap is deeper state/funder-specific automation and broader reporting UX depth, not baseline compliance packaging. |
+| Bulk campaign maturity | PARTIAL | Campaign batch/delivery models, unsubscribe/suppression, open/click metrics, queue visibility, due-batch processing, and failed-recipient retry controls are implemented (`ngo_homesuite/services/campaign_email_service.py`, `ngo_homesuite/web/v2_routes.py`). | Remaining gap is richer composer/query-builder UX and additional release-grade performance evidence for high-volume queue runs. |
 | Observability and alerting | PARTIAL | Logging/metrics stack artifacts are present; baseline checks documented. | Centralized log/alert tuning and release-grade evidence validation remain open. |
 | Backup/restore + key rotation drills | PARTIAL | Runbooks and migration preflight checks exist. | Non-prod drill evidence must be attached per release candidate. |
 | Container hardening | PARTIAL | Checklist requirements are documented. | Explicit non-root/read-only/resource-limit verification evidence required per release. |
@@ -153,6 +153,28 @@ Coverage of this lane includes:
 - Financial guardrails intelligence with period/date validation and role constraints.
 - Donor-journey automation execution plus durable audit retrieval.
 - Integrated form ecosystem ingestion: internal ingest, idempotent dedupe replay, tenant isolation, and public token-auth ingest path.
+
+## Latest Validation Evidence (2026-06-02, Wave Closure)
+
+Targeted closure validation executed:
+
+```bash
+.venv\Scripts\python.exe -m pytest ngo_homesuite/web/test_campaign_routes.py ngo_homesuite/web/test_v2_route_contracts.py ngo_homesuite/web/test_volunteer_accounting.py ngo_homesuite/web/test_route_protection_matrix.py --maxfail=10 -v
+```
+
+Outcome:
+
+- `103 passed`
+- `0 skipped`
+- `0 failed`
+
+Coverage of this lane includes:
+
+- Campaign queue visibility plus failed-batch retry controls.
+- Grant compliance-package endpoint behavior.
+- Membership members list filter/search/pagination behavior and tenant-scope assertions.
+- Volunteer list search/pagination UX contract behavior.
+- Route protection manifest parity for newly added static GET surfaces.
 
 ## Explicit Production-Release Blockers
 

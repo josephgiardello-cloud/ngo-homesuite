@@ -18,10 +18,10 @@ Maturity scale:
 | Peer Fundraising (P2P) Web (public) | Available | Operational | Public page, thermometer, leaderboard, embeddable widget script, and DAST smoke probes in CI. |
 | P2P Staff workflow | Available | Operational | Dashboard create/publish/close flow plus service-level validation for title/goal/story edge cases; UX iteration still pending. |
 | Events management | Available | Operational | 85% | Event board routes/UI and reminder dispatch flow are active with route-level regression coverage; further UX polish and deeper lifecycle automation remain. |
-| Campaign management | Partial | Foundational | 65% | Batch/delivery models, unsubscribe/suppression controls, and engagement counters are implemented. Advanced segmentation/query builder and full composer/queue orchestration are still incomplete. |
-| Grants workflows | Available | Foundational | 75% | Lifecycle/disbursement guards, budget-line accounting, reconciliation fields, and saved-search alerts/workbench UX are in place. Funder/state-specific operational automation and complete compliance packaging remain in progress. |
-| Memberships | Partial | Operational | Role-gated membership management routes validated by route-policy and RBAC audits; admin UX polish remains. |
-| Volunteers | Partial | Operational | Role-gated volunteer accounting/workflow routes with explicit route-contract and RBAC audit coverage. |
+| Campaign management | Available | Operational | 82% | Batch/delivery models, unsubscribe/suppression controls, segmentation endpoints, queue visibility, due-batch processing, and failed-recipient retry controls are in production. Remaining work centers on deeper composer UX and richer query-builder ergonomics. |
+| Grants workflows | Available | Operational | 82% | Lifecycle/disbursement guards, budget-line accounting, reconciliation fields, saved-search alerts/workbench UX, and grant compliance package generation are in place. Remaining work focuses on deeper funder/state-specific automation. |
+| Memberships | Available | Operational | Membership management includes role-gated routes plus searchable/filterable/paginated member listing (`/api/v2/membership/members`); admin UX polish remains. |
+| Volunteers | Available | Operational | Role-gated volunteer accounting/workflow routes include searchable/paginated volunteer list paths with route-contract and RBAC coverage. |
 | Reporting exports/charts | Available | Operational | Export endpoints and chart/report paths are role-gated; Wave 1 route-level step-up hardening now covers high-risk destructive/export paths across main, reporting, grants-admin, program, volunteer, and v2 campaign segment deletion flows with focused regression validation. |
 | Unified constituent journeys + soft credits | Available | Operational | v2 donor journey snapshots (`/api/v2/donors/<id>/journey`) and relational soft-credit CRUD on donations are live with route-contract coverage. |
 | Role-based dashboard intelligence | Available | Operational | `/api/v2/intelligence/dashboard` delivers admin/staff/viewer-scoped payloads with preview restrictions and date validation. |
@@ -30,7 +30,7 @@ Maturity scale:
 | Integrated form ecosystem | Available | Operational | Internal/public v2 form ingest endpoints provide dedupe/idempotency, donor upsert, donation/task linkage, and tenant-safe submission listing. |
 | OpenAPI docs | Available | Foundational | Starter spec and docs routes exist; endpoint coverage still expanding. |
 | AI Copilot + governance | Available | Operational | Approval-gated actions, role-aware tooling, and tenant-id enforcement checks are in place; broader explicit negative-test depth for all AI pathways should continue to expand. |
-| Multi-tenant hardening | In progress | Operational | API v2 cross-tenant mutation denials and route-level RBAC audit cover most high-risk mutators; remaining work focuses on complete mutation-path verification and AI-context isolation evidence. |
+| Multi-tenant hardening | In progress | Operational | API v2 cross-tenant mutation denials and route-level RBAC audit now include the new campaign queue/retry and membership member-list surfaces; remaining work focuses on exhaustive mutation-path verification and AI-context isolation evidence. |
 | End-to-end integration journeys | Available | Foundational | Baseline donor->donation->receipt journey coverage is active; broaden scenario depth (multi-role, payment failure, and recovery paths) for release confidence. |
 | Production observability | Partial | Operational | Structured request logs, Prometheus/Loki/Promtail stack artifacts, and CI validation checks are in place. |
 
