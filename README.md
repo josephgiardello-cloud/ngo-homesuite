@@ -1,752 +1,143 @@
 # NGO HomeSuite
 
-A comprehensive nonprofit management system for managing donors, donations, funds, staff, volunteers, and compliance tracking. Built with Flask, SQLAlchemy, and security-first principles.
+A practical nonprofit operations platform for donor management, fundraising, grants, volunteers, and reporting.
 
 ![Status](https://img.shields.io/badge/status-active-success)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
-Last updated: 2026-06-02 (post queue/compliance UX and RBAC hardening)
+Last updated: 2026-06-02
 
-## Project Metadata
+## Overview
 
-- Description: Local-first nonprofit operations suite with integrated AI Copilot (RAG + internal tools)
-- Primary topics: nonprofit, flask, donations, donor-management, reporting, ai-copilot, rag
-- Screenshots folder: `docs/screenshots/`
-- Demo guide: `docs/demo/README.md`
-- Packaging metadata: `pyproject.toml`
+NGO HomeSuite is a local-first Flask application designed for nonprofit teams that need a single system for core operations:
 
-Documentation index:
-- Feature maturity matrix: `docs/feature_status.md`
-- Production checklist: `docs/production_checklist.md`
-- Observability stack runbook: `docs/observability_stack.md`
-- Backup/restore drill runbook: `docs/backup_restore_drill.md`
-- Dependency update policy: `docs/dependency_policy.md`
-- Architecture decisions (ADR): `docs/adr/README.md`
-- Release/versioning process: `docs/release_process.md`
+- Donors, donations, recurring giving, and receipts
+- Campaign operations (including queue visibility and retry controls)
+- Grants lifecycle, budget/accounting controls, and compliance package export
+- Membership and volunteer workflows
+- Role-based access, tenant-aware data boundaries, and auditability
+- API-first integrations and operational reporting
 
-## Current Program State (June 2026)
+## Core Capabilities
 
-Recent parity and maturity work is now implemented in the production codepath (not placeholder scaffolding):
+- Financial management: donations, funds, expenses, reconciliation-ready exports
+- Relationship management: donor profiles, interactions, pledges, peer fundraising
+- Campaign operations: segmentation, preview/send, queue processing, failed-batch retry
+- Grants operations: lifecycle transitions, disbursements, budget lines, compliance packages
+- Membership and volunteer tools: enrollment/tracking, training, searchable list views
+- Reporting and analytics: exports, dashboards, guardrails, activity insights
+- API and integrations: versioned API routes plus docs and OpenAPI spec
+- AI assistant support: local-first Copilot endpoint with role-aware tooling
 
-- Unified constituent journey timelines with donor 360 summaries and soft-credit attribution.
-- Role-based dashboard intelligence tailored to admin/staff/viewer contexts.
-- Automated donor journey triggers with durable idempotency/cooldown/audit eventing.
-- Smart financial guardrails with risk scoring and actionable recommendations.
-- Integrated form ecosystem ingestion (internal and token-auth public intake) with dedupe, CRM linkage, and follow-up task creation.
-- Campaign email queue orchestration with visibility, due-batch processing, and failed-recipient retry controls.
-- Grant compliance package generation for reporting and internal controls review.
-- Membership and volunteer UX upgrades with search/filter/pagination list experiences.
-- Expanded tenant-safety and route-protection coverage for new API surfaces.
+## Current State (June 2026)
 
-Primary v2 endpoints now active for these capabilities:
+Shipped and working in the main product path:
 
-- `GET /api/v2/donors/<donor_id>/journey`
-- `GET|POST /api/v2/donations/<donation_id>/soft-credits`
-- `GET /api/v2/intelligence/dashboard`
-- `GET /api/v2/intelligence/financial-guardrails`
-- `POST /api/v2/donor-journeys/automations/run`
-- `GET /api/v2/donor-journeys/automations/events`
-- `POST /api/v2/forms/submissions` (authenticated admin/staff)
-- `POST /api/v2/forms/submissions/public` (token-auth, tenant-targeted)
-- `GET /api/v2/forms/submissions`
-- `GET /api/v2/campaigns/<campaign_id>/emails/queue`
-- `POST /api/v2/campaigns/<campaign_id>/emails/queue/process`
-- `POST /api/v2/campaigns/<campaign_id>/emails/batches/<batch_id>/retry-failed`
-- `GET /api/v2/grants/<grant_id>/compliance-package`
-- `GET /api/v2/membership/members`
+- Campaign queue controls: queue visibility, due-batch processing, and failed-batch retry
+- Grants compliance packaging: compliance-ready grant package endpoint and service flow
+- Membership and volunteer UX improvements: searchable/filterable/paginated list paths
+- Expanded tenant and RBAC validation for newly added API surfaces
 
-### Screenshot Gallery
+## What Is Left To Do
 
-- `docs/screenshots/dashboard-overview.png`
-- `docs/screenshots/donors-list.png`
-- `docs/screenshots/donor-profile.png`
-- `docs/screenshots/donations-list.png`
-- `docs/screenshots/reports-compliance.png`
-- `docs/screenshots/copilot-approval-queue.png`
+Key work still tracked as open:
 
-These screenshots can be regenerated by following `docs/demo/README.md`.
+- External formal security review evidence (pentest/sign-off artifacts)
+- Broader tenant-isolation and AI context-boundary evidence across all mutation paths
+- Deeper end-to-end journey coverage (failure/recovery and multi-role scenarios)
+- Additional UX modernization in high-traffic workflows
+- Ongoing dependency hardening and release-evidence automation
 
-## Features
+## Tech Stack
 
-Note on depth and maturity:
-- The list below describes available capability areas.
-- Production maturity varies by module. See `docs/feature_status.md` for the authoritative status.
-
-## Known Tradeoffs
-
-- Mixed interaction surfaces are intentional: CLI, web routes, and API contracts coexist to support local-first operators and automation users in the same repo.
-- Jinja-first frontend favors delivery speed and operational simplicity over SPA-style client architecture.
-- Dependency breadth is intentionally broad to support payments, cloud integrations, analytics, and AI pathways; release lanes enforce regular audit/scanning.
-- Some legacy compatibility toggles remain available for controlled recovery scenarios and are expected to stay operator-governed.
-
-### 💰 Financial Management
-- Donation tracking and management
-- Fund management with allocation tracking
-- Bank account reconciliation
-- Expense tracking
-- Accounting exports for external systems
-- Currency handling and conversion
-
-### 👥 Relationship Management
-- Donor database with comprehensive profiles
-- Donor interaction history
-- Pledge tracking
-- Peer fundraising management (operational core + ongoing UX depth)
-- Event management (foundational)
-- Campaign management with production email segmentation, queue analytics, and retry controls
-
-### 👔 Staff & Volunteers
-- Staff payroll management
-- Volunteer tracking, hours, and searchable/paginated operational list views
-- Role-based access control
-- Session management
-
-### 📊 Reporting & Analytics
-- Donor reports
-- Donation analysis
-- Fund performance reports
-- Export-first reporting with foundational charting (advanced dashboards and scheduling are roadmap items)
-- Integrity drift detection for data consistency
-- OpenTimestamps integration for audit trail immutability
-
-### 🤖 HomeSuite Copilot
-- Local-first AI assistant endpoint at `/ai/copilot/chat`
-- RAG indexing for source/docs/models via `homesuite reindex`
-- Role-aware tool execution for internal actions (report generation, donor search, donation lookup)
-- Optional web tooling is disabled by default and can be enabled explicitly
-
-### 🧭 API Docs
-- OpenAPI starter spec available at `/api/openapi.yaml`
-- In-app docs landing page at `/api/docs`
-- Interactive Swagger UI at `/api/swagger`
-- Source spec file is maintained in `docs/openapi.yaml`
-- Includes stable `operationId` values and reusable component schemas for tooling/client generation
-
-#### Campaign Email API Quick Examples
-
-Preview recipients with advanced audience filters:
-
-```bash
-curl -X POST "http://localhost:5000/api/v2/campaigns/42/emails/preview" \
-   -H "Content-Type: application/json" \
-   -b "session=dev-admin-session" \
-   -d '{
-      "subject": "Filtered preview message",
-      "body": "Hi {name}, here is your impact update for {campaign_name}.",
-      "audience": {
-         "min_total_given": 300,
-         "max_total_given": 500,
-         "min_gift_count": 2,
-         "max_gift_count": 3,
-         "gifted_between_days_min": 1,
-         "gifted_between_days_max": 90
-      }
-   }'
-```
-
-Expected preview response highlights:
-- `total_recipients`
-- `recipient_breakdown.by_donor_type`
-- `recipient_breakdown.by_total_giving_band`
-- `recipient_breakdown.by_gift_count_band`
-- `recipient_breakdown.by_recency_band`
-- `audience_applied`
-- `quality_hints`
-- `sample_preview`
-
-Send to an advanced audience segment:
-
-```bash
-curl -X POST "http://localhost:5000/api/v2/campaigns/42/emails/send" \
-   -H "Content-Type: application/json" \
-   -b "session=dev-admin-session" \
-   -d '{
-      "subject": "Quarterly impact update",
-      "body": "Hi {name}, your support powers {campaign_name}.",
-      "audience": {
-         "donor_types": ["individual"],
-         "min_total_given": 300,
-         "max_total_given": 1500,
-         "min_gift_count": 2,
-         "max_gift_count": 8,
-         "gifted_between_days_min": 7,
-         "gifted_between_days_max": 180,
-         "lapsed_days_min": 30
-      },
-      "compliance": {
-         "reviewer_name": "Ops Reviewer",
-         "reviewer_role": "Staff"
-      },
-      "dry_run": false
-   }'
-```
-
-See `docs/openapi.yaml` for complete schema details and all optional audience keys (including `smart_group_id` and `smart_group_rules`).
-
-### 🚀 High-ROI Workflow Layer
-- Experimental domain graph snapshot endpoint at `/api/domain/snapshot` (Donor/Campaign/Grant/Beneficiary/Program/Outcome)
-- Experimental semantic task context endpoint at `/api/semantic/context?task=...`
-- Opinionated workflow API endpoints (foundational):
-   - `POST /api/workflows/donation/{donationId}/run`
-   - `POST /api/workflows/grant/run`
-   - `POST /api/workflows/program-impact/run`
-- Minimal workflow UI at `/workflows` for operations users
-
-### 🏗️ V2 Foundation
-- Deterministic workflow runtime module at `ngo_homesuite/workflow_engine/` (active)
-- Multi-tenant and RBAC guards at `ngo_homesuite/tenant/` and `ngo_homesuite/rbac/` (active + expanded contract coverage)
-- Append-only event store baseline at `ngo_homesuite/audit/event_store.py`
-- Versioned API endpoints under `/api/v1/`:
-   - `GET /api/v1/workflows`
-   - `POST /api/v1/workflows/instances`
-   - `POST /api/v1/workflows/instances/{instanceId}/events`
-   - `GET /api/v1/workflows/instances/{instanceId}/trace`
-   - `GET /api/v1/audit/events?org_id=...`
-- Architecture blueprint: `docs/architecture_v2.md`
-
-### 🔒 Security & Compliance
-- SQLCipher encryption support (optional)
-- Append-only audit logging (all changes tracked immutably)
-- HIBP (Have I Been Pwned) password breach checking
-- Environment-based key rotation capability
-- S3 seal anchoring for audit trail verification
-- Secure database permissions enforcement
-- Session-based authentication
-
-### 🌍 Internationalization
-- Spanish (es) translations
-- French (fr) translations
-- Easy expansion to additional languages
-
-## Architecture
-
-```
-ngo-homesuite/
-├── auth/              # Authentication, session, password policy
-├── db/                # Database layer, migrations, schema
-├── models/            # Data models and entities
-├── services/          # Business logic (reporting, reconciliation, etc.)
-├── utils/             # Utilities (backup, export, email, integrity)
-├── web/               # Flask web application
-├── api/               # Versioned API surface and contracts
-├── workflow_engine/   # Deterministic workflow runtime (foundational)
-├── tenant/            # Tenant scoping primitives
-├── rbac/              # Role/permission policy layer
-├── migrations/        # SQL migrations
-├── config/            # Configuration management
-└── translations/      # i18n translations
-```
+- Backend: Python, Flask, SQLAlchemy
+- Data: PostgreSQL (recommended), SQLite (local/demo)
+- Optional encryption: SQLCipher
+- Testing: pytest
+- Deployment: Docker, Gunicorn
 
 ## Quick Start
 
-### Prerequisites
-- Python 3.10+
-- PostgreSQL 15+ (recommended for production-like local runs)
-- SQLite3 (quick demos/dev only)
-- pip or conda
+1. Clone
 
-### Installation
+```bash
+git clone https://github.com/josephgiardello-cloud/ngo-homesuite.git
+cd ngo-homesuite
+```
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/josephgiardello-cloud/ngo-homesuite.git
-   cd ngo-homesuite
-   ```
+2. Create and activate virtual environment
 
-2. **Create a virtual environment**
-   ```bash
-   python -m venv .venv
-   # On Windows
-   .venv\Scripts\activate
-   # On macOS/Linux
-   source .venv/bin/activate
-   ```
+```bash
+python -m venv .venv
+# Windows
+.venv\Scripts\activate
+# macOS/Linux
+source .venv/bin/activate
+```
 
-3. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-   Alternative (from `pyproject.toml`):
-   ```bash
-   pip install -e .
-   ```
+3. Install dependencies
 
-   For local development and the default test workflow, also install dev tooling:
-   ```bash
-   pip install -r requirements-dev.txt
-   ```
-   The repository `pytest.ini` enables coverage and timeout plugins by default, so a fresh venv needs the dev test dependencies for `pytest` to run unchanged.
+```bash
+pip install -r requirements.txt
+pip install -r requirements-dev.txt
+```
 
-4. **Configure the application**
-   ```bash
-   cp .env.example .env
-   # Edit .env with your settings
-   ```
+4. Configure environment
 
-### Configure One-Click SSO Login
+```bash
+cp .env.example .env
+```
 
-The login page supports Google, GitHub, Microsoft, and Okta. A provider becomes clickable when its required variables are set in `.env`.
+5. Run migrations
 
-Required variables per provider:
-- Google: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
-- GitHub: `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`
-- Microsoft: `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`
-- Okta: `OKTA_CLIENT_ID`, `OKTA_CLIENT_SECRET`, `OKTA_SERVER_METADATA_URL`
-
-Optional links used by the login page help/compliance area:
-- `SUPPORT_EMAIL`
-- `STATUS_PAGE_URL`
-- `PRIVACY_URL`
-- `TERMS_URL`
-- `COOKIES_URL`
-
-Use callback URLs in each provider app registration like:
-- `http://127.0.0.1:5000/auth/oauth/google/callback`
-- `http://127.0.0.1:5000/auth/oauth/github/callback`
-- `http://127.0.0.1:5000/auth/oauth/microsoft/callback`
-- `http://127.0.0.1:5000/auth/oauth/okta/callback`
-
-If you run on a different host/port, replace the base URL accordingly.
-
-Quick backend sanity check before testing buttons:
-- `GET /auth/oauth/providers`
-
-This endpoint reports each provider's configured and registered state, masked client values, and expected authorize/callback paths.
-
-### Database Setup
-
-#### Quick Demo (SQLite)
 ```bash
 python -m ngo_homesuite.db.migrate
 ```
 
-Preflight before applying migrations (recommended):
-```bash
-python -m ngo_homesuite.db.migrate --dry-run --verify-backup
-```
-
-#### With SQLCipher Encryption
-1. Install optional dependency:
-   ```bash
-   pip install pysqlcipher3
-   ```
-
-2. Set encryption key:
-   ```bash
-   # On Windows (PowerShell)
-   $env:NGO_HOMESUITE_DB_KEY = "your-strong-key-here"
-   
-   # On macOS/Linux
-   export NGO_HOMESUITE_DB_KEY="your-strong-key-here"
-   ```
-
-3. Run migrations:
-   ```bash
-   python -m ngo_homesuite.db.migrate
-   ```
-
-### Running the Application
+6. Start the app
 
 ```bash
 python -m ngo_homesuite.main
 ```
 
-Primary launcher: `python -m ngo_homesuite.main`
+Default URL: http://localhost:5000
 
-The Flask application will be available at `http://localhost:5000` (default).
+## Testing
 
-### Production-Style Local Deployment (PostgreSQL recommended)
+Run the full suite:
 
-Use Docker Compose with Gunicorn and PostgreSQL profile:
+```bash
+python -m pytest --maxfail=10 -v
+```
+
+## Docker (Optional)
 
 ```bash
 docker compose --profile postgres up --build
 ```
 
-App endpoint: `http://localhost:8000`
+## Documentation
 
-With optional edge proxy profile:
+- Feature maturity: [docs/feature_status.md](docs/feature_status.md)
+- Production checklist: [docs/production_checklist.md](docs/production_checklist.md)
+- API specification: [docs/openapi.yaml](docs/openapi.yaml)
+- Architecture notes: [docs/architecture_v2.md](docs/architecture_v2.md)
+- Observability runbook: [docs/observability_stack.md](docs/observability_stack.md)
+- Backup/restore drill: [docs/backup_restore_drill.md](docs/backup_restore_drill.md)
+- Release process: [docs/release_process.md](docs/release_process.md)
 
-```bash
-docker compose --profile edge up --build
-```
+## Project Status
 
-## Testing
+This repository is actively maintained. For exact maturity by module and current release blockers, use:
 
-### Run All Tests
-```bash
-python -m pytest
-```
+- [docs/feature_status.md](docs/feature_status.md)
+- [docs/production_checklist.md](docs/production_checklist.md)
 
-### Run Specific Test Suite
-```bash
-# Database tests
-pytest ngo_homesuite/db --maxfail=10 -v
+## Contributing
 
-# Authentication tests
-pytest ngo_homesuite/auth --maxfail=10 -v
-
-# Integrity drift tests
-pytest ngo_homesuite/utils --maxfail=10 -v
-```
-
-### Test Configuration
-
-**Important**: Tests are sensitive to the `NGO_HOMESUITE_DB_KEY` environment variable. 
-
-- **For unencrypted DB tests** (recommended for CI):
-  ```bash
-  $env:NGO_HOMESUITE_DB_KEY = ""  # Clear the variable
-  pytest ngo_homesuite/
-  ```
-
-- **For encrypted DB tests**:
-  ```bash
-  $env:NGO_HOMESUITE_DB_KEY = "test-key-12345"
-  pip install pysqlcipher3
-  pytest ngo_homesuite/
-  ```
-
-### Current Test Status
-- First-party test suite runs from `ngo_homesuite/` by default via `pytest.ini`
-- Includes AI hardening, copilot routes, auth models, DB hardening, integrity drift, and web sprint tests
-- Bundled third-party test trees outside `ngo_homesuite/` are excluded from default project test runs
-- Latest full run (2026-05-15): `132 collected`, `131 passed`, `1 skipped`
-
-To refresh this value locally:
-```bash
-python -m pytest -q
-```
-
-## Configuration
-
-Configuration precedence is:
-1. Environment variables (`.env` / process environment)
-2. YAML file (`ngo-homesuite.yaml` or `ngo_homesuite.yaml`, optional)
-3. Safe in-code defaults
-
-Runtime validation:
-- Startup now validates configuration with a centralized Pydantic settings model.
-- Invalid values (for example invalid log levels, bad ports, invalid cookie mode, non-positive timeouts) fail fast with clear startup errors.
-- Production hard checks are enforced at startup:
-   - `SECRET_KEY` or `FLASK_SECRET_KEY` must be explicitly set.
-   - `DATABASE_URL` must be explicitly set.
-
-`SECRET_KEY` / `FLASK_SECRET_KEY` behavior:
-- If either env var is set, that value is used.
-- If neither is set, HomeSuite generates a secure key on first run and persists it to `data/.secret_key`.
-
-### Environment Variables
-
-| Variable | Purpose | Example |
-|----------|---------|---------|
-| `NGO_HOMESUITE_DB_KEY` | SQLCipher encryption key (optional) | `your-secure-key` |
-| `NGO_HOMESUITE_DB_PATH` | Database file path | `/data/ngo.db` |
-| `FLASK_ENV` | Flask environment | `development`, `production` |
-| `SECRET_KEY` | Flask session key | (auto-generated if not set) |
-
-Additional operational controls:
-
-| Variable | Purpose | Default |
-|----------|---------|---------|
-| `NGO_HOMESUITE_MIGRATION_TIMEOUT_SEC` | SQLite migration timeout | `30` |
-| `NGO_HOMESUITE_BACKUP_BEFORE_MIGRATE` | Create DB backup before migrations | `1` |
-| `NGO_HOMESUITE_REQUIRE_BACKUP_BEFORE_MIGRATE` | Fail migration if backup policy cannot be satisfied | `1` |
-| `NGO_HOMESUITE_MIGRATION_BACKUP_WARN_ONLY` | Warn instead of fail when backup policy cannot be met | `0` |
-| `NGO_HOMESUITE_RESTORE_BACKUP_ON_MIGRATION_FAIL` | Restore backup automatically on migration failure | `1` |
-| `COPILOT_TOOL_TIMEOUT_SEC` | Timeout for each Copilot tool execution | `8` |
-| `COPILOT_CONVERSATION_MAX_MESSAGES` | Max retained messages per conversation | `200` |
-
-### Database Encryption (SQLCipher)
-
-When `NGO_HOMESUITE_DB_KEY` is set:
-- Database file is encrypted at rest
-- All sensitive data is protected
-- Key rotation is supported via `cron_safe_rotate_db_key`
-- Unencrypted access is blocked (security by default)
-
-**Warning**: If the key is lost, the database cannot be recovered.
-
-Lost encryption key recovery playbook:
-1. Immediately stop application writes.
-2. Restore the latest encrypted DB backup and verify the matching key material source.
-3. If no valid key exists, treat data as unrecoverable and perform controlled rebuild from exports/audit artifacts.
-4. Rotate credentials/secrets and document incident timeline.
-
-Migration safety defaults:
-- Backup-before-migrate is enabled by default.
-- Migrations can be configured to hard-fail if backup policy is not satisfied.
-- Automatic restore on migration failure is enabled by default.
-
-### Dependency Locking
-
-Runtime dependencies are pinned in `requirements.txt` and mirrored in `pyproject.toml`.
-
-Recommended lockfile workflow:
-
-```bash
-# pip-tools
-pip install pip-tools
-pip-compile --generate-hashes -o requirements.lock requirements.txt
-pip-sync requirements.lock
-```
-
-```bash
-# uv
-uv pip compile requirements.txt -o requirements.lock
-uv pip sync requirements.lock
-```
-
-Editable install for development (consistent with packaging metadata):
-
-```bash
-pip install -e .[dev]
-```
-
-### API Usage Examples
-
-Create workflow instance:
-
-```bash
-curl -X POST http://localhost:5000/api/v1/workflows/instances \
-   -H "Content-Type: application/json" \
-   -d '{"org_id":"1","workflow_type":"case_intake"}'
-```
-
-Apply workflow event (identity comes from authenticated session):
-
-```bash
-curl -X POST http://localhost:5000/api/v1/workflows/instances/<instance_id>/events \
-   -H "Content-Type: application/json" \
-   -d '{"org_id":"1","event_type":"intake_submit","payload":{"case_id":"CASE-001"}}'
-```
-
-Copilot chat:
-
-```bash
-curl -X POST http://localhost:5000/ai/copilot/chat \
-   -H "Content-Type: application/json" \
-   -d '{"prompt":"Summarize donor pipeline","context":{"active_page":"donors"}}'
-```
-
-## Key Modules
-
-### Authentication (`ngo_homesuite/auth/`)
-- Password policy enforcement
-- HIBP breach checking
-- Session management
-- User model with role-based access
-
-### Database (`ngo_homesuite/db/`)
-- SQLAlchemy connection pooling
-- Schema management
-- Append-only audit logging
-- Encryption/decryption layer
-- Health checks and diagnostics
-
-### Data Access Layer (`ngo_homesuite/dal/`)
-- Donations DAL
-- Donors DAL
-- Funds DAL
-- Projects DAL
-- Bank accounts DAL
-- Expenses DAL
-
-### Services (`ngo_homesuite/services/`)
-- Donation service (processing, tracking)
-- Donor service (profiles, interactions)
-- Fund service (allocation, management)
-- Bank reconciliation service
-- Reporting service
-
-### Utilities (`ngo_homesuite/utils/`)
-- Backup and restore
-- Integrity drift detection
-- CSV/Excel export
-- Email service integration
-- Payment webhook handling
-- S3 audit anchor integration
-- OpenTimestamps verification
-
-## Development
-
-### Code Style
-- Follow PEP 8
-- Use type hints where possible
-- Document public functions and classes
-
-### Database Migrations
-Place new migrations in `ngo_homesuite/migrations/` as `.sql` files:
-```sql
--- ngo_homesuite/migrations/0004_new_feature.sql
-ALTER TABLE donors ADD COLUMN custom_field TEXT;
-```
-
-Run migrations:
-```bash
-python -m ngo_homesuite.db.migrate
-```
-
-### Contributing
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
-
-Quick contributor bootstrap:
-
-```bash
-pip install -e .[dev]
-pre-commit install
-python -m pytest --maxfail=10 -v
-```
-
-Phase 2 roadmap tracking:
-- See `docs/phase2_roadmap.md`
-- Feature depth status is tracked in `docs/feature_status.md`
-
-## Backup & Recovery
-
-### Automated Backups
-```bash
-python -m ngo_homesuite.utils.backup
-```
-
-### Manual Backup
-```python
-from ngo_homesuite.utils.backup_core import create_backup
-create_backup(output_path="/backups/manual_backup.zip")
-```
-
-### Restore
-```python
-from ngo_homesuite.utils.backup_core import restore_backup
-restore_backup(backup_path="/backups/manual_backup.zip")
-```
-
-## Audit & Compliance
-
-### Append-Only Audit Log
-All entity changes are recorded in an immutable audit log:
-```sql
-SELECT * FROM audit_log WHERE entity_id = 'donor_123';
-```
-
-Fields:
-- `entity_type`: Type of entity (user, donation, donor, etc.)
-- `entity_id`: ID of the entity
-- `action`: insert, update, delete
-- `actor`: User who made the change
-- `timestamp`: When the change occurred
-- `details`: JSON details of the change
-- `hash_prev`: Hash of previous state
-- `hash_event`: Hash of this event (integrity verification)
-
-### Integrity Drift Detection
-Periodically verify data consistency:
-```bash
-python -m ngo_homesuite.utils.integrity_drift
-```
-
-This checks:
-- Schema integrity
-- Referential constraints
-- Audit log consistency
-- S3 seal anchors (if configured)
-
-## Troubleshooting
-
-### Database Locked
-If you see "database is locked":
-1. Ensure only one instance is running
-2. Check for orphaned connections
-3. Restart the application
-4. Run migration preflight to validate backup/lock flow:
-   ```bash
-   python -m ngo_homesuite.db.migrate --dry-run --verify-backup
-   ```
-
-### Legacy Schema Fallback (Emergency Only)
-The legacy fallback path in `ngo_homesuite/db/schema.py` is disabled by default.
-If delegation to the active SQL-file migration runner fails and you must use the legacy path for emergency recovery:
-```bash
-# PowerShell
-$env:NGO_HOMESUITE_ALLOW_LEGACY_SCHEMA_FALLBACK = "1"
-```
-Use this only for emergency recovery, then disable it again.
-
-### Ollama Unavailable
-If Copilot requests fail or timeout:
-1. Ensure Ollama is running locally (`http://localhost:11434` by default)
-2. Verify model availability:
-   ```bash
-   ollama list
-   ```
-3. Confirm `.env` values for `OLLAMA_HOST` and `OLLAMA_MODEL`
-
-### Port Already In Use
-If startup fails because port 5000 or 8000 is already in use:
-1. Change `PORT` in `.env`
-2. On Windows, identify the conflicting process:
-   ```powershell
-   Get-NetTCPConnection -LocalPort 5000 | Select-Object LocalAddress,LocalPort,OwningProcess,State
-   ```
-
-### Password Policy Errors
-The system enforces strong password policies:
-- Minimum 12 characters
-- Mix of uppercase, lowercase, digits, symbols
-- No breach detection matches from HIBP
-
-Check `ngo_homesuite/auth/models.py` for policy details.
-
-### SQLCipher Issues
-- **"SQLCipher driver isn't installed"**: Run `pip install pysqlcipher3`
-- **"Key mismatch"**: Ensure `NGO_HOMESUITE_DB_KEY` is consistent
-- **"Key rotation failed"**: Check file permissions on the database
-
-## Performance
-
-### Optimization Tips
-1. **Indexing**: Check `ngo_homesuite/db/schema.py` for indexes
-2. **Query optimization**: Use DAL layer, avoid N+1 queries
-3. **Connection pooling**: SQLAlchemy is configured with reasonable pool sizes
-4. **Caching**: Consider adding Redis for session caching
-
-### Monitoring
-- Enable Flask debug logging for development
-- Use `healthcheck()` from `ngo_homesuite/db/healthcheck.py` to monitor DB health
-- Check audit logs for suspicious patterns
+Please review [CONTRIBUTING.md](CONTRIBUTING.md) before opening pull requests.
 
 ## License
 
-This project is licensed under the MIT License.
-
-See `LICENSE` for the full text.
-
-## Support
-
-- 📧 Email: [Your support email]
-- 💬 Discussions: [Link to discussions]
-- 🐛 Issue Tracker: https://github.com/josephgiardello-cloud/ngo-homesuite/issues
-
-## Roadmap
-
-- [x] Web UI for donor management (list, detail, create/edit/delete, dedupe/merge)
-- [ ] Mobile app for volunteer check-in
-- [ ] Advanced reporting dashboard
-- [ ] Integration with popular accounting software
-- [ ] Multi-organization support
-- [ ] Workflow automation
-- [ ] API documentation (OpenAPI/Swagger)
-- [ ] Full frontend modernization (component system + richer interactivity)
-- [ ] Continuous compliance evidence publishing pipeline
-- [x] Feature maturity matrix + ADR process for claim accuracy
-
----
-
-**Last Updated**: June 2, 2026
+Licensed under MIT. See [LICENSE](LICENSE).
