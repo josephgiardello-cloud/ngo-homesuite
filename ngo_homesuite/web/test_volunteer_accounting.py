@@ -67,6 +67,19 @@ def _ensure_volunteer(app, org_id: int, name: str = "Test Volunteer") -> int:
 # ---------------------------------------------------------------------------
 
 class TestVolunteerShifts:
+    def test_list_volunteers_supports_search_and_pagination(self, client, app):
+        org_id = _ensure_user(app, "vol_staff", "vol_s@test.local", "staff", "VolStaff123!")
+        _ensure_volunteer(app, org_id, "Query Match Volunteer")
+        _ensure_volunteer(app, org_id, "Other Volunteer")
+        _login(client, "vol_staff", "VolStaff123!")
+
+        rv = client.get("/volunteers?q=Query+Match&limit=1&offset=0")
+        assert rv.status_code == 200
+        rows = rv.get_json()
+        assert isinstance(rows, list)
+        assert len(rows) <= 1
+        assert all("Query Match" in str(item.get("name") or "") for item in rows)
+
     def test_create_shift(self, client, app):
         org_id = _ensure_user(app, "vol_staff", "vol_s@test.local", "staff", "VolStaff123!")
         vol_id = _ensure_volunteer(app, org_id, "Alice Ramirez")

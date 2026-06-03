@@ -183,6 +183,46 @@ def test_v2_grant_advance_and_disbursement_contract(client, app):
     assert restricted_payload.get("total_disbursed", 0) >= 500
 
 
+def test_v2_grant_compliance_package_contract(client):
+    _login_admin(client)
+
+    created = client.post(
+        "/api/v2/grants",
+        json={
+            "title": "Compliance Package Grant",
+            "funder_name": "Contract Foundation",
+            "amount_requested": 9000,
+            "application_deadline": "2099-11-20",
+            "report_due_date": "2099-12-20",
+            "requirements": "Quarterly narrative and fiscal report",
+        },
+    )
+    assert created.status_code == 201
+    grant_id = int(created.get_json()["id"])
+
+    awarded = client.post(
+        f"/api/v2/grants/{grant_id}/advance",
+        json={"new_status": "awarded", "amount_awarded": 8000},
+    )
+    assert awarded.status_code == 200
+
+    disbursed = client.post(
+        f"/api/v2/grants/{grant_id}/disbursements",
+        json={"amount": 2500, "received_date": "2026-05-15"},
+    )
+    assert disbursed.status_code == 201
+
+    package_rv = client.get(f"/api/v2/grants/{grant_id}/compliance-package")
+    assert package_rv.status_code == 200
+    payload = package_rv.get_json() or {}
+    assert int((payload.get("grant") or {}).get("id") or 0) == grant_id
+    assert isinstance(payload.get("checks"), list)
+    assert isinstance(payload.get("budget_lines"), list)
+    assert isinstance(payload.get("disbursements"), list)
+    assert isinstance(payload.get("financials"), dict)
+    assert "remaining_restricted_balance" in (payload.get("financials") or {})
+
+
 def test_v2_grant_detail_blocks_cross_tenant_access_without_leaking_payload(client, app):
     with app.app_context():
         org_a = Organization.query.filter_by(slug="release-lane-org-a").first()
@@ -954,6 +994,79 @@ def test_v2_mutating_endpoints_reject_cross_tenant_references(client, app):
         json={"new_status": "closed"},
     )
     assert advance_foreign_case.status_code == 404
+
+
+def test_v2_membership_members_list_filters_and_tenant_scope(client, app):
+    _login_admin(client)
+
+    with app.app_context():
+        admin_user = db.session.scalars(
+            db.select(User).where(User.username == "admin").limit(1)
+        ).first()
+        assert admin_user is not None
+        local_org_id = int(admin_user.organization_id)
+
+        local_tier = MembershipTier(
+            organization_id=local_org_id,
+            name="Contract Tier Local",
+            price=50,
+            currency="USD",
+            interval="annual",
+        )
+        db.session.add(local_tier)
+        db.session.flush()
+
+        local_donor = Donor(
+            organization_id=local_org_id,
+            name="Membership Contract Person",
+            email="membership-contract@example.org",
+        )
+        db.session.add(local_donor)
+        db.session.flush()
+
+        foreign_org = Organization(name="Membership Foreign Org", slug="membership-foreign-org", is_active=True)
+        db.session.add(foreign_org)
+        db.session.flush()
+        foreign_tier = MembershipTier(
+            organization_id=foreign_org.id,
+            name="Contract Tier Foreign",
+            price=99,
+            currency="USD",
+            interval="annual",
+        )
+        foreign_donor = Donor(
+            organization_id=foreign_org.id,
+            name="Membership Contract Person",
+            email="foreign-membership-contract@example.org",
+        )
+        db.session.add_all([foreign_tier, foreign_donor])
+        db.session.commit()
+
+        local_tier_id = int(local_tier.id)
+        local_donor_id = int(local_donor.id)
+
+    enroll_rv = client.post(
+        "/api/v2/membership/enroll",
+        json={"donor_id": local_donor_id, "tier_id": local_tier_id},
+    )
+    assert enroll_rv.status_code == 201
+
+    list_rv = client.get(
+        "/api/v2/membership/members",
+        query_string={
+            "q": "Membership Contract Person",
+            "status": "active",
+            "page": 1,
+            "page_size": 5,
+        },
+    )
+    assert list_rv.status_code == 200
+    payload = list_rv.get_json() or {}
+    assert isinstance(payload.get("items"), list)
+    assert isinstance(payload.get("pagination"), dict)
+    assert int((payload.get("pagination") or {}).get("total") or 0) >= 1
+    assert any(str(item.get("donor_email") or "") == "membership-contract@example.org" for item in payload.get("items") or [])
+    assert all(str(item.get("donor_email") or "") != "foreign-membership-contract@example.org" for item in payload.get("items") or [])
 
 
 def test_v2_activity_feed_and_insights_contract(client):

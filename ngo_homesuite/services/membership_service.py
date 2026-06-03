@@ -4,10 +4,10 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from werkzeug.exceptions import NotFound
 
-from ngo_homesuite.models.core import MembershipRecord, MembershipTier, db
+from ngo_homesuite.models.core import Donor, MembershipRecord, MembershipTier, db
 
 
 def _today() -> date:
@@ -197,6 +197,49 @@ def list_members(
         stmt = stmt.where(MembershipRecord.tier_id == tier_id)
     stmt = stmt.order_by(MembershipRecord.start_date.desc())
     return list(db.session.scalars(stmt))
+
+
+def list_members_page(
+    organization_id: int,
+    *,
+    status: Optional[str] = None,
+    tier_id: Optional[int] = None,
+    search_query: Optional[str] = None,
+    expiring_within_days: Optional[int] = None,
+    limit: int = 25,
+    offset: int = 0,
+) -> tuple[List[MembershipRecord], int]:
+    filters = [MembershipRecord.organization_id == organization_id]
+    if status:
+        filters.append(MembershipRecord.status == status)
+    if tier_id is not None:
+        filters.append(MembershipRecord.tier_id == tier_id)
+    if expiring_within_days is not None:
+        today = _today()
+        cutoff = today + timedelta(days=max(1, int(expiring_within_days)))
+        filters.append(MembershipRecord.end_date.is_not(None))
+        filters.append(MembershipRecord.end_date >= today)
+        filters.append(MembershipRecord.end_date <= cutoff)
+
+    if search_query:
+        like = f"%{str(search_query).strip()}%"
+        filters.append(
+            or_(
+                Donor.name.ilike(like),
+                Donor.email.ilike(like),
+            )
+        )
+
+    base_stmt = select(MembershipRecord).join(Donor, Donor.id == MembershipRecord.donor_id).where(*filters)
+    total_stmt = select(func.count(MembershipRecord.id)).join(Donor, Donor.id == MembershipRecord.donor_id).where(*filters)
+
+    rows = list(
+        db.session.scalars(
+            base_stmt.order_by(MembershipRecord.start_date.desc()).limit(max(1, min(int(limit), 200))).offset(max(0, int(offset)))
+        )
+    )
+    total = int(db.session.scalar(total_stmt) or 0)
+    return rows, total
 
 
 def expiring_soon(organization_id: int, within_days: int = 30) -> List[MembershipRecord]:

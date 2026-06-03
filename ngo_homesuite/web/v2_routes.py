@@ -1124,6 +1124,17 @@ def grants_restricted_funds():
     return jsonify(_grants().restricted_funding_summary(_org_id()))
 
 
+@v2_bp.route("/grants/<int:grant_id>/compliance-package", methods=["GET"])
+@login_required
+@roles_required("admin", "staff")
+def grants_compliance_package(grant_id: int):
+    try:
+        payload = _grants().build_grant_compliance_package(grant_id, _org_id())
+    except GrantNotFound as exc:
+        return jsonify({"error": str(exc)}), 404
+    return jsonify(payload), 200
+
+
 @v2_bp.route("/grants/opportunities/search", methods=["GET"])
 @login_required
 def grants_search_opportunities():
@@ -2284,6 +2295,70 @@ def enroll_member():
 def membership_summary():
     from ngo_homesuite.services.membership_service import membership_summary as svc
     return jsonify(svc(_org_id()))
+
+
+@v2_bp.route("/membership/members", methods=["GET"])
+@login_required
+@roles_required("admin", "staff")
+def membership_members_list():
+    from ngo_homesuite.services.membership_service import list_members_page as svc
+
+    status = (request.args.get("status") or "").strip() or None
+    q = (request.args.get("q") or "").strip() or None
+    tier_id_raw = request.args.get("tier_id")
+    expiring_raw = request.args.get("expiring_within_days")
+    page = request.args.get("page", 1, type=int)
+    page_size = request.args.get("page_size", 25, type=int)
+
+    tier_id = None
+    if tier_id_raw not in (None, ""):
+        try:
+            tier_id = int(tier_id_raw)
+        except (TypeError, ValueError):
+            return jsonify({"error": "tier_id must be an integer"}), 400
+
+    expiring_within_days = None
+    if expiring_raw not in (None, ""):
+        try:
+            expiring_within_days = int(expiring_raw)
+        except (TypeError, ValueError):
+            return jsonify({"error": "expiring_within_days must be an integer"}), 400
+
+    safe_page = max(1, int(page or 1))
+    safe_size = max(1, min(int(page_size or 25), 200))
+    rows, total = svc(
+        _org_id(),
+        status=status,
+        tier_id=tier_id,
+        search_query=q,
+        expiring_within_days=expiring_within_days,
+        limit=safe_size,
+        offset=(safe_page - 1) * safe_size,
+    )
+    return jsonify(
+        {
+            "items": [
+                {
+                    "id": int(record.id),
+                    "donor_id": int(record.donor_id),
+                    "tier_id": int(record.tier_id),
+                    "status": str(record.status or ""),
+                    "start_date": record.start_date.isoformat() if record.start_date else None,
+                    "end_date": record.end_date.isoformat() if record.end_date else None,
+                    "next_renewal_date": record.next_renewal_date.isoformat() if record.next_renewal_date else None,
+                    "donor_name": str(getattr(record.donor, "name", "") or ""),
+                    "donor_email": str(getattr(record.donor, "email", "") or ""),
+                    "tier_name": str(getattr(record.tier, "name", "") or ""),
+                }
+                for record in rows
+            ],
+            "pagination": {
+                "page": safe_page,
+                "page_size": safe_size,
+                "total": int(total),
+            },
+        }
+    ), 200
 
 
 def _tier_dict(t) -> dict:
@@ -3512,6 +3587,72 @@ def campaign_email_segment_preview_route(segment_id: int):
         "count": int(len(members)),
         "members": members[:limit],
     }), 200
+
+
+@v2_bp.post("/campaigns/<int:campaign_id>/emails/queue/process")
+@login_required
+@roles_required("admin", "staff")
+def campaign_email_queue_process_route(campaign_id: int):
+    from ngo_homesuite.services.campaign_email_service import process_scheduled_campaign_email_batches
+
+    _ = _get_campaign_or_404(campaign_id)
+    limit = request.args.get("limit", 100, type=int)
+    result = process_scheduled_campaign_email_batches(limit=max(1, min(int(limit or 100), 500)))
+    return jsonify(result), 200
+
+
+@v2_bp.get("/campaigns/<int:campaign_id>/emails/queue")
+@login_required
+@roles_required("admin", "staff")
+def campaign_email_queue_route(campaign_id: int):
+    from ngo_homesuite.services.campaign_email_service import campaign_email_queue_overview
+
+    status = (request.args.get("status") or "").strip() or None
+    limit = request.args.get("limit", 25, type=int)
+    try:
+        payload = campaign_email_queue_overview(
+            _org_id(),
+            campaign_id,
+            status=status,
+            limit=max(1, min(int(limit or 25), 200)),
+        )
+    except LookupError:
+        return jsonify({"error": "Campaign not found"}), 404
+    return jsonify(payload), 200
+
+
+@v2_bp.post("/campaigns/<int:campaign_id>/emails/batches/<int:batch_id>/retry-failed")
+@login_required
+@roles_required("admin", "staff")
+def campaign_email_retry_failed_route(campaign_id: int, batch_id: int):
+    from ngo_homesuite.services.campaign_email_service import retry_failed_campaign_email_batch
+
+    data = request.get_json(silent=True) or {}
+    hitl_metadata, hitl_error = _human_in_the_loop_metadata(data)
+    if hitl_error:
+        return jsonify(
+            {
+                "error": hitl_error,
+                "warning": "All outbound external communication requires explicit human authorization.",
+                "human_in_the_loop_required": True,
+            }
+        ), 400
+
+    try:
+        payload = retry_failed_campaign_email_batch(
+            _org_id(),
+            campaign_id,
+            batch_id,
+            created_by_user_id=int(getattr(current_user, "id", 0) or 0),
+            created_by_username=str(getattr(current_user, "username", "") or ""),
+            created_by_role=str(getattr(current_user, "role", "") or ""),
+            human_authorization=hitl_metadata,
+        )
+    except LookupError:
+        return jsonify({"error": "Batch not found"}), 404
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(payload), 200
 
 
 @v2_bp.get("/campaigns/email/open-pixel")

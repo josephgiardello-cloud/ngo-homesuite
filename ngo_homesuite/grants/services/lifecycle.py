@@ -1558,3 +1558,117 @@ def restricted_funding_summary(organization_id: int) -> dict:
         "total_restricted_remaining": total_restricted_remaining,
         "grants": grant_rows,
     }
+
+
+def build_grant_compliance_package(grant_id: int, organization_id: int) -> dict:
+    """Build a compliance-ready package with grant, budget, and control checks."""
+    grant = get_grant(int(grant_id), int(organization_id))
+    if grant is None:
+        raise GrantNotFound(int(grant_id))
+
+    budget_lines = list(
+        db.session.scalars(
+            select(GrantBudgetLine).where(
+                GrantBudgetLine.grant_id == int(grant.id),
+                GrantBudgetLine.organization_id == int(organization_id),
+            ).order_by(GrantBudgetLine.category.asc(), GrantBudgetLine.id.asc())
+        )
+    )
+    disbursements = get_disbursements(int(grant.id), int(organization_id))
+    allocations = list(
+        db.session.scalars(
+            select(GrantExpenseAllocation).where(
+                GrantExpenseAllocation.grant_id == int(grant.id),
+                GrantExpenseAllocation.organization_id == int(organization_id),
+            ).order_by(GrantExpenseAllocation.created_at.desc(), GrantExpenseAllocation.id.desc())
+        )
+    )
+
+    awarded = float(grant.amount_awarded or 0.0)
+    requested = float(grant.amount_requested or 0.0)
+    received = float(_grant_disbursed_total(int(grant.id), int(organization_id)))
+    spent = float(_grant_spent_total(int(grant.id), int(organization_id)))
+    allocated = float(_grant_budget_allocated_total(int(grant.id), int(organization_id)))
+    remaining = float(_grant_budget_remaining(int(grant.id), int(organization_id)))
+    today = _today()
+
+    checks = [
+        {
+            "check": "requirements_present",
+            "status": "pass" if bool((grant.requirements or "").strip()) else "warn",
+            "message": "Grant requirements are documented." if bool((grant.requirements or "").strip()) else "Grant requirements are empty.",
+        },
+        {
+            "check": "report_due_date_set",
+            "status": "pass" if grant.report_due_date is not None else "warn",
+            "message": "Report due date is set." if grant.report_due_date is not None else "Report due date is missing.",
+        },
+        {
+            "check": "report_due_date_overdue",
+            "status": "fail" if (grant.report_due_date is not None and grant.report_due_date < today and grant.status in {"awarded", "active", "reporting"}) else "pass",
+            "message": "Grant report due date has passed for an active lifecycle status." if (grant.report_due_date is not None and grant.report_due_date < today and grant.status in {"awarded", "active", "reporting"}) else "No overdue reporting issue detected.",
+        },
+        {
+            "check": "allocation_vs_award",
+            "status": "fail" if (awarded > 0 and allocated > awarded + 1e-9) else "pass",
+            "message": "Allocated budget exceeds awarded amount." if (awarded > 0 and allocated > awarded + 1e-9) else "Allocated budget is within awarded amount.",
+        },
+        {
+            "check": "spend_vs_received",
+            "status": "fail" if (received >= 0 and spent > received + 1e-9) else "pass",
+            "message": "Spend exceeds recognized disbursements." if (received >= 0 and spent > received + 1e-9) else "Spend is within recognized disbursements.",
+        },
+    ]
+
+    return {
+        "grant": {
+            "id": int(grant.id),
+            "title": str(grant.title or ""),
+            "funder_name": str(grant.funder_name or ""),
+            "status": str(grant.status or ""),
+            "currency": str(grant.currency or "USD"),
+            "amount_requested": requested,
+            "amount_awarded": awarded,
+            "application_deadline": grant.application_deadline.isoformat() if grant.application_deadline else None,
+            "report_due_date": grant.report_due_date.isoformat() if grant.report_due_date else None,
+            "requirements": str(grant.requirements or ""),
+            "notes": str(grant.notes or ""),
+        },
+        "financials": {
+            "amount_received": received,
+            "amount_spent": spent,
+            "allocated_budget": allocated,
+            "remaining_restricted_balance": remaining,
+        },
+        "budget_lines": [
+            {
+                "id": int(line.id),
+                "category": str(line.category or ""),
+                "allocated_amount": float(line.allocated_amount or 0.0),
+                "notes": str(line.notes or ""),
+            }
+            for line in budget_lines
+        ],
+        "disbursements": [
+            {
+                "id": int(disb.id),
+                "amount": float(disb.amount or 0.0),
+                "received_date": disb.received_date.isoformat() if disb.received_date else None,
+                "reference": str(disb.reference or ""),
+                "notes": str(disb.notes or ""),
+            }
+            for disb in disbursements
+        ],
+        "allocations": [
+            {
+                "id": int(allocation.id),
+                "expense_id": int(allocation.expense_id),
+                "budget_line_id": int(allocation.budget_line_id),
+                "amount": float(allocation.amount or 0.0),
+                "allocated_at": allocation.created_at.isoformat() if allocation.created_at else None,
+            }
+            for allocation in allocations
+        ],
+        "checks": checks,
+        "generated_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
+    }

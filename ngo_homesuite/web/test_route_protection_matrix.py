@@ -78,6 +78,7 @@ ROUTE_POLICY_MANIFEST: dict[str, RoutePolicy] = {
     "/api/v2/grants/search-alerts": RoutePolicy(access="authenticated"),
     "/api/v2/grants/search-profiles": RoutePolicy(access="authenticated"),
     "/api/v2/membership/summary": RoutePolicy(access="authenticated"),
+    "/api/v2/membership/members": RoutePolicy(access="authenticated"),
     "/api/v2/membership/tiers": RoutePolicy(access="authenticated"),
     "/api/v2/p2p/leaderboard": RoutePolicy(access="authenticated"),
     "/api/v2/p2p/pages": RoutePolicy(access="authenticated"),

@@ -24,7 +24,16 @@ def _org_id():
 def list_volunteers_route():
     from ngo_homesuite.services.volunteer_service import list_volunteers
     status = request.args.get('status')
-    vols = list_volunteers(_org_id(), status=status)
+    q = request.args.get('q')
+    limit = request.args.get('limit', type=int)
+    offset = request.args.get('offset', default=0, type=int)
+    vols = list_volunteers(
+        _org_id(),
+        status=status,
+        search_query=q,
+        limit=limit,
+        offset=offset,
+    )
     return jsonify([
         {
             'id': v.id,

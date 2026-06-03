@@ -77,11 +77,27 @@ def get_volunteer(volunteer_id: int, organization_id: int) -> Optional[Volunteer
     ).first()
 
 
-def list_volunteers(organization_id: int, *, status: Optional[str] = None) -> List[Volunteer]:
+def list_volunteers(
+    organization_id: int,
+    *,
+    status: Optional[str] = None,
+    search_query: Optional[str] = None,
+    limit: Optional[int] = None,
+    offset: int = 0,
+) -> List[Volunteer]:
     stmt = select(Volunteer).where(Volunteer.organization_id == organization_id)
     if status:
         stmt = stmt.where(Volunteer.status == status)
+    if search_query:
+        like = f"%{str(search_query).strip()}%"
+        stmt = stmt.where(
+            (Volunteer.name.ilike(like))
+            | (Volunteer.email.ilike(like))
+            | (Volunteer.phone.ilike(like))
+        )
     stmt = stmt.order_by(Volunteer.name.asc())
+    if limit is not None:
+        stmt = stmt.limit(max(1, min(int(limit), 200))).offset(max(0, int(offset)))
     return list(db.session.scalars(stmt))
 
 

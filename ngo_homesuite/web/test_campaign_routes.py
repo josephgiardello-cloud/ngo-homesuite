@@ -1980,3 +1980,53 @@ def test_process_scheduled_campaign_batches_dispatches_due_batch(client, app):
         assert batch is not None
         assert batch.status in {"sent", "partial_failed"}
         assert int(batch.sent_count or 0) >= 1
+
+
+def test_campaign_email_queue_overview_and_retry_failed_batch(client, app):
+    _login_admin(client)
+    create_rv = client.post("/api/v2/campaigns", json={"name": "Queue and Retry Campaign"})
+    assert create_rv.status_code == 201
+    campaign_id = int(create_rv.get_json()["id"])
+    org_id = _admin_org_id(app)
+
+    with app.app_context():
+        donor = Donor(
+            organization_id=org_id,
+            name="Queue Retry Donor",
+            email="queue-retry@example.org",
+            donor_type="individual",
+        )
+        db.session.add(donor)
+        db.session.commit()
+        donor_id = int(donor.id)
+
+    with mock.patch("ngo_homesuite.services.campaign_email_service.send_email", return_value=False):
+        send_rv = client.post(
+            f"/api/v2/campaigns/{campaign_id}/emails/send",
+            json={
+                "subject": "Queue retry test",
+                "body": "Hello {name}, this send is expected to fail first.",
+                "audience": {"donor_ids": [donor_id]},
+                "compliance": _human_authorization_payload(),
+            },
+        )
+    assert send_rv.status_code == 200
+    failed_batch_id = int((send_rv.get_json() or {}).get("batch_id") or 0)
+    assert failed_batch_id > 0
+
+    queue_rv = client.get(f"/api/v2/campaigns/{campaign_id}/emails/queue")
+    assert queue_rv.status_code == 200
+    queue_payload = queue_rv.get_json() or {}
+    assert isinstance(queue_payload.get("status_breakdown"), dict)
+    assert any(int(item.get("id") or 0) == failed_batch_id for item in queue_payload.get("recent_batches") or [])
+
+    with mock.patch("ngo_homesuite.services.campaign_email_service.send_email", return_value=True):
+        retry_rv = client.post(
+            f"/api/v2/campaigns/{campaign_id}/emails/batches/{failed_batch_id}/retry-failed",
+            json={"compliance": _human_authorization_payload()},
+        )
+    assert retry_rv.status_code == 200
+    retry_payload = retry_rv.get_json() or {}
+    assert int(retry_payload.get("retry_of_batch_id") or 0) == failed_batch_id
+    assert int(retry_payload.get("retried_failed_recipients") or 0) == 1
+    assert int(retry_payload.get("batch_id") or 0) != failed_batch_id

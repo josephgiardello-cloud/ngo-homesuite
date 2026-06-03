@@ -83,6 +83,7 @@ class GrantsFacade:
     grant_pipeline_summary = staticmethod(_grant_lifecycle.grant_pipeline_summary)
     grant_calendar_events = staticmethod(_grant_lifecycle.grant_calendar_events)
     get_grant_budget_summary = staticmethod(_grant_lifecycle.get_grant_budget_summary)
+    build_grant_compliance_package = staticmethod(_grant_lifecycle.build_grant_compliance_package)
     export_grant_budget_report_excel = staticmethod(_grant_lifecycle.export_grant_budget_report_excel)
     export_grant_budget_report_pdf = staticmethod(_grant_lifecycle.export_grant_budget_report_pdf)
 

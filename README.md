@@ -6,7 +6,7 @@ A comprehensive nonprofit management system for managing donors, donations, fund
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
-Last updated: 2026-06-02
+Last updated: 2026-06-02 (post queue/compliance UX and RBAC hardening)
 
 ## Project Metadata
 
@@ -34,6 +34,10 @@ Recent parity and maturity work is now implemented in the production codepath (n
 - Automated donor journey triggers with durable idempotency/cooldown/audit eventing.
 - Smart financial guardrails with risk scoring and actionable recommendations.
 - Integrated form ecosystem ingestion (internal and token-auth public intake) with dedupe, CRM linkage, and follow-up task creation.
+- Campaign email queue orchestration with visibility, due-batch processing, and failed-recipient retry controls.
+- Grant compliance package generation for reporting and internal controls review.
+- Membership and volunteer UX upgrades with search/filter/pagination list experiences.
+- Expanded tenant-safety and route-protection coverage for new API surfaces.
 
 Primary v2 endpoints now active for these capabilities:
 
@@ -46,6 +50,11 @@ Primary v2 endpoints now active for these capabilities:
 - `POST /api/v2/forms/submissions` (authenticated admin/staff)
 - `POST /api/v2/forms/submissions/public` (token-auth, tenant-targeted)
 - `GET /api/v2/forms/submissions`
+- `GET /api/v2/campaigns/<campaign_id>/emails/queue`
+- `POST /api/v2/campaigns/<campaign_id>/emails/queue/process`
+- `POST /api/v2/campaigns/<campaign_id>/emails/batches/<batch_id>/retry-failed`
+- `GET /api/v2/grants/<grant_id>/compliance-package`
+- `GET /api/v2/membership/members`
 
 ### Screenshot Gallery
 
@@ -78,11 +87,11 @@ Note on depth and maturity:
 - Pledge tracking
 - Peer fundraising management (operational core + ongoing UX depth)
 - Event management (foundational)
-- Campaign management (foundational)
+- Campaign management with production email segmentation, queue analytics, and retry controls
 
 ### 👔 Staff & Volunteers
 - Staff payroll management
-- Volunteer tracking and hours
+- Volunteer tracking, hours, and searchable/paginated operational list views
 - Role-based access control
 - Session management
 
@@ -177,9 +186,9 @@ See `docs/openapi.yaml` for complete schema details and all optional audience ke
    - `POST /api/workflows/program-impact/run`
 - Minimal workflow UI at `/workflows` for operations users
 
-### 🏗️ V2 Foundation (Experimental)
-- Deterministic workflow runtime module at `ngo_homesuite/workflow_engine/` (foundational)
-- Multi-tenant and RBAC guards at `ngo_homesuite/tenant/` and `ngo_homesuite/rbac/` (in progress)
+### 🏗️ V2 Foundation
+- Deterministic workflow runtime module at `ngo_homesuite/workflow_engine/` (active)
+- Multi-tenant and RBAC guards at `ngo_homesuite/tenant/` and `ngo_homesuite/rbac/` (active + expanded contract coverage)
 - Append-only event store baseline at `ngo_homesuite/audit/event_store.py`
 - Versioned API endpoints under `/api/v1/`:
    - `GET /api/v1/workflows`

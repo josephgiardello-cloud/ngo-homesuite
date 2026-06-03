@@ -1613,6 +1613,129 @@ def process_scheduled_campaign_email_batches(*, limit: int = 100, now: datetime 
     }
 
 
+@enforce_error_contract
+def campaign_email_queue_overview(
+    organization_id: int,
+    campaign_id: int,
+    *,
+    status: str | None = None,
+    limit: int = 25,
+) -> dict[str, Any]:
+    campaign = _get_campaign_or_raise(campaign_id, organization_id)
+    batch_limit = max(1, min(int(limit or 25), 200))
+
+    summary_rows = db.session.execute(
+        select(
+            CampaignEmailBatch.status,
+            func.count(CampaignEmailBatch.id),
+            func.coalesce(func.sum(CampaignEmailBatch.total_recipients), 0),
+            func.coalesce(func.sum(CampaignEmailBatch.sent_count), 0),
+            func.coalesce(func.sum(CampaignEmailBatch.failed_count), 0),
+        ).where(
+            CampaignEmailBatch.organization_id == int(organization_id),
+            CampaignEmailBatch.campaign_id == int(campaign_id),
+        ).group_by(CampaignEmailBatch.status)
+    ).all()
+
+    status_breakdown: dict[str, dict[str, int]] = {}
+    for row_status, row_count, recipients, sent, failed in summary_rows:
+        status_key = str(row_status or "unknown")
+        status_breakdown[status_key] = {
+            "batch_count": int(row_count or 0),
+            "recipients": int(recipients or 0),
+            "sent": int(sent or 0),
+            "failed": int(failed or 0),
+        }
+
+    batches_stmt = select(CampaignEmailBatch).where(
+        CampaignEmailBatch.organization_id == int(organization_id),
+        CampaignEmailBatch.campaign_id == int(campaign_id),
+    )
+    if status:
+        batches_stmt = batches_stmt.where(CampaignEmailBatch.status == str(status).strip())
+
+    recent_batches = list(
+        db.session.scalars(
+            batches_stmt.order_by(CampaignEmailBatch.created_at.desc()).limit(batch_limit)
+        )
+    )
+
+    return {
+        "campaign_id": int(campaign.id),
+        "campaign_name": str(campaign.name or ""),
+        "status_breakdown": status_breakdown,
+        "recent_batches": [
+            {
+                "id": int(batch.id),
+                "status": str(batch.status or ""),
+                "subject": str(batch.subject or ""),
+                "total_recipients": int(batch.total_recipients or 0),
+                "sent_count": int(batch.sent_count or 0),
+                "failed_count": int(batch.failed_count or 0),
+                "scheduled_at": batch.scheduled_at.isoformat() if batch.scheduled_at else None,
+                "created_at": batch.created_at.isoformat() if batch.created_at else None,
+                "sent_at": batch.sent_at.isoformat() if batch.sent_at else None,
+            }
+            for batch in recent_batches
+        ],
+    }
+
+
+@enforce_error_contract
+def retry_failed_campaign_email_batch(
+    organization_id: int,
+    campaign_id: int,
+    batch_id: int,
+    *,
+    created_by_user_id: int | None,
+    created_by_username: str | None,
+    created_by_role: str | None,
+    human_authorization: dict[str, Any] | None,
+) -> dict[str, Any]:
+    source_batch = db.session.scalars(
+        select(CampaignEmailBatch).where(
+            CampaignEmailBatch.id == int(batch_id),
+            CampaignEmailBatch.organization_id == int(organization_id),
+            CampaignEmailBatch.campaign_id == int(campaign_id),
+        ).limit(1)
+    ).first()
+    if source_batch is None:
+        raise LookupError("batch not found")
+
+    failed_deliveries = list(
+        db.session.scalars(
+            select(CampaignEmailDelivery).where(
+                CampaignEmailDelivery.batch_id == int(source_batch.id),
+                CampaignEmailDelivery.delivery_status == "failed",
+                CampaignEmailDelivery.donor_id.is_not(None),
+            )
+        )
+    )
+    failed_donor_ids = sorted({int(row.donor_id) for row in failed_deliveries if row.donor_id is not None})
+    if not failed_donor_ids:
+        raise ValueError("No failed recipients found for this batch")
+
+    audience = dict(source_batch.audience_json or {})
+    audience["donor_ids"] = failed_donor_ids
+    audience["retry_of_batch_id"] = int(source_batch.id)
+
+    result = send_campaign_bulk_email(
+        int(organization_id),
+        int(campaign_id),
+        created_by_user_id=created_by_user_id,
+        created_by_username=created_by_username,
+        created_by_role=created_by_role,
+        subject=str(source_batch.subject or "").strip() or "Campaign update",
+        body=str(source_batch.body or "").strip(),
+        audience=audience,
+        human_authorization=human_authorization,
+        dry_run=False,
+    )
+    result["retry_of_batch_id"] = int(source_batch.id)
+    result["retried_failed_recipients"] = int(len(failed_donor_ids))
+    return result
+
+
 def campaign_email_analytics(organization_id: int, campaign_id: int) -> dict[str, Any]:
     campaign = _get_campaign_or_raise(campaign_id, organization_id)
 
