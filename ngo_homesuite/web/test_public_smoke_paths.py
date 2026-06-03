@@ -33,6 +33,14 @@ def test_public_give_page_smoke(client):
     assert b"Donate" in rv.data or b"donate" in rv.data
 
 
+def test_public_give_page_supports_prefill_params(client):
+    rv = client.get("/give?purpose=Scholarship+Fund&amount=25")
+    assert rv.status_code == 200
+    body = rv.get_data(as_text=True)
+    assert 'value="Scholarship Fund"' in body
+    assert 'value="25.0"' in body or 'value="25"' in body
+
+
 def test_public_stripe_donate_page_smoke(client):
     rv = client.get("/public/donate")
     assert rv.status_code == 200

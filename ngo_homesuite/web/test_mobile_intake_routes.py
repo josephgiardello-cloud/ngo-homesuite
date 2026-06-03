@@ -52,6 +52,8 @@ def test_mobile_intake_page_renders(client, app):
     assert "Mobile Intake and Volunteer Check-In" in body
     assert "Quick Beneficiary Intake" in body
     assert "Volunteer Quick Registration" in body
+    assert "viewport" in body
+    assert "width=device-width" in body
 
 
 
@@ -122,3 +124,46 @@ def test_mobile_intake_validates_required_fields(client, app):
     )
     assert rv.status_code == 200
     assert "Beneficiary first and last name are required." in rv.get_data(as_text=True)
+
+
+def test_mobile_intake_invalid_volunteer_submission_does_not_persist(client, app):
+    org_id = _ensure_user(app, "mobile_staff_4", "mobile_staff_4@test.local", "staff", "mobile_staff_pass_456")
+    _login(client, "mobile_staff_4", "mobile_staff_pass_456")
+
+    with app.app_context():
+        before = Volunteer.query.filter_by(organization_id=org_id).count()
+
+    rv = client.post(
+        "/mobile/intake",
+        data={"action": "volunteer", "volunteer_email": "missing.name@example.org"},
+        follow_redirects=True,
+    )
+    assert rv.status_code == 200
+    assert "Volunteer name is required." in rv.get_data(as_text=True)
+
+    with app.app_context():
+        after = Volunteer.query.filter_by(organization_id=org_id).count()
+        assert after == before
+
+
+def test_mobile_intake_rejects_unsupported_action_without_persistence(client, app):
+    org_id = _ensure_user(app, "mobile_staff_5", "mobile_staff_5@test.local", "staff", "mobile_staff_pass_567")
+    _login(client, "mobile_staff_5", "mobile_staff_pass_567")
+
+    with app.app_context():
+        beneficiary_before = Beneficiary.query.filter_by(organization_id=org_id).count()
+        volunteer_before = Volunteer.query.filter_by(organization_id=org_id).count()
+
+    rv = client.post(
+        "/mobile/intake",
+        data={"action": "surprise", "first_name": "Ignored", "volunteer_name": "Ignored"},
+        follow_redirects=True,
+    )
+    assert rv.status_code == 200
+    assert "Unsupported intake action." in rv.get_data(as_text=True)
+
+    with app.app_context():
+        beneficiary_after = Beneficiary.query.filter_by(organization_id=org_id).count()
+        volunteer_after = Volunteer.query.filter_by(organization_id=org_id).count()
+        assert beneficiary_after == beneficiary_before
+        assert volunteer_after == volunteer_before

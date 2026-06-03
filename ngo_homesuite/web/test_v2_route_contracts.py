@@ -1028,6 +1028,39 @@ def test_v2_mutating_endpoints_reject_cross_tenant_references(client, app):
         foreign_case_id = int(foreign_case.id)
         local_donor_id = int(local_donor.id)
 
+        local_tier = MembershipTier(
+            organization_id=local_org_id,
+            name="Tenant Matrix Local Tier",
+            price=25,
+            currency="USD",
+            interval="annual",
+        )
+        db.session.add(local_tier)
+        db.session.flush()
+
+        local_task = Task(
+            organization_id=local_org_id,
+            title="Local Task Recovery",
+            status="open",
+            priority="medium",
+            task_type="general",
+        )
+        db.session.add(local_task)
+        db.session.flush()
+
+        local_case = ProgramCase(
+            organization_id=local_org_id,
+            title="Local Case Recovery",
+            case_type="service",
+            status="open",
+        )
+        db.session.add(local_case)
+        db.session.commit()
+
+        local_tier_id = int(local_tier.id)
+        local_task_id = int(local_task.id)
+        local_case_id = int(local_case.id)
+
     create_page_with_foreign_donor = client.post(
         "/api/v2/p2p/pages",
         json={"donor_id": foreign_donor_id, "title": "Cross Tenant Page"},
@@ -1044,11 +1077,31 @@ def test_v2_mutating_endpoints_reject_cross_tenant_references(client, app):
     complete_foreign_task = client.post(f"/api/v2/tasks/{foreign_task_id}/complete", json={"notes": "x"})
     assert complete_foreign_task.status_code == 404
 
+    complete_local_task = client.post(
+        f"/api/v2/tasks/{local_task_id}/complete",
+        json={"notes": "local success"},
+    )
+    assert complete_local_task.status_code == 200
+    assert (complete_local_task.get_json() or {}).get("status") == "done"
+
     advance_foreign_case = client.post(
         f"/api/v2/cases/{foreign_case_id}/status",
         json={"new_status": "closed"},
     )
     assert advance_foreign_case.status_code == 404
+
+    enroll_local_tier = client.post(
+        "/api/v2/membership/enroll",
+        json={"donor_id": local_donor_id, "tier_id": local_tier_id},
+    )
+    assert enroll_local_tier.status_code == 201
+
+    advance_local_case = client.post(
+        f"/api/v2/cases/{local_case_id}/status",
+        json={"new_status": "closed"},
+    )
+    assert advance_local_case.status_code == 200
+    assert (advance_local_case.get_json() or {}).get("status") == "closed"
 
 
 def test_v2_membership_members_list_filters_and_tenant_scope(client, app):

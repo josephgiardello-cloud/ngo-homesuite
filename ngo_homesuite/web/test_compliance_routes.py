@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 
 import pytest
@@ -120,3 +121,16 @@ def test_compliance_evidence_user_count_scoped_by_organization(app):
         assert evidence_all["data_inventory"]["users"] >= 3
         assert evidence_a["data_inventory"]["users"] == 1
         assert evidence_b["data_inventory"]["users"] == 2
+
+
+def test_compliance_evidence_sha_matches_payload(app):
+    with app.app_context():
+        evidence = build_compliance_evidence(app, organization_id=None)
+
+    sha = evidence.get("sha256")
+    assert isinstance(sha, str)
+    payload = {key: value for key, value in evidence.items() if key != "sha256"}
+    expected = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    assert sha == expected
