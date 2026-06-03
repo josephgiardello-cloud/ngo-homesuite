@@ -268,6 +268,61 @@ def test_v2_grant_detail_blocks_cross_tenant_access_without_leaking_payload(clie
     assert all(item["id"] != grant_id for item in listed.get_json())
 
 
+def test_v2_grant_mutation_cross_tenant_denial_then_owner_recovery(client, app):
+    """Cross-tenant mutation attempts should fail, while owner-tenant retries should succeed."""
+    with app.app_context():
+        org_a = Organization.query.filter_by(slug="release-lane-org-a").first()
+        if org_a is None:
+            org_a = Organization(name="Release Lane Org A", slug="release-lane-org-a", is_active=True)
+            db.session.add(org_a)
+            db.session.flush()
+
+        org_b = Organization.query.filter_by(slug="release-lane-org-b").first()
+        if org_b is None:
+            org_b = Organization(name="Release Lane Org B", slug="release-lane-org-b", is_active=True)
+            db.session.add(org_b)
+            db.session.flush()
+
+        org_a_id = int(org_a.id)
+        org_b_id = int(org_b.id)
+        db.session.commit()
+
+    _ensure_user(app, "rl_tenant_a", "rl_tenant_a@test.local", "staff", "ReleaseLane123!", org_a_id)
+    _ensure_user(app, "rl_tenant_b", "rl_tenant_b@test.local", "staff", "ReleaseLane123!", org_b_id)
+
+    _login_user(client, "rl_tenant_b", "ReleaseLane123!")
+    created = client.post(
+        "/api/v2/grants",
+        json={
+            "title": "Org B Advance Journey Grant",
+            "funder_name": "Recovery Foundation",
+            "amount_requested": 5100,
+        },
+    )
+    assert created.status_code == 201
+    grant_id = int(created.get_json()["id"])
+
+    client.post("/auth/logout")
+    _login_user(client, "rl_tenant_a", "ReleaseLane123!")
+
+    denied = client.post(
+        f"/api/v2/grants/{grant_id}/advance",
+        json={"new_status": "submitted"},
+    )
+    assert denied.status_code == 404
+    assert "not found" in (denied.get_json() or {}).get("error", "").lower()
+
+    client.post("/auth/logout")
+    _login_user(client, "rl_tenant_b", "ReleaseLane123!")
+
+    recovered = client.post(
+        f"/api/v2/grants/{grant_id}/advance",
+        json={"new_status": "submitted"},
+    )
+    assert recovered.status_code == 200
+    assert recovered.get_json()["status"] == "submitted"
+
+
 def test_v2_grant_opportunity_search_and_compliance_guidance_contract(client, app):
     _login_admin(client)
 
