@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 
@@ -42,3 +43,26 @@ def test_promtail_config_points_to_application_logs() -> None:
 def test_monitoring_compose_enables_promtail_env_expansion() -> None:
     content = _read("deploy/monitoring/docker-compose.monitoring.yml")
     assert "-config.expand-env=true" in content
+
+
+def test_dast_smoke_artifact_reports_green_status() -> None:
+    payload = json.loads(_read("artifacts/dast-smoke-local.json"))
+    assert payload.get("passed") is True
+
+    checks = payload.get("results") or []
+    assert isinstance(checks, list)
+    assert len(checks) >= 4
+    assert all(bool(entry.get("passed")) for entry in checks)
+
+
+def test_scalability_artifact_reports_no_failures() -> None:
+    payload = json.loads(_read("artifacts/scalability-benchmark-local.json"))
+    overall = payload.get("overall") or {}
+
+    assert int(overall.get("failures", -1)) == 0
+    assert int(overall.get("requests", 0)) >= 100
+    assert float(overall.get("p95_ms", 0.0)) > 0.0
+
+    endpoints = payload.get("endpoints") or {}
+    assert "/health" in endpoints
+    assert "/give" in endpoints

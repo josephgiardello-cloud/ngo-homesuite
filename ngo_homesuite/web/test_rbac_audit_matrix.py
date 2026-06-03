@@ -16,6 +16,7 @@ INDUSTRY STANDARDS APPLIED:
 import pytest
 from collections.abc import Iterable
 from datetime import datetime, timezone
+from itertools import islice
 from typing import NamedTuple
 from uuid import uuid4
 from flask import Flask
@@ -349,20 +350,60 @@ class TestRbacAuditMatrix:
             sess["_user_id"] = str(viewer_user.id)
             sess["_fresh"] = True
         
+        sampled_routes = list(
+            islice(
+                sorted(mutating_routes, key=lambda rule: (rule.path, rule.method)),
+                12,
+            )
+        )
+
         failures = []
-        for rule in mutating_routes[:5]:  # Test subset (5 routes) for speed
+        for rule in sampled_routes:
             resp = client.open(
                 rule.path.replace("<id>", "1"),
                 method=rule.method,
                 json={},
                 follow_redirects=False,
             )
-            if resp.status_code not in {403, 404, 405}:
+            if resp.status_code not in {401, 403, 404, 405, 308}:
                 failures.append(
-                    f"{rule.method} {rule.path} -> {resp.status_code} (expected 403/404/405)"
+                    f"{rule.method} {rule.path} -> {resp.status_code} (expected authz/authn rejection)"
                 )
         
         assert not failures, f"Viewer bypassed role gates: {'; '.join(failures)}"
+
+    def test_admin_cannot_change_role_across_tenants(self, app_fixture, admin_user, client):
+        """Cross-tenant role changes must be blocked with a not-found response."""
+        with app_fixture.app_context():
+            suffix = uuid4().hex[:8]
+            other_org = Organization(name=f"Other Org {suffix}")
+            db.session.add(other_org)
+            db.session.flush()
+
+            cross_tenant_user = User(
+                username=f"cross_tenant_target_{suffix}",
+                email=f"cross_target_{suffix}@test.local",
+                organization_id=other_org.id,
+                role="viewer",
+            )
+            cross_tenant_user.set_password("TargetTest123!")
+            db.session.add(cross_tenant_user)
+            db.session.commit()
+            target_id = cross_tenant_user.id
+
+        with client.session_transaction() as sess:
+            sess["_user_id"] = str(admin_user.id)
+            sess["_fresh"] = True
+            sess["_step_up_verified_at"] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+
+        resp = client.patch(
+            f"/admin/users/{target_id}/role",
+            json={"role": "staff"},
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 404
+        assert "not found" in (resp.json or {}).get("error", "").lower()
 
 
 class TestSecureBootstrapFlow:

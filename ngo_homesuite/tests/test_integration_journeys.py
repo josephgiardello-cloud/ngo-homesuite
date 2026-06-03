@@ -58,3 +58,63 @@ def test_donor_to_donation_to_receipt_journey(client, app):
 
         receipt = DonationReceipt.query.filter_by(donation_id=donation.id).first()
         assert receipt is not None
+
+
+def test_public_donation_validation_failure_then_recovery(client, app):
+    """Invalid donation submission should not persist data, and retrying valid input should succeed."""
+    donor_email = "integration.recovery@example.org"
+
+    with app.app_context():
+        org = Organization.query.filter_by(is_active=True).first()
+        assert org is not None
+        before = Donation.query.filter_by(organization_id=org.id).count()
+
+    invalid_response = client.post(
+        "/give",
+        data={
+            "donor_name": "Recovery Donor",
+            "donor_email": donor_email,
+            "donor_phone": "+1-555-3333",
+            "amount": "0",
+            "currency": "USD",
+            "payment_method": "credit_card",
+            "purpose": "General Fund",
+        },
+        follow_redirects=True,
+    )
+    assert invalid_response.status_code == 200
+
+    with app.app_context():
+        org = Organization.query.filter_by(is_active=True).first()
+        after_invalid = Donation.query.filter_by(organization_id=org.id).count()
+        assert after_invalid == before
+
+    valid_response = client.post(
+        "/give",
+        data={
+            "donor_name": "Recovery Donor",
+            "donor_email": donor_email,
+            "donor_phone": "+1-555-3333",
+            "amount": "55",
+            "currency": "USD",
+            "payment_method": "credit_card",
+            "purpose": "General Fund",
+        },
+        follow_redirects=True,
+    )
+    assert valid_response.status_code == 200
+
+    with app.app_context():
+        org = Organization.query.filter_by(is_active=True).first()
+        after_valid = Donation.query.filter_by(organization_id=org.id).count()
+        assert after_valid == before + 1
+
+        donation = (
+            Donation.query.filter_by(organization_id=org.id, donor_email=donor_email)
+            .order_by(Donation.id.desc())
+            .first()
+        )
+        assert donation is not None
+
+        receipt = DonationReceipt.query.filter_by(donation_id=donation.id).first()
+        assert receipt is not None
