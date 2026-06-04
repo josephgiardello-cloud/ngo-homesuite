@@ -16,25 +16,27 @@ Required in production:
 
 - `FLASK_ENV=production`
 - `SECRET_KEY=<strong-random-value>`
-- `DATABASE_URL=<db-connection-url>`
+- `DATABASE_URL_FILE=<path-to-secret-file-containing-db-connection-url>`
 
 Examples:
 
 ```bash
 # PostgreSQL
-DATABASE_URL=postgresql://ngo_user:secret@db-host:5432/ngo_homesuite
+DATABASE_URL_FILE=/run/secrets/database_url
 DB_BACKEND=postgresql
 
 # PostgreSQL with psycopg3 driver
-DATABASE_URL=postgresql+psycopg://ngo_user:secret@db-host:5432/ngo_homesuite
+DATABASE_URL_FILE=/run/secrets/database_url
 
 # Legacy provider format is also accepted and normalized at runtime
-DATABASE_URL=postgres://ngo_user:secret@db-host:5432/ngo_homesuite
+DATABASE_URL_FILE=/run/secrets/database_url
 
 # MySQL / MariaDB
-DATABASE_URL=mysql+pymysql://ngo_user:secret@db-host:3306/ngo_homesuite
+DATABASE_URL_FILE=/run/secrets/database_url
 DB_BACKEND=mysql
 ```
+
+The secret file should contain the full DSN for the target backend and must not be committed.
 
 ## 3. Configure connection pooling
 

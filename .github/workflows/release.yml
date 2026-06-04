@@ -73,7 +73,7 @@ jobs:
 
       - name: Start local release candidate
         env:
-          SECRET_KEY: release-smoke-secret
+          SECRET_KEY: ci-release-smoke-key
           DATABASE_URL: 'sqlite:///:memory:'
           FLASK_ENV: development
           WTF_CSRF_ENABLED: "0"

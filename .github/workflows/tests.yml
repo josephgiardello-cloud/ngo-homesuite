@@ -430,7 +430,7 @@ jobs:
 
     - name: Start local app
       env:
-        SECRET_KEY: perf-smoke-secret
+        SECRET_KEY: ci-perf-smoke-key
         DATABASE_URL: 'sqlite:///:memory:'
         FLASK_ENV: development
         WTF_CSRF_ENABLED: '0'
@@ -467,7 +467,7 @@ jobs:
 
     - name: Start local app
       env:
-        SECRET_KEY: dast-smoke-secret
+        SECRET_KEY: ci-dast-smoke-key
         DATABASE_URL: 'sqlite:///:memory:'
         FLASK_ENV: development
         WTF_CSRF_ENABLED: '0'
@@ -511,7 +511,7 @@ jobs:
 
     - name: Start local app
       env:
-        SECRET_KEY: benchmark-secret
+        SECRET_KEY: ci-benchmark-key
         DATABASE_URL: 'sqlite:///:memory:'
         FLASK_ENV: development
         WTF_CSRF_ENABLED: '0'
