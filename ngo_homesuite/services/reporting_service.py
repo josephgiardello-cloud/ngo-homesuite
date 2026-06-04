@@ -5,6 +5,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping, cast
 
+from flask import current_app, has_app_context
 from sqlalchemy import desc, func, select
 from werkzeug.exceptions import NotFound
 
@@ -24,6 +25,8 @@ from ngo_homesuite.models.core import (
 
 
 class ReportingService:
+    _dashboard_cache: dict[tuple[Any, ...], tuple[float, dict[str, Any]]] = {}
+
     @staticmethod
     def _safe_amount(value: Any) -> float:
         try:
@@ -50,6 +53,25 @@ class ReportingService:
         start_date: datetime | None = None,
         end_date: datetime | None = None,
     ) -> dict[str, Any]:
+        recent_donations_limit = max(1, min(50, int(recent_donations_limit)))
+        cache_ttl_seconds = int(
+            (current_app.config.get("REPORTING_DASHBOARD_CACHE_TTL_SECONDS", 15) if has_app_context() else 15) or 0
+        )
+        cache_key = (
+            int(organization_id),
+            int(recent_donations_limit),
+            str(period or "30d"),
+            start_date.isoformat() if start_date else None,
+            end_date.isoformat() if end_date else None,
+        )
+        now_epoch = datetime.now(timezone.utc).timestamp()
+        if cache_ttl_seconds > 0:
+            cached = self._dashboard_cache.get(cache_key)
+            if cached is not None:
+                expires_at, payload = cached
+                if now_epoch < float(expires_at):
+                    return payload
+
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         start_30d = now - timedelta(days=30)
         start_prev_30d = now - timedelta(days=60)
@@ -655,7 +677,7 @@ class ReportingService:
             cohort_retained.append(int(retained_count))
             prev_month_donors = set(month_donors)
 
-        return {
+        payload = {
             "beneficiary_count": int(beneficiary_count),
             "project_count": int(project_count),
             "donor_count": int(donor_count),
@@ -779,6 +801,9 @@ class ReportingService:
                 "missing_donation_dates": missing_donation_dates,
             },
         }
+        if cache_ttl_seconds > 0:
+            self._dashboard_cache[cache_key] = (now_epoch + cache_ttl_seconds, payload)
+        return payload
 
     @staticmethod
     def _normalize_intelligence_role(role: str | None) -> str:

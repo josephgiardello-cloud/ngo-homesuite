@@ -29,6 +29,22 @@ def _run_with_app(app: Flask, *, hours_before: int) -> None:
         )
 
 
+def _run_with_guard(job_name: str, callback) -> None:
+    try:
+        callback()
+    except Exception as exc:  # pragma: no cover - defensive guard around scheduler jobs
+        logger.exception(
+            "scheduler job failed",
+            extra={
+                "event_id": "scheduler.job.failed",
+                "extra_fields": {
+                    "job_name": job_name,
+                    "error": str(exc),
+                },
+            },
+        )
+
+
 def _run_scheduled_campaign_batches(app: Flask) -> None:
     with app.app_context():
         limit = int(app.config.get("CAMPAIGN_EMAIL_SCHEDULER_BATCH_LIMIT", 100) or 100)
@@ -53,24 +69,24 @@ def start_event_reminder_scheduler(app: Flask) -> None:
     if _scheduler is not None:
         return
 
-    scheduler = BackgroundScheduler(timezone="UTC")
+    scheduler = BackgroundScheduler(timezone="UTC", job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": 300})
     event_jobs_enabled = bool(app.config.get("EVENT_REMINDER_SCHEDULER_ENABLED", True))
     campaign_jobs_enabled = bool(app.config.get("CAMPAIGN_EMAIL_SCHEDULER_ENABLED", False))
 
     if event_jobs_enabled:
         scheduler.add_job(
-            _run_with_app,
+            _run_with_guard,
             "interval",
             minutes=15,
-            kwargs={"app": app, "hours_before": 24},
+            kwargs={"job_name": "event-reminders-24h", "callback": lambda: _run_with_app(app, hours_before=24)},
             id="event-reminders-24h",
             replace_existing=True,
         )
         scheduler.add_job(
-            _run_with_app,
+            _run_with_guard,
             "interval",
             minutes=15,
-            kwargs={"app": app, "hours_before": 1},
+            kwargs={"job_name": "event-reminders-1h", "callback": lambda: _run_with_app(app, hours_before=1)},
             id="event-reminders-1h",
             replace_existing=True,
         )
@@ -78,10 +94,10 @@ def start_event_reminder_scheduler(app: Flask) -> None:
     if campaign_jobs_enabled:
         interval_minutes = int(app.config.get("CAMPAIGN_EMAIL_SCHEDULER_INTERVAL_MINUTES", 5) or 5)
         scheduler.add_job(
-            _run_scheduled_campaign_batches,
+            _run_with_guard,
             "interval",
             minutes=max(1, interval_minutes),
-            kwargs={"app": app},
+            kwargs={"job_name": "campaign-email-scheduled-dispatch", "callback": lambda: _run_scheduled_campaign_batches(app)},
             id="campaign-email-scheduled-dispatch",
             replace_existing=True,
         )

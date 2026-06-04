@@ -29,13 +29,21 @@ def test_process_email_queue_retries_and_fails(shared_test_app, monkeypatch):
         monkeypatch.setattr("ngo_homesuite.utils.email_worker.send_email", lambda **_: False)
         email_worker.process_email_queue(limit=10)
         email_worker.process_email_queue(limit=10)
-        email_worker.process_email_queue(limit=10)
+        result = email_worker.process_email_queue(limit=10)
 
         row = db.session.execute(
             db.text("SELECT status, attempts FROM email_queue WHERE to_email = 'b@example.org' ORDER BY id DESC LIMIT 1")
         ).mappings().first()
         assert row["status"] == "failed"
         assert int(row["attempts"]) == 3
+        assert int(result["dead_lettered"]) == 1
+
+        dl_row = db.session.execute(
+            db.text("SELECT error_code, attempts FROM email_queue_dead_letter WHERE to_email = 'b@example.org' ORDER BY id DESC LIMIT 1")
+        ).mappings().first()
+        assert dl_row is not None
+        assert dl_row["error_code"] == "delivery_failed_after_retries"
+        assert int(dl_row["attempts"]) == 3
 
 
 def test_retry_failed_emails_requeues(shared_test_app):

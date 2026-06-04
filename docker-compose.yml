@@ -8,6 +8,45 @@ version: "3.9"
 
 services:
   # ---------------------------------------------------------------------------
+  # One-shot schema migrator/bootstrap
+  # ---------------------------------------------------------------------------
+  migrator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ngo-homesuite-migrator
+    command: python -m ngo_homesuite.db.deploy_migrate upgrade
+    env_file:
+      - .env
+    environment:
+      FLASK_ENV: production
+      APP_PROCESS_ROLE: migrator
+      DATABASE_BACKEND: postgresql
+      SECRET_KEY_FILE: ${SECRET_KEY_FILE:-/run/secrets/secret_key}
+      DATABASE_URL_FILE: ${DATABASE_URL_FILE:-/run/secrets/database_url}
+      DB_POOL_SIZE: "10"
+      DB_MAX_OVERFLOW: "20"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./backups:/app/backups
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    mem_limit: 1024m
+    cpus: 1.5
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
   # Application
   # ---------------------------------------------------------------------------
   app:
@@ -50,6 +89,8 @@ services:
         soft: 4096
         hard: 8192
     depends_on:
+      migrator:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     restart: unless-stopped

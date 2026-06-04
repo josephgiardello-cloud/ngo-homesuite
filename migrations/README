@@ -1,0 +1,4 @@
+Single-database configuration for Flask-Migrate/Alembic.
+
+Use `python -m ngo_homesuite.db.deploy_migrate upgrade` for PostgreSQL/MySQL-style production migrations.
+SQLite production/demo paths continue to use `python -m ngo_homesuite.db.migrate`.

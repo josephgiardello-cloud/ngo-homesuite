@@ -40,11 +40,11 @@ def test_send_due_event_reminders_selects_window(monkeypatch):
     monkeypatch.setattr(
         events_services,
         "process_event_email_queue",
-        lambda **_kwargs: {"processed": 1, "sent": 1, "failed": 0, "retried": 0},
+        lambda **_kwargs: {"processed": 1, "sent": 1, "failed": 0, "retried": 0, "dead_lettered": 0},
     )
 
     result = events_services.send_due_event_reminders(hours_before=24)
-    assert result == {"matched_events": 1, "sent": 1, "failed": 0}
+    assert result == {"matched_events": 1, "sent": 1, "failed": 0, "dead_lettered": 0}
 
 
 def test_send_due_event_reminders_propagates_failed_deliveries(monkeypatch):
@@ -56,18 +56,52 @@ def test_send_due_event_reminders_propagates_failed_deliveries(monkeypatch):
     monkeypatch.setattr(
         events_services,
         "process_event_email_queue",
-        lambda **_kwargs: {"processed": 2, "sent": 1, "failed": 1, "retried": 0},
+        lambda **_kwargs: {"processed": 2, "sent": 1, "failed": 1, "retried": 0, "dead_lettered": 1},
     )
 
     result = events_services.send_due_event_reminders(hours_before=1)
-    assert result == {"matched_events": 2, "sent": 1, "failed": 1}
+    assert result == {"matched_events": 2, "sent": 1, "failed": 1, "dead_lettered": 1}
+
+
+def test_process_event_email_queue_records_dead_letter_for_terminal_failure(shared_test_app, monkeypatch):
+    with shared_test_app.app_context():
+        events_services._ensure_email_tables()
+        now_iso = events_services._utcnow().isoformat()
+        db = events_services.db
+        db.session.execute(
+            db.text(
+                """
+                INSERT INTO event_email_queue(
+                    event_id, attendee_email, attendee_name, hours_before,
+                    scheduled_for, status, attempt_count, max_attempts,
+                    next_attempt_at, opt_out_token
+                )
+                VALUES(1, 'deadletter@example.org', 'Dead Letter', 1, :scheduled_for, 'pending', 2, 3, :next_attempt_at, 'tok')
+                """
+            ),
+            {"scheduled_for": now_iso, "next_attempt_at": now_iso},
+        )
+        db.session.commit()
+
+        monkeypatch.setattr(events_services, "_is_suppressed", lambda _email: False)
+        monkeypatch.setattr(events_services, "send_event_reminder", lambda *_args, **_kwargs: False)
+
+        result = events_services.process_event_email_queue(limit=10)
+        assert result["dead_lettered"] == 1
+
+        dl = db.session.execute(
+            db.text("SELECT error_code, attempt_count FROM event_email_dead_letter WHERE attendee_email = 'deadletter@example.org' LIMIT 1")
+        ).mappings().first()
+        assert dl is not None
+        assert dl["error_code"] == "delivery_failed_after_retries"
+        assert int(dl["attempt_count"]) == 3
 
 
 def test_start_event_reminder_scheduler_registers_jobs(monkeypatch):
     scheduler_module._scheduler = None
 
     class _FakeScheduler:
-        def __init__(self, timezone):
+        def __init__(self, timezone, **_kwargs):
             self.timezone = timezone
             self.jobs = []
             self.started = False
@@ -114,7 +148,7 @@ def test_start_event_reminder_scheduler_registers_campaign_email_job(monkeypatch
     scheduler_module._scheduler = None
 
     class _FakeScheduler:
-        def __init__(self, timezone):
+        def __init__(self, timezone, **_kwargs):
             self.timezone = timezone
             self.jobs = []
             self.started = False

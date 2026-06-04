@@ -19,6 +19,8 @@ Use this checklist before production deployment.
 - Confirm backup policy is active before migration.
 - Validate restore path from latest backup in a non-prod environment.
 - Use PostgreSQL as the default production backend; use SQLite only for demos/local quickstarts.
+- For PostgreSQL/MySQL deploys, run: `python -m ngo_homesuite.db.deploy_migrate upgrade`.
+- For PostgreSQL/MySQL rollback drills, run: `python -m ngo_homesuite.db.deploy_migrate downgrade --revision -1`.
 
 ## Container Runtime Hardening
 
@@ -36,6 +38,7 @@ Use this checklist before production deployment.
 ## Reliability and Operations
 
 - Run full test suite in CI on release branch.
+- Run workflow reliability lane: `python -m pytest ngo_homesuite/tests/test_workflow_reliability_failure_injection.py ngo_homesuite/persistence/test_workflow_repository_concurrency.py ngo_homesuite/tests/test_donation_fund_concurrency.py -v --maxfail=10`.
 - Add smoke tests for public donation and P2P paths.
 - Run DAST smoke checks and store artifacts for each release candidate.
 - Run scalability benchmark regression checks against baseline thresholds.

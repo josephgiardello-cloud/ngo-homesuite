@@ -117,6 +117,12 @@ jobs:
       run: |
         pytest ngo_homesuite/ -v --tb=short --cov=ngo_homesuite --cov-report=xml
 
+    - name: Workflow reliability failure-injection lane
+      env:
+        NGO_HOMESUITE_DB_KEY: ""
+      run: |
+        pytest ngo_homesuite/tests/test_workflow_reliability_failure_injection.py ngo_homesuite/persistence/test_workflow_repository_concurrency.py ngo_homesuite/tests/test_donation_fund_concurrency.py -v --maxfail=10
+
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@ab904c41d6ece82784817410c45d8b8c02684457 # v3
       with:

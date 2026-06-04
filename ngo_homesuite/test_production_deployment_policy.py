@@ -19,6 +19,7 @@ def test_runtime_monitoring_and_compose_artifacts_enforce_production_policy() ->
     prometheus = _read_yaml("deploy/monitoring/prometheus.yml")
 
     app = compose["services"]["app"]
+    migrator = compose["services"]["migrator"]
     postgres = compose["services"]["postgres"]
     redis = compose["services"]["redis"]
 
@@ -35,6 +36,18 @@ def test_runtime_monitoring_and_compose_artifacts_enforce_production_policy() ->
     assert app["cpus"]
     assert app["restart"] == "unless-stopped"
     assert "healthcheck" in app
+    app_depends = app["depends_on"]
+    assert "migrator" in app_depends
+    assert app_depends["migrator"]["condition"] == "service_completed_successfully"
+
+    migrator_env = migrator["environment"]
+    assert migrator_env["APP_PROCESS_ROLE"] == "migrator"
+    assert migrator_env["DATABASE_BACKEND"] == "postgresql"
+    assert migrator["command"] == "python -m ngo_homesuite.db.deploy_migrate upgrade"
+    assert migrator["restart"] == "no"
+
+    assert (ROOT / "migrations" / "env.py").exists()
+    assert (ROOT / "migrations" / "versions" / "20260604_0001_baseline.py").exists()
 
     postgres_env = postgres["environment"]
     assert ":?" in postgres_env["POSTGRES_PASSWORD"]
@@ -171,3 +184,15 @@ def test_observability_release_policy_enforces_request_tracing_metrics_and_alert
     assert "metrics.observe('http_request_latency_ms'" in app_factory
     assert "test_request_id_header_and_metrics_endpoint" in obs_api_tests
     assert "test_request_completed_log_contains_structured_request_fields" in obs_log_tests
+
+
+def test_production_boot_policy_enforces_schema_preflight_and_scheduler_role_guard() -> None:
+    app_factory = (ROOT / "ngo_homesuite" / "app_factory.py").read_text(encoding="utf-8")
+
+    assert "def _assert_production_schema_ready() -> None:" in app_factory
+    assert "'schema_version'" in app_factory
+    assert "Production startup blocked: database schema is not ready." in app_factory
+    assert "if is_production:" in app_factory
+    assert "APP_PROCESS_ROLE" in app_factory
+    assert "Event scheduler startup skipped for APP_PROCESS_ROLE" in app_factory
+    assert "Grant scheduler startup skipped for APP_PROCESS_ROLE" in app_factory

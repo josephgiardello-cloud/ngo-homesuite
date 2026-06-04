@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 
 from sqlalchemy import text
 
@@ -31,7 +32,55 @@ def ensure_email_queue_table() -> None:
         )
     )
     db.session.execute(text("CREATE INDEX IF NOT EXISTS idx_email_queue_status ON email_queue(status)"))
+    db.session.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS email_queue_dead_letter (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                queue_id INTEGER NOT NULL UNIQUE,
+                to_email TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                attempts INTEGER NOT NULL,
+                error_code TEXT NOT NULL,
+                last_error TEXT,
+                payload_json TEXT,
+                failed_at TEXT NOT NULL
+            )
+            """
+        )
+    )
     db.session.commit()
+
+
+def _record_dead_letter(*, queue_id: int, to_email: str, subject: str, attempts: int, error_code: str, last_error: str) -> None:
+    payload = {
+        "queue_id": int(queue_id),
+        "to_email": str(to_email),
+        "subject": str(subject),
+        "attempts": int(attempts),
+        "error_code": str(error_code),
+        "last_error": str(last_error),
+    }
+    db.session.execute(
+        text(
+            """
+            INSERT OR IGNORE INTO email_queue_dead_letter(
+                queue_id, to_email, subject, attempts, error_code, last_error, payload_json, failed_at
+            )
+            VALUES(:queue_id, :to_email, :subject, :attempts, :error_code, :last_error, :payload_json, :failed_at)
+            """
+        ),
+        {
+            "queue_id": int(queue_id),
+            "to_email": str(to_email),
+            "subject": str(subject),
+            "attempts": int(attempts),
+            "error_code": str(error_code),
+            "last_error": str(last_error),
+            "payload_json": json.dumps(payload, sort_keys=True),
+            "failed_at": _utcnow_iso(),
+        },
+    )
 
 
 def enqueue_email(*, to_email: str, subject: str, body: str) -> int:
@@ -71,8 +120,10 @@ def process_email_queue(*, limit: int = 200) -> dict[str, int]:
 
     sent = 0
     failed = 0
+    dead_lettered = 0
     for row in rows:
         queue_id = int(row["id"])
+        attempts = int(row["attempts"])
         try:
             ok = send_email(to=row["to_email"], subject=row["subject"], context={"text": row["body"]})
         except Exception as exc:  # pragma: no cover
@@ -107,10 +158,20 @@ def process_email_queue(*, limit: int = 200) -> dict[str, int]:
             ),
             {"id": queue_id, "error": error},
         )
+        if attempts + 1 >= 3:
+            _record_dead_letter(
+                queue_id=queue_id,
+                to_email=str(row["to_email"]),
+                subject=str(row["subject"]),
+                attempts=attempts + 1,
+                error_code="delivery_failed_after_retries",
+                last_error=error,
+            )
+            dead_lettered += 1
         failed += 1
 
     db.session.commit()
-    return {"processed": len(rows), "sent": sent, "failed": failed}
+    return {"processed": len(rows), "sent": sent, "failed": failed, "dead_lettered": dead_lettered}
 
 
 def retry_failed_emails(*, limit: int = 200) -> int:

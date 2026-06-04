@@ -48,13 +48,30 @@ Optional tuning variables:
 
 ## 4. Run schema migrations
 
-Use Flask-Migrate/Alembic for PostgreSQL and MySQL deployments:
+Use the deploy migration runner for PostgreSQL and MySQL deployments:
 
 ```bash
-flask db upgrade
+python -m ngo_homesuite.db.deploy_migrate upgrade
 ```
 
-Note: startup auto-migration helper is SQLite-only. For non-SQLite backends, use migration commands in CI/CD before starting the web process.
+Rollback one Alembic step:
+
+```bash
+python -m ngo_homesuite.db.deploy_migrate downgrade --revision -1
+```
+
+Note: startup auto-migration helper is SQLite-only. For non-SQLite backends, use the deploy migration runner in CI/CD before starting the web process.
+
+For Docker Compose deployments, run the dedicated migrator service before the app:
+
+```bash
+docker compose run --rm migrator
+docker compose up -d app
+```
+
+The default Compose contract enforces this ordering automatically via `depends_on: migrator: service_completed_successfully`.
+
+For SQLite deployments, continue to use `python -m ngo_homesuite.db.migrate` and the backup/restore drill for rollback validation.
 
 ## 5. Validate connection and startup
 

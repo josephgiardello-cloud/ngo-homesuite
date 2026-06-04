@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 import secrets
 from datetime import datetime, timedelta, timezone
+import json
 from typing import Any
 
 from sqlalchemy import text
@@ -51,7 +52,70 @@ def _ensure_email_tables() -> None:
             """
         )
     )
+    db.session.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS event_email_dead_letter (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                queue_id INTEGER NOT NULL UNIQUE,
+                event_id INTEGER NOT NULL,
+                attendee_email TEXT NOT NULL,
+                attendee_name TEXT NOT NULL,
+                attempt_count INTEGER NOT NULL,
+                error_code TEXT NOT NULL,
+                last_error TEXT,
+                payload_json TEXT,
+                failed_at TEXT NOT NULL
+            )
+            """
+        )
+    )
     db.session.commit()
+
+
+def _record_dead_letter(
+    *,
+    queue_id: int,
+    event_id: int,
+    attendee_email: str,
+    attendee_name: str,
+    attempt_count: int,
+    error_code: str,
+    last_error: str,
+) -> None:
+    payload = {
+        "event_id": int(event_id),
+        "attendee_email": str(attendee_email),
+        "attendee_name": str(attendee_name),
+        "attempt_count": int(attempt_count),
+        "error_code": str(error_code),
+        "last_error": str(last_error),
+    }
+    db.session.execute(
+        text(
+            """
+            INSERT OR IGNORE INTO event_email_dead_letter(
+                queue_id, event_id, attendee_email, attendee_name,
+                attempt_count, error_code, last_error, payload_json, failed_at
+            )
+            VALUES(
+                :queue_id, :event_id, :attendee_email, :attendee_name,
+                :attempt_count, :error_code, :last_error, :payload_json, :failed_at
+            )
+            """
+        ),
+        {
+            "queue_id": int(queue_id),
+            "event_id": int(event_id),
+            "attendee_email": str(attendee_email),
+            "attendee_name": str(attendee_name),
+            "attempt_count": int(attempt_count),
+            "error_code": str(error_code),
+            "last_error": str(last_error),
+            "payload_json": json.dumps(payload, sort_keys=True),
+            "failed_at": _utcnow().isoformat(),
+        },
+    )
 
 
 def _ensure_event_tables() -> None:
@@ -334,6 +398,7 @@ def process_event_email_queue(*, limit: int = 200) -> dict[str, int]:
     sent = 0
     failed = 0
     retried = 0
+    dead_lettered = 0
     for row in rows:
         queue_id = int(row["id"])
         event_id = int(row["event_id"])
@@ -349,7 +414,17 @@ def process_event_email_queue(*, limit: int = 200) -> dict[str, int]:
                 ),
                 {"now_iso": now.isoformat(), "id": queue_id},
             )
+            _record_dead_letter(
+                queue_id=queue_id,
+                event_id=event_id,
+                attendee_email=email,
+                attendee_name=name,
+                attempt_count=attempts,
+                error_code="suppressed",
+                last_error="suppressed_before_send",
+            )
             failed += 1
+            dead_lettered += 1
             continue
 
         ok = send_event_reminder(event_id, email, name)
@@ -380,7 +455,17 @@ def process_event_email_queue(*, limit: int = 200) -> dict[str, int]:
                     "id": queue_id,
                 },
             )
+            _record_dead_letter(
+                queue_id=queue_id,
+                event_id=event_id,
+                attendee_email=email,
+                attendee_name=name,
+                attempt_count=next_attempt_count,
+                error_code="delivery_failed_after_retries",
+                last_error="delivery_failed_after_retries",
+            )
             failed += 1
+            dead_lettered += 1
         else:
             backoff_seconds = _RETRY_BASE_SECONDS * (2 ** attempts)
             next_attempt_at = (now + timedelta(seconds=backoff_seconds)).isoformat()
@@ -409,6 +494,7 @@ def process_event_email_queue(*, limit: int = 200) -> dict[str, int]:
         "sent": sent,
         "failed": failed,
         "retried": retried,
+        "dead_lettered": dead_lettered,
     }
 
 
@@ -419,4 +505,5 @@ def send_due_event_reminders(*, hours_before: int) -> dict[str, int]:
         "matched_events": int(queue_result.get("matched_events", 0)),
         "sent": int(delivery_result.get("sent", 0)),
         "failed": int(delivery_result.get("failed", 0)),
+        "dead_lettered": int(delivery_result.get("dead_lettered", 0)),
     }

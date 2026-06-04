@@ -43,4 +43,8 @@ To tune guard strictness, adjust `--max-p95-drift-pct` in workflow config.
   - inspect DB pool sizing and timeout settings
   - profile slow query paths for donation and leaderboard endpoints
   - reduce expensive per-request joins or compute-heavy render paths
+- Dashboard/reporting summary hot path:
+  - `REPORTING_DASHBOARD_CACHE_TTL_SECONDS` (default `15`) enables short-lived in-process caching for `ReportingService.organization_dashboard_summary`
+  - set to `0` to disable cache during debugging or deterministic load investigations
+  - keep TTL low (10-30s) so dashboards remain fresh while reducing repeated aggregate-query pressure
 - Keep benchmark thresholds realistic for your runner class and expected load profile.

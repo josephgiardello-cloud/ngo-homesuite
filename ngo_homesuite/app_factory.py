@@ -66,8 +66,10 @@ def create_app(config=None):
     if config is None:
         config = get_config()
     app.config.from_object(config)
+    process_role = str(app.config.get('APP_PROCESS_ROLE', os.getenv('APP_PROCESS_ROLE', 'web'))).strip().lower()
 
     app.config.setdefault('WTF_CSRF_CHECK_DEFAULT', False)
+    app.config.setdefault('REPORTING_DASHBOARD_CACHE_TTL_SECONDS', 15)
     csrf = CSRFProtect()
     csrf.init_app(app)
 
@@ -211,14 +213,50 @@ def create_app(config=None):
             'Apply explicit database migrations before starting the application.',
             report,
         )
+
+    def _assert_production_schema_ready() -> None:
+        inspector = sa_inspect(db.engine)
+        existing_tables = set(inspector.get_table_names())
+        required_tables = {
+            'schema_version',
+            'organizations',
+            'users',
+            'donors',
+            'donations',
+            'workflow_events_v2',
+        }
+        missing = sorted(required_tables - existing_tables)
+        if missing:
+            backend = str(app.config.get('DATABASE_BACKEND', 'unknown')).strip().lower() or 'unknown'
+            raise RuntimeError(
+                'Production startup blocked: database schema is not ready. '
+                f'Missing required tables: {missing}. '
+                'Run migrations before starting the application '
+                '(for SQLite use python -m ngo_homesuite.db.migrate). '
+                f'DATABASE_BACKEND={backend}'
+            )
     
     # Create app context and tables
     with app.app_context():
+        is_production = str(app.config.get('FLASK_ENV', '')).strip().lower() == 'production'
         db_uri = str(app.config.get('SQLALCHEMY_DATABASE_URI', ''))
-        if db_uri.startswith('sqlite:///') and ':memory:' not in db_uri:
-            auto_migrate(db_uri.replace('sqlite:///', '', 1))
-            _report_legacy_sqlite_schema_gaps()
-        db.create_all()
+        if is_production:
+            if process_role == 'migrator':
+                if db_uri.startswith('sqlite:///') and ':memory:' not in db_uri:
+                    auto_migrate(db_uri.replace('sqlite:///', '', 1))
+                    _report_legacy_sqlite_schema_gaps()
+                else:
+                    app.logger.info(
+                        'Production migrator role detected for non-SQLite backend; '
+                        'schema changes must be applied via ngo_homesuite.db.deploy_migrate.'
+                    )
+            else:
+                _assert_production_schema_ready()
+        else:
+            if db_uri.startswith('sqlite:///') and ':memory:' not in db_uri:
+                auto_migrate(db_uri.replace('sqlite:///', '', 1))
+                _report_legacy_sqlite_schema_gaps()
+            db.create_all()
         if bool(app.config.get('ENABLE_DEMO_SEED', False)):
             seed_demo_data(app)
     
@@ -305,13 +343,17 @@ def create_app(config=None):
             os.getenv('CAMPAIGN_EMAIL_SCHEDULER_ENABLED', 'false'),
         )
     ).strip().lower() in {'1', 'true', 'yes', 'on'}
+    scheduler_process = process_role == 'scheduler'
     if (event_scheduler_enabled or campaign_email_scheduler_enabled) and not bool(app.config.get('TESTING', False)):
-        try:
-            from ngo_homesuite.events.scheduler import start_event_reminder_scheduler
+        if str(app.config.get('FLASK_ENV', '')).strip().lower() == 'production' and not scheduler_process:
+            app.logger.info('Event scheduler startup skipped for APP_PROCESS_ROLE=%s', process_role)
+        else:
+            try:
+                from ngo_homesuite.events.scheduler import start_event_reminder_scheduler
 
-            start_event_reminder_scheduler(app)
-        except Exception as exc:
-            app.logger.warning('Event reminder scheduler did not start: %s', exc)
+                start_event_reminder_scheduler(app)
+            except Exception as exc:
+                app.logger.warning('Event reminder scheduler did not start: %s', exc)
 
     grant_search_scheduler_enabled = str(
         app.config.get(
@@ -320,12 +362,15 @@ def create_app(config=None):
         )
     ).strip().lower() in {'1', 'true', 'yes', 'on'}
     if grant_search_scheduler_enabled and not bool(app.config.get('TESTING', False)):
-        try:
-            from ngo_homesuite.grants.scheduler import start_grant_search_scheduler
+        if str(app.config.get('FLASK_ENV', '')).strip().lower() == 'production' and not scheduler_process:
+            app.logger.info('Grant scheduler startup skipped for APP_PROCESS_ROLE=%s', process_role)
+        else:
+            try:
+                from ngo_homesuite.grants.scheduler import start_grant_search_scheduler
 
-            start_grant_search_scheduler(app)
-        except Exception as exc:
-            app.logger.warning('Grant search scheduler did not start: %s', exc)
+                start_grant_search_scheduler(app)
+            except Exception as exc:
+                app.logger.warning('Grant search scheduler did not start: %s', exc)
 
     # Setup logging
     setup_logging(app)

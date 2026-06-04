@@ -82,3 +82,59 @@ def test_donor_profile_summary(app):
         assert summary["last_gift_date"] == "2026-02-01"
         assert summary["active_recurring_plans"] == 1
         assert len(summary["recent_donations"]) == 2
+
+
+def test_dashboard_summary_uses_cache_within_ttl(app, monkeypatch):
+    with app.app_context():
+        ReportingService._dashboard_cache.clear()
+        previous_ttl = app.config.get("REPORTING_DASHBOARD_CACHE_TTL_SECONDS")
+        app.config["REPORTING_DASHBOARD_CACHE_TTL_SECONDS"] = 120
+
+        org = _make_org("Reporting Cache Org", "reporting-cache-org")
+        db.session.add(Donor(organization_id=org.id, name="Cache Donor", email="cache@example.com"))
+        db.session.add(Donation(organization_id=org.id, donor_name="Cache Donor", amount=33.0, status="received"))
+        db.session.commit()
+
+        service = ReportingService()
+        first = service.organization_dashboard_summary(org.id, recent_donations_limit=2)
+        assert first["total_donations"] == 33.0
+
+        def _fail_db_access(*_args, **_kwargs):
+            raise AssertionError("cache miss unexpectedly hit the database")
+
+        monkeypatch.setattr(db.session, "scalar", _fail_db_access)
+        monkeypatch.setattr(db.session, "execute", _fail_db_access)
+
+        second = service.organization_dashboard_summary(org.id, recent_donations_limit=2)
+        assert second["total_donations"] == first["total_donations"]
+
+        if previous_ttl is None:
+            app.config.pop("REPORTING_DASHBOARD_CACHE_TTL_SECONDS", None)
+        else:
+            app.config["REPORTING_DASHBOARD_CACHE_TTL_SECONDS"] = previous_ttl
+
+
+def test_dashboard_summary_recent_limit_is_clamped(app):
+    with app.app_context():
+        ReportingService._dashboard_cache.clear()
+        app.config["REPORTING_DASHBOARD_CACHE_TTL_SECONDS"] = 0
+
+        org = _make_org("Reporting Clamp Org", "reporting-clamp-org")
+        donor = Donor(organization_id=org.id, name="Clamp Donor", email="clamp@example.com")
+        db.session.add(donor)
+        db.session.flush()
+
+        for idx in range(60):
+            db.session.add(
+                Donation(
+                    organization_id=org.id,
+                    donor_name="Clamp Donor",
+                    donor_id=donor.id,
+                    amount=float(idx + 1),
+                    status="received",
+                )
+            )
+        db.session.commit()
+
+        summary = ReportingService().organization_dashboard_summary(org.id, recent_donations_limit=5000)
+        assert len(summary["recent_donations"]) == 50
