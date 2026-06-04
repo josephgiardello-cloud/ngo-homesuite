@@ -1,0 +1,43 @@
+title = "NGO HomeSuite Gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Ignore historical fake CI smoke secret placeholders in workflow env blocks"
+condition = "AND"
+regexTarget = "line"
+paths = [
+  '''^\.github/workflows/tests\.yml$''',
+  '''^\.github/workflows/release\.yml$''',
+]
+regexes = [
+  '''SECRET_KEY:\s+(perf-smoke-secret|dast-smoke-secret|benchmark-secret|release-smoke-secret)''',
+]
+
+[[allowlists]]
+description = "Ignore historical example DSNs and deploy placeholders in env example"
+condition = "AND"
+regexTarget = "line"
+paths = [
+  '''^\.env\.example$''',
+]
+regexes = [
+  '''DATABASE_URL=postgresql://ngohs:__REPLACE_AT_DEPLOY__@localhost/ngo_homesuite''',
+  '''# DATABASE_URL=mysql\+pymysql://user:password@localhost/ngo_homesuite''',
+  '''POSTGRES_PASSWORD=__REPLACE_AT_DEPLOY__''',
+]
+
+[[allowlists]]
+description = "Ignore historical illustrative DSNs in production database documentation"
+condition = "AND"
+regexTarget = "line"
+paths = [
+  '''^docs/production-database\.md$''',
+]
+regexes = [
+  '''DATABASE_URL=postgresql://ngo_user:secret@db-host:5432/ngo_homesuite''',
+  '''DATABASE_URL=postgresql\+psycopg://ngo_user:secret@db-host:5432/ngo_homesuite''',
+  '''DATABASE_URL=postgres://ngo_user:secret@db-host:5432/ngo_homesuite''',
+  '''DATABASE_URL=mysql\+pymysql://ngo_user:secret@db-host:3306/ngo_homesuite''',
+]
