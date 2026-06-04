@@ -1,6 +1,6 @@
 # Production Checklist
 
-Last updated: 2026-06-02
+Last updated: 2026-06-03
 
 Use this checklist before production deployment.
 
@@ -61,6 +61,26 @@ A release is production-ready only when:
 - All required checklist items are complete.
 - Open high-severity issues are resolved or explicitly accepted.
 - Feature maturity labels are current in `docs/feature_status.md`.
+- `artifacts/release-evidence-bundle.json` passes strict validation (`python tools/verify_release_evidence_bundle.py --strict`).
+
+## Release Evidence Bundle Contract
+
+Maintain a single release evidence index at `artifacts/release-evidence-bundle.json`.
+
+Required fields:
+- `generated_at_utc`
+- `release_version`
+- `evidence[]`
+
+Each `evidence[]` entry must include:
+- `id`
+- `required`
+- `status` (`complete`, `pending`, `waived`)
+- `path`
+
+Release policy:
+- `status=complete` requires the referenced file to exist.
+- Strict release validation (`--strict`) requires every `required=true` entry to be `complete`.
 
 ## Release Gate Matrix (Verified 2026-05-18)
 
@@ -175,6 +195,24 @@ Coverage of this lane includes:
 - Membership members list filter/search/pagination behavior and tenant-scope assertions.
 - Volunteer list search/pagination UX contract behavior.
 - Route protection manifest parity for newly added static GET surfaces.
+
+## Latest Validation Evidence (2026-06-03, Critical/High Closure)
+
+Targeted stabilization and release-gate tooling validation executed:
+
+```bash
+.venv\Scripts\python.exe -m pytest ngo_homesuite/test_runtime_config.py ngo_homesuite/test_flask_db_engine_options.py ngo_homesuite/api/test_openapi_contract.py ngo_homesuite/test_production_deployment_policy.py ngo_homesuite/services/test_payment_service.py ngo_homesuite/auth/test_auth_models.py ngo_homesuite/db/test_connection_hardening.py -v --maxfail=10
+.venv\Scripts\python.exe tools/verify_release_evidence_bundle.py
+.venv\Scripts\python.exe tools/check_openapi_route_drift.py
+.venv\Scripts\python.exe -m pytest ngo_homesuite/web/test_api_docs_routes.py ngo_homesuite/web/test_workflow_routes.py ngo_homesuite/web/test_auth_login_remediation.py ngo_homesuite/web/test_auth_mfa_enforcement.py -v --maxfail=10
+```
+
+Outcome:
+
+- critical/high change lanes green
+- release evidence validator and OpenAPI drift validator green
+- route extraction slices validated for API docs and workflow handlers
+- login-remediation limiter warning removed by explicit test limiter backend config
 
 ## Explicit Production-Release Blockers
 

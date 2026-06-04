@@ -496,6 +496,199 @@ paths:
                 format: binary
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /api/v2/collab/channels:
+    get:
+      operationId: getV2CollabChannels
+      summary: List collaboration channels visible to the current user
+      tags: [CollaborationV2]
+      responses:
+        '200':
+          description: Collaboration channels payload
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: postV2CollabChannels
+      summary: Create a collaboration channel
+      tags: [CollaborationV2]
+      responses:
+        '201':
+          description: Collaboration channel created
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v2/collab/channels/{channel_id}/messages:
+    get:
+      operationId: getV2CollabChannelMessages
+      summary: List messages for a collaboration channel
+      tags: [CollaborationV2]
+      parameters:
+        - in: path
+          name: channel_id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Channel messages payload
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Channel not found
+    post:
+      operationId: postV2CollabChannelMessages
+      summary: Post a message to a collaboration channel
+      tags: [CollaborationV2]
+      parameters:
+        - in: path
+          name: channel_id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '201':
+          description: Message created
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Channel not found
+  /api/v2/collab/presence:
+    get:
+      operationId: getV2CollabPresence
+      summary: List collaboration presence states
+      tags: [CollaborationV2]
+      responses:
+        '200':
+          description: Presence payload
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: postV2CollabPresence
+      summary: Upsert the current user presence state
+      tags: [CollaborationV2]
+      responses:
+        '200':
+          description: Presence updated
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v2/membership/members:
+    get:
+      operationId: getV2MembershipMembers
+      summary: List members with filter, search, and pagination
+      tags: [MembershipV2]
+      responses:
+        '200':
+          description: Membership member list payload
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v2/donor-journeys/automations/run:
+    post:
+      operationId: postV2DonorJourneyAutomationsRun
+      summary: Run donor journey automations
+      tags: [DonorJourneysV2]
+      responses:
+        '200':
+          description: Automation execution payload
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v2/donor-journeys/automations/events:
+    get:
+      operationId: getV2DonorJourneyAutomationEvents
+      summary: List donor journey automation events
+      tags: [DonorJourneysV2]
+      responses:
+        '200':
+          description: Donor journey automation event payload
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v2/forms/submissions/public:
+    post:
+      operationId: postV2PublicFormSubmission
+      summary: Submit public form payload via token-auth endpoint
+      tags: [FormsV2Public]
+      responses:
+        '201':
+          description: Form submission accepted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v2/intelligence/dashboard:
+    get:
+      operationId: getV2IntelligenceDashboard
+      summary: Get role-based intelligence dashboard payload
+      tags: [IntelligenceV2]
+      responses:
+        '200':
+          description: Role-based intelligence dashboard payload
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v2/intelligence/financial-guardrails:
+    get:
+      operationId: getV2IntelligenceFinancialGuardrails
+      summary: Get financial guardrails intelligence payload
+      tags: [IntelligenceV2]
+      responses:
+        '200':
+          description: Financial guardrails intelligence payload
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v2/campaigns/{campaign_id}/emails/send:
+    post:
+      operationId: postV2CampaignEmailSend
+      summary: Send campaign email batches
+      tags: [CampaignsV2]
+      parameters:
+        - in: path
+          name: campaign_id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Campaign email send payload
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Campaign not found
   /ai/copilot/chat:
     post:
       operationId: postCopilotChat

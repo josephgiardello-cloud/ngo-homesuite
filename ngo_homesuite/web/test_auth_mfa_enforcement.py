@@ -11,7 +11,9 @@ from ngo_homesuite.models.core import User, db
 
 @pytest.fixture(scope='module')
 def app():
-    return create_app(TestingConfig)
+    app = create_app(TestingConfig)
+    app.config["ROLES_REQUIRING_2FA"] = ["admin"]
+    return app
 
 
 @pytest.fixture()

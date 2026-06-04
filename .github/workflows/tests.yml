@@ -103,6 +103,16 @@ jobs:
         print("Dependency policy artifact check passed")
         PY
 
+    - name: Validate release evidence bundle schema
+      run: |
+        python tools/verify_release_evidence_bundle.py
+
+    - name: Check OpenAPI route drift (required v2 surface)
+      env:
+        NGO_HOMESUITE_DB_KEY: ""
+      run: |
+        python tools/check_openapi_route_drift.py
+
     - name: Run tests
       run: |
         pytest ngo_homesuite/ -v --tb=short --cov=ngo_homesuite --cov-report=xml

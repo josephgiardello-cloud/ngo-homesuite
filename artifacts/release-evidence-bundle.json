@@ -1,0 +1,62 @@
+{
+  "generated_at_utc": "2026-06-03T00:00:00Z",
+  "release_version": "draft",
+  "evidence": [
+    {
+      "id": "dast_smoke",
+      "required": true,
+      "status": "complete",
+      "path": "artifacts/dast-smoke-local.json",
+      "notes": "Local DAST smoke baseline"
+    },
+    {
+      "id": "scalability_benchmark",
+      "required": true,
+      "status": "complete",
+      "path": "artifacts/scalability-benchmark-local.json",
+      "notes": "Local scalability benchmark baseline"
+    },
+    {
+      "id": "security_lane_output",
+      "required": true,
+      "status": "pending",
+      "path": "artifacts/release/security-lane-output.txt",
+      "notes": "Attach security lane run output for release candidate"
+    },
+    {
+      "id": "tenant_lane_output",
+      "required": true,
+      "status": "pending",
+      "path": "artifacts/release/tenant-lane-output.txt",
+      "notes": "Attach tenant boundary lane run output for release candidate"
+    },
+    {
+      "id": "observability_lane_output",
+      "required": true,
+      "status": "pending",
+      "path": "artifacts/release/observability-lane-output.txt",
+      "notes": "Attach observability lane run output for release candidate"
+    },
+    {
+      "id": "backup_restore_drill_output",
+      "required": true,
+      "status": "pending",
+      "path": "artifacts/release/backup-restore-drill-output.txt",
+      "notes": "Attach backup/restore drill output for release candidate"
+    },
+    {
+      "id": "key_rotation_drill_output",
+      "required": true,
+      "status": "pending",
+      "path": "artifacts/release/key-rotation-drill-output.txt",
+      "notes": "Attach key rotation drill output for release candidate"
+    },
+    {
+      "id": "external_pentest_signoff",
+      "required": true,
+      "status": "pending",
+      "path": "artifacts/release/external-pentest-signoff.md",
+      "notes": "Attach external formal security review sign-off artifact"
+    }
+  ]
+}

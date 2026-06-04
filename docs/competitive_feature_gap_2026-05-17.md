@@ -1,4 +1,4 @@
-# NGO HomeSuite Competitive Feature Gap (Updated June 2, 2026)
+# NGO HomeSuite Competitive Feature Gap (Updated June 3, 2026)
 
 ## Summary
 This matrix validates which features are already present, partially present, or still missing versus the requested comparison baseline.
@@ -11,7 +11,7 @@ Status legend:
 ## Feature Status Matrix
 | Feature | Status | Evidence | Notes |
 |---|---|---|---|
-| Real-time chat | Partial | `ngo_homesuite/web/ai_routes.py` | AI chat endpoints exist, but no user-to-user realtime messaging system (channels/presence/message bus). |
+| Real-time chat | Partial | `ngo_homesuite/web/v2_collab_handlers.py`, `ngo_homesuite/web/v2_routes.py` | Collaboration channels/messages/presence APIs exist under `/api/v2/collab/*`; full realtime websocket transport and richer operator UX are still pending. |
 | Email campaign sending | Exists | `ngo_homesuite/services/campaign_email_service.py`, `ngo_homesuite/web/v2_routes.py`, `ngo_homesuite/web/integrations_routes.py` | Audience preview/send, suppression controls, tracking metrics, and operational smoke checks are implemented; advanced orchestration depth remains iterative. |
 | Public registration pages | Exists | `ngo_homesuite/web/auth_routes.py`, `ngo_homesuite/web/main_routes.py`, `ngo_homesuite/web/p2p_routes.py` | Public account registration, public donation page, and public P2P pages are already implemented. |
 | Project management | Partial | `ngo_homesuite/models/core.py`, `ngo_homesuite/web/tasks_routes.py` | Project entity and tasks exist; not yet a full PM suite (milestones/board views/dependencies). |

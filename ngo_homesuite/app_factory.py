@@ -101,12 +101,32 @@ def create_app(config=None):
     register_rls_listeners(app)
     migrate = Migrate(app, db)
     ckeditor = CKEditor(app)
+    limiter_storage_uri = str(app.config.get('RATELIMIT_STORAGE_URI') or '').strip()
+    require_distributed_rate_limit = bool(app.config.get('REQUIRE_DISTRIBUTED_RATE_LIMIT_IN_PRODUCTION', True))
+    if (
+        app.config.get('FLASK_ENV') == 'production'
+        and bool(app.config.get('RATELIMIT_ENABLED', True))
+        and require_distributed_rate_limit
+        and not limiter_storage_uri
+    ):
+        raise RuntimeError(
+            'RATELIMIT_STORAGE_URI must be configured for production rate limiting '
+            'when REQUIRE_DISTRIBUTED_RATE_LIMIT_IN_PRODUCTION is enabled.'
+        )
+
+    limiter_kwargs = {
+        'key_func': get_remote_address,
+        'default_limits': [app.config.get('RATELIMIT_DEFAULT', '200 per day, 50 per hour')],
+        'enabled': bool(app.config.get('RATELIMIT_ENABLED', True)),
+    }
+    if limiter_storage_uri:
+        limiter_kwargs['storage_uri'] = limiter_storage_uri
+
     limiter = Limiter(
-        key_func=get_remote_address,
-        default_limits=[app.config.get('RATELIMIT_DEFAULT', '200 per day, 50 per hour')],
-        enabled=bool(app.config.get('RATELIMIT_ENABLED', True)),
+        **limiter_kwargs,
     )
     limiter.init_app(app)
+    app.extensions['rate_limit_storage_configured'] = bool(limiter_storage_uri)
     def select_locale():
         supported = ('en', 'es', 'fr')
         preferred = str(session.get('lang', '')).strip().lower()

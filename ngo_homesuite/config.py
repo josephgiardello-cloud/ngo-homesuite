@@ -56,6 +56,8 @@ class RuntimeSettings(BaseModel):
 
     rate_limit_enabled: bool = Field(default=True)
     ratelimit_default: str = Field(default="200 per day, 50 per hour")
+    ratelimit_storage_uri: str | None = None
+    require_distributed_rate_limit_in_production: bool = Field(default=True)
 
     permanent_session_lifetime_seconds: int = Field(default=2_592_000)
     session_cookie_secure: bool = Field(default=False)
@@ -376,6 +378,11 @@ def load_runtime_settings() -> RuntimeSettings:
         "log_file": os.environ.get("LOG_FILE", "logs/ngo_homesuite.log"),
         "rate_limit_enabled": _parse_bool(os.environ.get("RATE_LIMIT_ENABLED"), True),
         "ratelimit_default": os.environ.get("RATELIMIT_DEFAULT", "200 per day, 50 per hour"),
+        "ratelimit_storage_uri": os.environ.get("RATELIMIT_STORAGE_URI"),
+        "require_distributed_rate_limit_in_production": _parse_bool(
+            os.environ.get("REQUIRE_DISTRIBUTED_RATE_LIMIT_IN_PRODUCTION"),
+            True,
+        ),
         "permanent_session_lifetime_seconds": int(os.environ.get("PERMANENT_SESSION_LIFETIME", "2592000")),
         "session_cookie_secure": _parse_bool(os.environ.get("SESSION_COOKIE_SECURE"), True),
         "session_cookie_httponly": _parse_bool(os.environ.get("SESSION_COOKIE_HTTPONLY"), True),
@@ -474,6 +481,15 @@ def load_runtime_settings() -> RuntimeSettings:
         if oauth_redirect_base and not oauth_redirect_base.startswith("https://"):
             raise RuntimeError(
                 "Invalid runtime configuration: production OAUTH_REDIRECT_BASE must use https://"
+            )
+        if (
+            settings.rate_limit_enabled
+            and settings.require_distributed_rate_limit_in_production
+            and not str(settings.ratelimit_storage_uri or "").strip()
+        ):
+            raise RuntimeError(
+                "Invalid runtime configuration: production rate limiting requires RATELIMIT_STORAGE_URI when "
+                "REQUIRE_DISTRIBUTED_RATE_LIMIT_IN_PRODUCTION=1"
             )
 
     return settings

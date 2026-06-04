@@ -51,6 +51,8 @@ from ngo_homesuite.services.opinionated_workflows import (
 )
 from sqlalchemy import func, select
 from ngo_homesuite.web.auth_routes import require_step_up_auth
+from ngo_homesuite.web import main_api_docs_handlers
+from ngo_homesuite.web import main_workflow_handlers
 from ngo_homesuite.web.rbac import roles_required
 from ngo_homesuite.utils.receipt_pdf import generate_receipt_pdf_bytes
 from ngo_homesuite.compliance.evidence_pack import build_compliance_evidence
@@ -1216,11 +1218,7 @@ def _issue_receipt_for_donation(donation: Donation, recipient_email: str | None 
 @login_required
 @roles_required('admin', 'staff', 'viewer')
 def api_openapi_spec():
-    spec_path = _openapi_spec_path()
-    if not spec_path.exists():
-        return {'error': 'OpenAPI spec not found.'}, 404
-
-    return Response(spec_path.read_text(encoding='utf-8'), mimetype='application/yaml')
+    return main_api_docs_handlers.api_openapi_spec(_openapi_spec_path())
 
 
 @main_bp.route('/api/docs', methods=['GET'])
@@ -1229,19 +1227,7 @@ def api_openapi_spec():
 def api_docs_index():
     spec_url = url_for('main.api_openapi_spec')
     swagger_url = url_for('main.api_swagger_ui')
-    html = (
-        '<!doctype html>'
-        '<html><head><meta charset="utf-8"><title>NGO HomeSuite API Docs</title>'
-        '<style>body{font-family:Segoe UI,Arial,sans-serif;margin:2rem;line-height:1.45;}code{background:#f3f3f3;padding:0.15rem 0.35rem;border-radius:4px;}a{color:#0b5cab;}</style>'
-        '</head><body>'
-        '<h1>NGO HomeSuite API Docs</h1>'
-        '<p>Starter API contract for beta integrations.</p>'
-        f'<p>OpenAPI spec: <a href="{spec_url}">{spec_url}</a></p>'
-        f'<p>Interactive Swagger UI: <a href="{swagger_url}">{swagger_url}</a></p>'
-        '<p>Use this spec with Swagger Editor or Redoc for interactive review.</p>'
-        '</body></html>'
-    )
-    return Response(html, mimetype='text/html')
+    return main_api_docs_handlers.api_docs_index(spec_url=spec_url, swagger_url=swagger_url)
 
 
 @main_bp.route('/api/swagger', methods=['GET'])
@@ -1249,35 +1235,7 @@ def api_docs_index():
 @roles_required('admin', 'staff', 'viewer')
 def api_swagger_ui():
     spec_url = url_for('main.api_openapi_spec')
-    html = f"""<!doctype html>
-<html>
-    <head>
-        <meta charset=\"utf-8\" />
-        <title>NGO HomeSuite Swagger UI</title>
-        <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
-        <link rel=\"stylesheet\" href=\"https://unpkg.com/swagger-ui-dist@5/swagger-ui.css\" />
-        <style>
-            body {{ margin: 0; background: #f6f8fb; }}
-            .topbar {{ display: none; }}
-        </style>
-    </head>
-    <body>
-        <div id=\"swagger-ui\"></div>
-        <script src=\"https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js\"></script>
-        <script>
-            window.addEventListener('load', function() {{
-                SwaggerUIBundle({{
-                    url: '{spec_url}',
-                    dom_id: '#swagger-ui',
-                    deepLinking: true,
-                    docExpansion: 'list',
-                    defaultModelsExpandDepth: 1,
-                }});
-            }});
-        </script>
-    </body>
-</html>"""
-    return Response(html, mimetype='text/html')
+    return main_api_docs_handlers.api_swagger_ui(spec_url=spec_url)
 
 
 @main_bp.route('/api/domain/snapshot', methods=['GET'])
@@ -1328,7 +1286,7 @@ def ui_profile_api():
 @login_required
 @roles_required('admin', 'staff', 'viewer')
 def workflows_page():
-    return render_template('workflows.html', active_page='workflows')
+    return main_workflow_handlers.workflows_page()
 
 
 @main_bp.route('/workflows/donation', methods=['POST'])
@@ -1344,10 +1302,10 @@ def workflow_donation_route():
         flash('No organization is available.', 'error')
         return redirect(url_for('main.workflows_page'))
 
-    result = run_donation_receipt_followup_workflow(
+    result = main_workflow_handlers.workflow_donation_run(
         donation_id=donation_id,
         actor=getattr(current_user, 'username', 'workflow'),
-        organization_id=org.id,
+        org_id=org.id,
         db_path=_sqlite_db_file_path(),
     )
     flash('Workflow completed.' if result.get('ok') else str(result.get('error')), 'success' if result.get('ok') else 'error')
@@ -1364,7 +1322,7 @@ def workflow_grant_route():
         flash('Grant name is required.', 'error')
         return redirect(url_for('main.workflows_page'))
 
-    result = run_grant_tracking_reporting_workflow(
+    result = main_workflow_handlers.workflow_grant_run(
         grant_name=grant_name,
         requested_amount=requested_amount,
         actor=getattr(current_user, 'username', 'workflow'),
@@ -1384,7 +1342,7 @@ def workflow_program_route():
         flash('Program name is required.', 'error')
         return redirect(url_for('main.workflows_page'))
 
-    result = run_program_tracking_impact_workflow(
+    result = main_workflow_handlers.workflow_program_run(
         program_name=program_name,
         beneficiary_count=beneficiary_count,
         outcomes=[{'metric_name': 'beneficiary_engagement', 'metric_value': beneficiary_count}],
@@ -1403,10 +1361,10 @@ def api_workflow_donation_run(donation_id: int):
     if not org:
         return {'ok': False, 'error': 'No organization is available.'}, 400
 
-    result = run_donation_receipt_followup_workflow(
+    result = main_workflow_handlers.workflow_donation_run(
         donation_id=donation_id,
         actor=getattr(current_user, 'username', 'workflow'),
-        organization_id=org.id,
+        org_id=org.id,
         db_path=_sqlite_db_file_path(),
     )
     return (result, 200) if result.get('ok') else (result, 404)
@@ -1421,7 +1379,7 @@ def api_workflow_grant_run():
     requested_amount = float(payload.get('requested_amount', 0.0) or 0.0)
     if not grant_name:
         return {'error': 'grant_name is required.'}, 400
-    return run_grant_tracking_reporting_workflow(
+    return main_workflow_handlers.workflow_grant_run(
         grant_name=grant_name,
         requested_amount=requested_amount,
         actor=getattr(current_user, 'username', 'workflow'),
@@ -1439,7 +1397,7 @@ def api_workflow_program_run():
     outcomes = payload.get('outcomes') if isinstance(payload.get('outcomes'), list) else []
     if not program_name:
         return {'error': 'program_name is required.'}, 400
-    return run_program_tracking_impact_workflow(
+    return main_workflow_handlers.workflow_program_run(
         program_name=program_name,
         beneficiary_count=beneficiary_count,
         outcomes=outcomes,

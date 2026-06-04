@@ -6,7 +6,7 @@ A practical nonprofit operations platform for donor management, fundraising, gra
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
-Last updated: 2026-06-02
+Last updated: 2026-06-03
 
 ## Overview
 
@@ -119,6 +119,7 @@ docker compose --profile postgres up --build
 
 ## Documentation
 
+- Full feature list: [docs/full_feature_list.md](docs/full_feature_list.md)
 - Feature maturity: [docs/feature_status.md](docs/feature_status.md)
 - Production checklist: [docs/production_checklist.md](docs/production_checklist.md)
 - API specification: [docs/openapi.yaml](docs/openapi.yaml)

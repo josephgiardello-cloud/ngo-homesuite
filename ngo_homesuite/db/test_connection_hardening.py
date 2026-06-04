@@ -190,3 +190,36 @@ def test_rotate_db_key_rejects_same_key(monkeypatch):
     key = "hex:" + ("aa" * 32)
     with pytest.raises(FatalDBError, match="must differ"):
         connection.rotate_db_key(old_key=key, new_key=key)
+
+
+def test_schema_migration_escape_hatch_invokes_hook(monkeypatch):
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE test_payload (id INTEGER PRIMARY KEY, value TEXT)")
+    conn.commit()
+
+    hook_calls: list[str | None] = []
+    monkeypatch.setenv("NGO_HOMESUITE_ALLOW_SCHEMA_MIGRATION", "1")
+    monkeypatch.setattr(connection, "SchemaMigrationHook", lambda _conn, db_path: hook_calls.append(db_path))
+
+    connection._check_and_handle_schema_migration(conn, db_path=":memory:")
+    assert hook_calls == [":memory:"]
+    conn.close()
+
+
+def test_schema_hash_mismatch_raises_without_escape_hatch(monkeypatch):
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE t1 (id INTEGER PRIMARY KEY)")
+    connection._ensure_metadata_table(conn)
+    conn.execute(
+        "INSERT INTO __db_metadata__ (key, value) VALUES ('schema_hmac', 'invalid_hash')"
+    )
+    conn.commit()
+
+    monkeypatch.setenv("NGO_HOMESUITE_SCHEMA_HMAC_KEY", "test_hmac_key")
+    monkeypatch.setenv("NGO_HOMESUITE_SCHEMA_SIGNATURE", "test_schema_sig")
+    monkeypatch.delenv("NGO_HOMESUITE_ALLOW_SCHEMA_MIGRATION", raising=False)
+    monkeypatch.setattr(connection, "SchemaMigrationHook", None)
+
+    with pytest.raises(FatalDBError, match="stored HMAC does not match"):
+        connection._check_and_handle_schema_migration(conn, db_path=":memory:")
+    conn.close()

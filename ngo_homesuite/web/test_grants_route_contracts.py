@@ -12,8 +12,12 @@ from ngo_homesuite.models.core import db
 
 @pytest.fixture(scope="module")
 def app(shared_test_app):
+    original_roles_requiring_2fa = shared_test_app.config.get("ROLES_REQUIRING_2FA")
     shared_test_app.config["ROLES_REQUIRING_2FA"] = []
-    return shared_test_app
+    try:
+        yield shared_test_app
+    finally:
+        shared_test_app.config["ROLES_REQUIRING_2FA"] = original_roles_requiring_2fa
 
 
 @pytest.fixture()

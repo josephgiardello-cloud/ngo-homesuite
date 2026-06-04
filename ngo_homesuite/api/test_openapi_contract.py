@@ -38,3 +38,26 @@ def test_openapi_spec_has_unique_operation_ids_and_responses() -> None:
             )
 
     assert len(operation_ids) == len(set(operation_ids)), "operationId values must be unique"
+
+
+def test_openapi_required_v2_paths_are_declared() -> None:
+    spec = yaml.safe_load(Path("docs/openapi.yaml").read_text(encoding="utf-8"))
+    declared_paths = set((spec.get("paths") or {}).keys())
+
+    required_file = Path("docs/openapi_required_v2_paths.txt")
+    assert required_file.exists(), "Missing required v2 paths file: docs/openapi_required_v2_paths.txt"
+    required_paths = [
+        line.strip()
+        for line in required_file.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    assert required_paths, "docs/openapi_required_v2_paths.txt must contain at least one required path"
+
+    missing = [path for path in required_paths if path not in declared_paths]
+    assert not missing, f"Required OpenAPI paths missing from docs/openapi.yaml: {missing}"
+
+
+def test_openapi_route_drift_checker_script_exists() -> None:
+    assert Path("tools/check_openapi_route_drift.py").exists(), (
+        "Missing OpenAPI drift checker: tools/check_openapi_route_drift.py"
+    )

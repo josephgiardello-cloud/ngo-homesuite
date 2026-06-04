@@ -33,6 +33,8 @@ def _clear_runtime_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "NGO_DEMO_ADMIN_PASSWORD",
         "NGO_HOMESUITE_ENABLE_DEMO_SEED",
         "SHOW_DEV_LOGIN_CREDENTIALS",
+        "RATELIMIT_STORAGE_URI",
+        "REQUIRE_DISTRIBUTED_RATE_LIMIT_IN_PRODUCTION",
     ]
     for key in keys:
         monkeypatch.delenv(key, raising=False)
@@ -173,10 +175,53 @@ def test_load_runtime_settings_production_allows_sqlite_only_with_explicit_overr
     monkeypatch.setenv("DATABASE_URL", "sqlite:///prod.db")
     monkeypatch.setenv("NGO_HOMESUITE_ALLOW_SQLITE_IN_PRODUCTION", "1")
     monkeypatch.setenv("SESSION_COOKIE_SECURE", "1")
+    monkeypatch.setenv("RATELIMIT_STORAGE_URI", "redis://localhost:6379/3")
     monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
 
     settings = config.load_runtime_settings()
     assert settings.database_backend == "sqlite"
+
+
+def test_load_runtime_settings_reads_ratelimit_storage_uri(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_runtime_env(monkeypatch)
+
+    monkeypatch.setenv("SECRET_KEY", "ratelimit-storage-secret")
+    monkeypatch.setenv("RATELIMIT_STORAGE_URI", "redis://localhost:6379/2")
+    monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
+
+    settings = config.load_runtime_settings()
+    assert settings.ratelimit_storage_uri == "redis://localhost:6379/2"
+
+
+def test_load_runtime_settings_production_requires_distributed_ratelimit_storage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+
+    monkeypatch.setenv("FLASK_ENV", "production")
+    monkeypatch.setenv("SECRET_KEY", "prod-secret")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/ngo")
+    monkeypatch.setenv("SESSION_COOKIE_SECURE", "1")
+    monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
+
+    with pytest.raises(RuntimeError, match="RATELIMIT_STORAGE_URI"):
+        config.load_runtime_settings()
+
+
+def test_load_runtime_settings_production_allows_distributed_ratelimit_override_disable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+
+    monkeypatch.setenv("FLASK_ENV", "production")
+    monkeypatch.setenv("SECRET_KEY", "prod-secret")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/ngo")
+    monkeypatch.setenv("SESSION_COOKIE_SECURE", "1")
+    monkeypatch.setenv("REQUIRE_DISTRIBUTED_RATE_LIMIT_IN_PRODUCTION", "0")
+    monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
+
+    settings = config.load_runtime_settings()
+    assert settings.require_distributed_rate_limit_in_production is False
 
 
 def test_load_runtime_settings_infers_postgres_backend(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -343,6 +388,7 @@ def test_load_runtime_settings_production_allows_file_based_secrets(
     monkeypatch.setenv("SECRET_KEY_FILE", str(secret_file))
     monkeypatch.setenv("DATABASE_URL_FILE", str(db_url_file))
     monkeypatch.setenv("SESSION_COOKIE_SECURE", "1")
+    monkeypatch.setenv("RATELIMIT_STORAGE_URI", "redis://localhost:6379/4")
     monkeypatch.setattr(config, "_read_yaml_config", lambda: {})
 
     settings = config.load_runtime_settings()

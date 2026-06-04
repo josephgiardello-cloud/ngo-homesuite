@@ -75,6 +75,7 @@ def test_dockerfile_runs_non_root_with_healthcheck() -> None:
 
 def test_security_release_policy_enforces_dependency_ai_and_evidence_gates() -> None:
     tests_workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+    release_workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     dependabot = _read_yaml(".github/dependabot.yml")
     config_text = (ROOT / "ngo_homesuite" / "config.py").read_text(encoding="utf-8")
     ai_routes = (ROOT / "ngo_homesuite" / "web" / "ai_routes.py").read_text(encoding="utf-8")
@@ -83,12 +84,17 @@ def test_security_release_policy_enforces_dependency_ai_and_evidence_gates() -> 
     dependency_policy = (ROOT / "docs" / "dependency_policy.md").read_text(encoding="utf-8")
     checklist = (ROOT / "docs" / "production_checklist.md").read_text(encoding="utf-8")
 
+    assert (ROOT / "tools" / "verify_release_evidence_bundle.py").exists()
+    assert (ROOT / "artifacts" / "release-evidence-bundle.json").exists()
+
     assert "name: Security Checks" in tests_workflow
     assert "pip install bandit pip-audit" in tests_workflow
     assert "pip-audit -r requirements.txt" in tests_workflow
     assert "gitleaks/gitleaks-action" in tests_workflow
     assert "ngo_homesuite/ai/test_ai_hardening.py" in tests_workflow
     assert "ngo_homesuite/web/test_cross_tenant_boundaries.py" in tests_workflow
+    assert "python tools/verify_release_evidence_bundle.py" in tests_workflow
+    assert "python tools/verify_release_evidence_bundle.py --strict" in release_workflow
 
     pip_updates = dependabot["updates"][0]
     assert pip_updates["package-ecosystem"] == "pip"
@@ -110,6 +116,7 @@ def test_security_release_policy_enforces_dependency_ai_and_evidence_gates() -> 
     assert "Security test lane output" in pentest_playbook
     assert "Manual pentest notes and repro steps" in pentest_playbook
     assert "Remediation links/commit references for fixed findings" in pentest_playbook
+    assert "artifacts/release-evidence-bundle.json" in checklist
     assert "security release lane" in checklist.lower()
 
 

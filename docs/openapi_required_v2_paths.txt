@@ -1,0 +1,10 @@
+/api/v2/collab/channels
+/api/v2/collab/channels/{channel_id}/messages
+/api/v2/collab/presence
+/api/v2/membership/members
+/api/v2/donor-journeys/automations/run
+/api/v2/donor-journeys/automations/events
+/api/v2/forms/submissions/public
+/api/v2/intelligence/dashboard
+/api/v2/intelligence/financial-guardrails
+/api/v2/campaigns/{campaign_id}/emails/send

@@ -8,6 +8,7 @@ from ngo_homesuite.web.auth_routes import _issue_password_reset_token
 
 class _RateLimitedTestingConfig(TestingConfig):
     RATELIMIT_ENABLED = True
+    RATELIMIT_STORAGE_URI = "memory://"
 
 
 def _ensure_user(app, username: str, email: str, password: str) -> User:

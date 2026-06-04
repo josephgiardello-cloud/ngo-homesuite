@@ -61,6 +61,8 @@ class Config:
     # Flask-Limiter
     RATELIMIT_ENABLED = _RUNTIME_SETTINGS.rate_limit_enabled
     RATELIMIT_DEFAULT = _RUNTIME_SETTINGS.ratelimit_default
+    RATELIMIT_STORAGE_URI = _RUNTIME_SETTINGS.ratelimit_storage_uri
+    REQUIRE_DISTRIBUTED_RATE_LIMIT_IN_PRODUCTION = _RUNTIME_SETTINGS.require_distributed_rate_limit_in_production
     
     # Logging
     LOG_LEVEL = _RUNTIME_SETTINGS.log_level

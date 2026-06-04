@@ -139,5 +139,51 @@ def test_authenticate_user_returns_identity(monkeypatch):
         except Exception as e:
             print(f"Could not delete temp DB: {e}")
 
+
+def test_record_failed_login_sets_lockout_after_threshold(monkeypatch):
+    monkeypatch.setattr(models, "audit", lambda *a, **kw: None)
+    conn, cur = setup_in_memory_db()
+    models.ensure_login_attempts_table(conn, cur)
+
+    for _ in range(models.MAX_FAILED_ATTEMPTS):
+        models.record_failed_login(conn, cur, "lockout-user", ip_address="127.0.0.1")
+
+    attempt = models.get_login_attempt(cur, "lockout-user")
+    assert attempt is not None
+    assert int(attempt["failed_attempts"]) >= models.MAX_FAILED_ATTEMPTS
+    assert attempt["lockout_until"] is not None
+    locked, lockout_until = models.is_account_locked(cur, "lockout-user")
+    assert locked is True
+    assert lockout_until is not None
+    conn.close()
+
+
+def test_login_user_rejects_locked_account(monkeypatch):
+    monkeypatch.setattr(models, "audit", lambda *a, **kw: None)
+    monkeypatch.setattr(models, "verify_password", lambda *_args, **_kwargs: (True, False))
+
+    conn, cur = setup_in_memory_db()
+    models.ensure_login_attempts_table(conn, cur)
+
+    future_lock = "2999-01-01T00:00:00+00:00"
+    models.set_login_attempt(
+        cur,
+        username="locked-user",
+        failed_attempts=models.MAX_FAILED_ATTEMPTS,
+        last_attempt_ts=models._now_iso(),
+        lockout_until=future_lock,
+        ip_address="127.0.0.1",
+    )
+    conn.commit()
+
+    with pytest.raises(ValueError, match="temporarily locked"):
+        models.login_user(conn, cur, "locked-user", "irrelevant", ip_address="127.0.0.1")
+    conn.close()
+
+
+def test_authenticate_user_rejects_blank_username() -> None:
+    with pytest.raises(ValueError, match="Invalid username or password"):
+        models.authenticate_user("   ", "password123")
+
 if __name__ == "__main__":
     test_create_user_and_verify()

@@ -44,3 +44,18 @@ def test_sqlalchemy_engine_options_for_sqlite_memory(monkeypatch):
     assert "pool_size" not in options
     assert "max_overflow" not in options
     assert "pool_timeout" not in options
+
+
+def test_flask_limiter_settings_surface_runtime_storage_uri(monkeypatch):
+    monkeypatch.setenv("SECRET_KEY", "limiter-opt-secret")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/ngo")
+    monkeypatch.setenv("DB_BACKEND", "postgresql")
+    monkeypatch.setenv("RATELIMIT_STORAGE_URI", "redis://localhost:6379/5")
+    monkeypatch.setenv("REQUIRE_DISTRIBUTED_RATE_LIMIT_IN_PRODUCTION", "1")
+
+    refreshed = runtime_config.load_runtime_settings()
+    monkeypatch.setattr(runtime_config, "_RUNTIME_SETTINGS", refreshed, raising=True)
+    cfg_module = importlib.reload(flask_config)
+
+    assert cfg_module.Config.RATELIMIT_STORAGE_URI == "redis://localhost:6379/5"
+    assert cfg_module.Config.REQUIRE_DISTRIBUTED_RATE_LIMIT_IN_PRODUCTION is True

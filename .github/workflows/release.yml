@@ -44,6 +44,10 @@ jobs:
         run: |
           pytest ngo_homesuite/web/test_cross_tenant_boundaries.py ngo_homesuite/web/test_v2_route_contracts.py ngo_homesuite/web/test_rbac_tenant_route_audit.py ngo_homesuite/api/test_v1_runtime.py -v --maxfail=10
 
+      - name: Validate release evidence bundle (strict)
+        run: |
+          python tools/verify_release_evidence_bundle.py --strict
+
       - name: Validate OpenAPI document
         run: |
           python - <<'PY'
@@ -55,6 +59,12 @@ jobs:
           validate_spec(spec)
           print("OpenAPI validation passed")
           PY
+
+      - name: Check OpenAPI route drift (required v2 surface)
+        env:
+          NGO_HOMESUITE_DB_KEY: ""
+        run: |
+          python tools/check_openapi_route_drift.py
 
       - name: Generate Python client
         run: |

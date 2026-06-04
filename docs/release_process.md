@@ -1,6 +1,6 @@
 # Release and Versioning Process
 
-Last updated: 2026-06-02
+Last updated: 2026-06-03
 
 This project uses a lightweight release process to keep rapid changes safe and traceable.
 
@@ -15,6 +15,7 @@ This project uses a lightweight release process to keep rapid changes safe and t
 
 1. Ensure documentation is current:
 - `README.md`
+- `docs/full_feature_list.md`
 - `docs/feature_status.md`
 - `docs/production_checklist.md`
 - Relevant ADR updates in `docs/adr/`
@@ -29,6 +30,8 @@ This project uses a lightweight release process to keep rapid changes safe and t
 - Run DAST smoke probe and archive report: `python tools/dast_smoke.py --base-url http://127.0.0.1:8765 --report-json artifacts/dast-smoke-report.json`
 - Run scalability benchmark and archive report: `python tools/scalability_benchmark.py --base-url http://127.0.0.1:8765 --endpoint /health --endpoint / --endpoint /give --endpoint /p2p/leaderboard --total-requests 300 --concurrency 20 --max-overall-p95-ms 2200 --report-json artifacts/scalability-benchmark.json`
 - Run HTTP load smoke against release candidate: `python tools/load_test_smoke.py --base-url http://127.0.0.1:8765 --endpoint /health --endpoint / --endpoint /give`
+- Validate release evidence bundle schema and artifact references: `python tools/verify_release_evidence_bundle.py`
+- Validate required OpenAPI/runtime route alignment: `python tools/check_openapi_route_drift.py`
 - Verify container image passes Docker vulnerability scan in CI
 
 Security testing procedure reference: `docs/security_pentest_playbook.md`
@@ -44,6 +47,7 @@ P2P operational procedure reference: `docs/p2p_operations_runbook.md`
 - Create annotated git tag: `git tag -a vX.Y.Z -m "Release vX.Y.Z"`
 - Push tag: `git push origin vX.Y.Z`
 - Confirm `.github/workflows/release.yml` completed: tests, OpenAPI validation/client generation, Docker scan, release artifact upload
+- Confirm strict release evidence validation passed in release lane: `python tools/verify_release_evidence_bundle.py --strict`
 
 ## Hotfix Policy
 
