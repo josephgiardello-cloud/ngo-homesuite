@@ -1,8 +1,55 @@
 # Audit log table and helper for tamper-evident event logging
-import sqlite3
 import json
+import sqlite3
 from datetime import datetime, timezone
-from pathlib import Path
+
+from flask import current_app, has_app_context, has_request_context
+
+
+def _bridge_to_security_audit(db_path, actor, action, entity, metadata=None):
+    if not has_app_context():
+        return False
+
+    actor_org_id = None
+    try:
+        if has_request_context():
+            from flask_login import current_user
+
+            if current_user and getattr(current_user, 'is_authenticated', False):
+                actor_org_id = getattr(current_user, 'organization_id', None)
+
+        from ngo_homesuite.audit.security_events import SecurityAuditService, SecurityEventType
+
+        SecurityAuditService.log_event(
+            event_type=SecurityEventType.LEGACY_AUDIT_BRIDGED,
+            action=str(action),
+            resource_type=str(entity) if entity else None,
+            resource_org_id=actor_org_id,
+            payload={
+                'bridge_source': 'ngo_homesuite.db.audit_log',
+                'legacy_actor': actor,
+                'legacy_entity': entity,
+                'legacy_metadata': metadata or {},
+                'legacy_db_path': db_path,
+            },
+        )
+        current_app.logger.info(
+            'legacy_audit_log_bridged',
+            extra={
+                'extra_fields': {
+                    'action': action,
+                    'entity': entity,
+                    'actor': actor,
+                }
+            },
+        )
+        return True
+    except Exception as exc:
+        try:
+            current_app.logger.warning('legacy_audit_bridge_failed; falling back to sqlite helper: %s', exc)
+        except Exception:
+            pass
+        return False
 
 def get_db_connection(db_path):
     conn = sqlite3.connect(db_path, detect_types=sqlite3.PARSE_DECLTYPES)
@@ -43,6 +90,9 @@ def ensure_schema_version_table(db_path):
         conn.close()
 
 def log_event(db_path, actor, action, entity, metadata=None):
+    if _bridge_to_security_audit(db_path=db_path, actor=actor, action=action, entity=entity, metadata=metadata):
+        return
+
     ensure_schema_version_table(db_path)
     ensure_audit_log_table(db_path)
     # Hash-verify latest schema version

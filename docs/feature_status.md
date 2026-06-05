@@ -1,6 +1,6 @@
 # Feature Maturity Status
 
-Last updated: 2026-06-03
+Last updated: 2026-06-04
 
 This document separates feature availability from production maturity. The README links here to avoid overstating readiness.
 
@@ -32,10 +32,10 @@ Maturity scale:
 | Integrated form ecosystem | Available | Operational | Internal/public v2 form ingest endpoints provide dedupe/idempotency, donor upsert, donation/task linkage, and tenant-safe submission listing. |
 | Collaboration channels/messages/presence | Available | Foundational | v2 collab channels/messages/presence APIs are active (`/api/v2/collab/*`); realtime transport and richer UX remain future work. |
 | OpenAPI docs | Available | Foundational | Starter spec and docs routes exist; endpoint coverage still expanding. |
-| AI Copilot + governance | Available | Operational | Approval-gated actions, role-aware tooling, and tenant-id enforcement checks are in place; broader explicit negative-test depth for all AI pathways should continue to expand. |
-| Multi-tenant hardening | In progress | Operational | API v2 cross-tenant mutation denials and route-level RBAC audit now include the new campaign queue/retry and membership member-list surfaces; remaining work focuses on exhaustive mutation-path verification and AI-context isolation evidence. |
+| AI Copilot + governance | Available | Operational | Approval-gated actions, role-aware tooling, and tenant-id enforcement checks are in place; legacy audit writes on AI routes now bridge into canonical `security_audit_events` under Flask runtime. Continue broad negative-test expansion across all AI pathways. |
+| Multi-tenant hardening | In progress | Operational | API v2 cross-tenant mutation denials and route-level RBAC audit include campaign queue/retry and membership member-list surfaces, plus `/ai/chat` tenant-mismatch denial coverage. Remaining work focuses on exhaustive mutation-path verification and AI-context isolation evidence. |
 | End-to-end integration journeys | Available | Foundational | Baseline donor->donation->receipt journey coverage is active; broaden scenario depth (multi-role, payment failure, and recovery paths) for release confidence. |
-| Production observability | Partial | Operational | Structured request logs, Prometheus/Loki/Promtail stack artifacts, and CI validation checks are in place. |
+| Production observability | Partial | Operational | Structured request logs, Prometheus/Loki/Promtail stack artifacts, CI validation checks, and 2026-06-04 observability evidence lane artifacts are in place. |
 
 ## Notes for Maintainers
 

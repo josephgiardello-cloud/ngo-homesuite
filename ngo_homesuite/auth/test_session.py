@@ -3,6 +3,8 @@ from __future__ import annotations
 import pytest
 
 from ngo_homesuite.auth import models, session
+from ngo_homesuite.app_factory import create_app
+from ngo_homesuite.flask_config import TestingConfig
 
 
 def test_login_delegates_to_authenticate_user(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -43,3 +45,22 @@ def test_login_retries_until_auth_error(monkeypatch: pytest.MonkeyPatch, capsys:
     assert auth_calls == [("alice", "wrong"), ("alice", "wrong"), ("alice", "wrong")]
     assert sleep_calls == [0.5, 1.0, 2.0]
     assert capsys.readouterr().out.count("Invalid username or password.") == 3
+
+
+def test_login_rejects_flask_runtime_use(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = create_app(TestingConfig)
+
+    called = False
+
+    def _fake_authenticate_user(**_kwargs):
+        nonlocal called
+        called = True
+        return {"id": 1}
+
+    monkeypatch.setattr(models, "authenticate_user", _fake_authenticate_user)
+
+    with app.app_context():
+        with pytest.raises(RuntimeError, match="Legacy CLI auth session cannot run inside the Flask application runtime"):
+            session.login()
+
+    assert called is False

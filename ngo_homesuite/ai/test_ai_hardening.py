@@ -69,6 +69,7 @@ class TestPiiRedaction:
 # ---------------------------------------------------------------------------
 
 from ngo_homesuite.app_factory import create_app
+from ngo_homesuite.audit.security_events import SecurityAuditEvent
 from ngo_homesuite.models.core import db as _db, User, Organization, AIConversation, AIMessage
 
 
@@ -97,6 +98,12 @@ def client(app):
 @pytest.fixture()
 def admin_user(app):
     with app.app_context():
+        org = Organization.query.filter_by(slug="ai-hardening-admin-org").first()
+        if org is None:
+            org = Organization(name="AI Hardening Admin Org", slug="ai-hardening-admin-org", is_active=True)
+            _db.session.add(org)
+            _db.session.flush()
+
         user = User.query.filter_by(username="test_admin").first()
         if user is None:
             user = User(
@@ -104,16 +111,25 @@ def admin_user(app):
                 email="admin@test.local",
                 role="admin",
                 is_active=True,
+                organization_id=org.id,
             )
             user.set_password("admin_pass_123")
             _db.session.add(user)
-            _db.session.commit()
+        else:
+            user.organization_id = org.id
+        _db.session.commit()
         return user.id
 
 
 @pytest.fixture()
 def viewer_user(app):
     with app.app_context():
+        org = Organization.query.filter_by(slug="ai-hardening-viewer-org").first()
+        if org is None:
+            org = Organization(name="AI Hardening Viewer Org", slug="ai-hardening-viewer-org", is_active=True)
+            _db.session.add(org)
+            _db.session.flush()
+
         user = User.query.filter_by(username="test_viewer").first()
         if user is None:
             user = User(
@@ -121,10 +137,13 @@ def viewer_user(app):
                 email="viewer@test.local",
                 role="viewer",
                 is_active=True,
+                organization_id=org.id,
             )
             user.set_password("viewer_pass_123")
             _db.session.add(user)
-            _db.session.commit()
+        else:
+            user.organization_id = org.id
+        _db.session.commit()
         return user.id
 
 
@@ -307,6 +326,50 @@ class TestApexFallbackAndRateLimit:
         payload = rv.get_json()
         assert payload["mode"] == "fallback"
         assert "temporarily unavailable" in payload["response"]
+
+    def test_chat_rejects_cross_tenant_payload_without_persistence(self, client, app, admin_user):
+        _login(client, "test_admin", "admin_pass_123")
+
+        with app.app_context():
+            before = AIConversation.query.filter_by(user_id=admin_user).count()
+
+        rv = client.post(
+            "/ai/chat",
+            json={"prompt": "hello", "tenant_id": "other-tenant"},
+        )
+
+        assert rv.status_code == 403
+        assert "tenant_id" in rv.get_json()["error"]
+
+        with app.app_context():
+            after = AIConversation.query.filter_by(user_id=admin_user).count()
+            assert after == before
+
+    def test_chat_audit_bridge_records_security_audit_event(self, client, app, admin_user):
+        from unittest.mock import patch
+
+        _login(client, "test_admin", "admin_pass_123")
+
+        with app.app_context():
+            before = SecurityAuditEvent.query.filter_by(action="copilot_query", resource_type="ai").count()
+
+        with patch("ngo_homesuite.web.ai_routes._client") as mock_client:
+            mock_client.return_value.query.return_value = "Test answer"
+            rv = client.post("/ai/chat", json={"prompt": "Audit this chat"})
+
+        assert rv.status_code == 200
+
+        with app.app_context():
+            after = SecurityAuditEvent.query.filter_by(action="copilot_query", resource_type="ai").count()
+            assert after == before + 1
+            event = (
+                SecurityAuditEvent.query
+                .filter_by(action="copilot_query", resource_type="ai")
+                .order_by(SecurityAuditEvent.id.desc())
+                .first()
+            )
+            assert event is not None
+            assert (event.payload or {}).get("bridge_source") == "ngo_homesuite.db.audit_log"
 
 
 class TestCopilotPromptLeakageGuard:

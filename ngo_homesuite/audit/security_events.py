@@ -89,6 +89,7 @@ class SecurityEventType(StrEnum):
     SECURITY_POLICY_CHANGED = "system.security_policy_changed"
     API_KEY_ROTATED = "system.api_key_rotated"
     ENCRYPTION_KEY_ROTATED = "system.encryption_key_rotated"
+    LEGACY_AUDIT_BRIDGED = "system.legacy_audit_bridged"
     SYSTEM_BOOTSTRAP_TOKEN_GENERATED = "system.bootstrap_token_generated"
     SYSTEM_BOOTSTRAP_TOKEN_VALIDATION_FAILED = "system.bootstrap_token_validation_failed"
     SYSTEM_BOOTSTRAP_TOKEN_CONSUMED = "system.bootstrap_token_consumed"

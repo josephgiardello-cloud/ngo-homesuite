@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-06-03T00:00:00Z",
+  "generated_at_utc": "2026-06-04T00:00:00Z",
   "release_version": "draft",
   "evidence": [
     {
@@ -19,44 +19,51 @@
     {
       "id": "security_lane_output",
       "required": true,
-      "status": "pending",
+      "status": "complete",
       "path": "artifacts/release/security-lane-output.txt",
-      "notes": "Attach security lane run output for release candidate"
+      "notes": "Security hardening lane captured on 2026-06-04"
     },
     {
       "id": "tenant_lane_output",
       "required": true,
-      "status": "pending",
+      "status": "complete",
       "path": "artifacts/release/tenant-lane-output.txt",
-      "notes": "Attach tenant boundary lane run output for release candidate"
+      "notes": "Tenant boundary lane captured on 2026-06-04"
     },
     {
       "id": "observability_lane_output",
       "required": true,
-      "status": "pending",
+      "status": "complete",
       "path": "artifacts/release/observability-lane-output.txt",
-      "notes": "Attach observability lane run output for release candidate"
+      "notes": "Observability lane captured on 2026-06-04"
     },
     {
       "id": "backup_restore_drill_output",
       "required": true,
-      "status": "pending",
+      "status": "complete",
       "path": "artifacts/release/backup-restore-drill-output.txt",
-      "notes": "Attach backup/restore drill output for release candidate"
+      "notes": "Backup/restore drill lane captured on 2026-06-04"
     },
     {
       "id": "key_rotation_drill_output",
       "required": true,
-      "status": "pending",
+      "status": "complete",
       "path": "artifacts/release/key-rotation-drill-output.txt",
-      "notes": "Attach key rotation drill output for release candidate"
+      "notes": "Key rotation drill lane captured on 2026-06-04"
+    },
+    {
+      "id": "mobile_public_validation_output",
+      "required": true,
+      "status": "complete",
+      "path": "artifacts/release/mobile-public-validation-output.txt",
+      "notes": "Mobile/public validation lane captured on 2026-06-04"
     },
     {
       "id": "external_pentest_signoff",
       "required": true,
       "status": "pending",
       "path": "artifacts/release/external-pentest-signoff.md",
-      "notes": "Attach external formal security review sign-off artifact"
+      "notes": "Placeholder exists, but an external formal security review sign-off artifact is still required"
     }
   ]
 }

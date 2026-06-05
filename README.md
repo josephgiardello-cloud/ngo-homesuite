@@ -6,7 +6,7 @@ A practical nonprofit operations platform for donor management, fundraising, gra
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
-Last updated: 2026-06-03
+Last updated: 2026-06-04
 
 ## Overview
 
@@ -38,6 +38,8 @@ Shipped and working in the main product path:
 - Grants compliance packaging: compliance-ready grant package endpoint and service flow
 - Membership and volunteer UX improvements: searchable/filterable/paginated list paths
 - Expanded tenant and RBAC validation for newly added API surfaces
+- Legacy audit path hardening: Flask runtime audit events now bridge into canonical `security_audit_events`
+- Release-evidence lanes captured in-repo for security, tenant isolation, observability, mobile/public validation, backup/restore, and key rotation
 
 ## What Is Left To Do
 
@@ -47,7 +49,7 @@ Key work still tracked as open:
 - Broader tenant-isolation and AI context-boundary evidence across all mutation paths
 - Deeper end-to-end journey coverage (failure/recovery and multi-role scenarios)
 - Additional UX modernization in high-traffic workflows
-- Ongoing dependency hardening and release-evidence automation
+- Ongoing dependency hardening and release-evidence strict gate closure
 
 ## Tech Stack
 

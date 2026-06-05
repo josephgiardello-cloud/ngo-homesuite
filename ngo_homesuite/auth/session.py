@@ -5,6 +5,8 @@ import sqlite3
 import time
 from typing import Any
 
+from flask import has_app_context
+
 from ..config import LOGIN_BACKOFF_BASE_SECONDS, MAX_LOGIN_ATTEMPTS
 from ..db.connection import run_db
 from ..prompts import prompt_non_empty
@@ -31,6 +33,9 @@ def require_role(*roles: str):
 
 
 def login() -> dict[str, Any]:
+    if has_app_context():
+        raise RuntimeError("Legacy CLI auth session cannot run inside the Flask application runtime")
+
     # Local import avoids circular dependency with auth.models
     from .models import authenticate_user
 

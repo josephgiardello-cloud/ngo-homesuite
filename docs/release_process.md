@@ -1,6 +1,6 @@
 # Release and Versioning Process
 
-Last updated: 2026-06-03
+Last updated: 2026-06-04
 
 This project uses a lightweight release process to keep rapid changes safe and traceable.
 
@@ -24,6 +24,7 @@ This project uses a lightweight release process to keep rapid changes safe and t
 - Run full tests: `python -m pytest --maxfail=10 -q`
 - Run tenant isolation release lane: `python -m pytest ngo_homesuite/web/test_cross_tenant_boundaries.py ngo_homesuite/web/test_rbac_tenant_route_audit.py ngo_homesuite/api/test_v1_runtime.py ngo_homesuite/ai/test_copilot_routes.py ngo_homesuite/ai/test_copilot_tools.py ngo_homesuite/ai/test_semantic_memory.py -v --maxfail=10`
 - Run observability release lane: `python -m pytest ngo_homesuite/api/test_observability_api.py ngo_homesuite/api/test_observability_request_logs.py -v --maxfail=10`
+- Run mobile/public validation lane: `python -m pytest ngo_homesuite/web/test_mobile_intake_routes.py ngo_homesuite/web/test_public_smoke_paths.py ngo_homesuite/web/test_public_stripe_checkout_routes.py -v --maxfail=10`
 - Run workflow reliability failure-injection lane: `python -m pytest ngo_homesuite/tests/test_workflow_reliability_failure_injection.py ngo_homesuite/persistence/test_workflow_repository_concurrency.py ngo_homesuite/tests/test_donation_fund_concurrency.py -v --maxfail=10`
 - Verify migrations preflight: `python -m ngo_homesuite.db.migrate --dry-run --verify-backup`
 - Run non-SQLite deploy migration upgrade when applicable: `python -m ngo_homesuite.db.deploy_migrate upgrade`
@@ -51,6 +52,7 @@ P2P operational procedure reference: `docs/p2p_operations_runbook.md`
 - Push tag: `git push origin vX.Y.Z`
 - Confirm `.github/workflows/release.yml` completed: tests, OpenAPI validation/client generation, Docker scan, release artifact upload
 - Confirm strict release evidence validation passed in release lane: `python tools/verify_release_evidence_bundle.py --strict`
+- If strict validation fails only on external pentest evidence, keep release in non-production-candidate status until external sign-off is attached.
 
 ## Hotfix Policy
 
