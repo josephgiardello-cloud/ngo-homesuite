@@ -121,6 +121,8 @@ docker compose --profile postgres up --build
 
 ## Documentation
 
+- Canonical current state (human): [docs/current_state.md](docs/current_state.md)
+- Canonical current state (machine): [artifacts/current_state.json](artifacts/current_state.json)
 - Full feature list: [docs/full_feature_list.md](docs/full_feature_list.md)
 - Feature maturity: [docs/feature_status.md](docs/feature_status.md)
 - Production checklist: [docs/production_checklist.md](docs/production_checklist.md)
@@ -134,6 +136,8 @@ docker compose --profile postgres up --build
 
 This repository is actively maintained. For exact maturity by module and current release blockers, use:
 
+- [docs/current_state.md](docs/current_state.md)
+- [artifacts/current_state.json](artifacts/current_state.json)
 - [docs/feature_status.md](docs/feature_status.md)
 - [docs/production_checklist.md](docs/production_checklist.md)
 

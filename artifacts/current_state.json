@@ -1,0 +1,67 @@
+{
+  "last_updated": "2026-06-04",
+  "commit": "0eccd6f",
+  "canonical": true,
+  "authoritative_for_current_state": true,
+  "release_gate": {
+    "non_strict_evidence_validation": "pass",
+    "strict_evidence_validation": "fail",
+    "strict_blockers": [
+      {
+        "id": "external_pentest_signoff",
+        "status": "pending",
+        "required": true,
+        "path": "artifacts/release/external-pentest-signoff.md",
+        "reason": "External formal pentest/sign-off artifact not attached yet"
+      }
+    ]
+  },
+  "improvements_completed": [
+    "Legacy Flask-runtime audit writes bridge to canonical security audit events",
+    "AI negative tests cover cross-tenant payload rejection and audit bridge verification",
+    "Release evidence lanes refreshed for security, tenant, observability, mobile/public, backup/restore, and key rotation",
+    "Primary status docs and runbooks synchronized to current state"
+  ],
+  "evidence_lane_results": {
+    "security": {
+      "status": "pass",
+      "passed": 68,
+      "artifact": "artifacts/release/security-lane-output.txt"
+    },
+    "tenant": {
+      "status": "pass",
+      "passed": 24,
+      "artifact": "artifacts/release/tenant-lane-output.txt"
+    },
+    "observability": {
+      "status": "pass",
+      "passed": 25,
+      "artifact": "artifacts/release/observability-lane-output.txt"
+    },
+    "mobile_public": {
+      "status": "pass",
+      "passed": 22,
+      "artifact": "artifacts/release/mobile-public-validation-output.txt"
+    },
+    "backup_restore": {
+      "status": "pass",
+      "passed": 2,
+      "artifact": "artifacts/release/backup-restore-drill-output.txt"
+    },
+    "key_rotation": {
+      "status": "pass",
+      "passed": 3,
+      "artifact": "artifacts/release/key-rotation-drill-output.txt"
+    }
+  },
+  "references": {
+    "human_status": "docs/current_state.md",
+    "release_bundle": "artifacts/release-evidence-bundle.json",
+    "feature_status": "docs/feature_status.md",
+    "production_checklist": "docs/production_checklist.md"
+  },
+  "notes": [
+    "Historical reports are retained for context and are not canonical current-state sources.",
+    "Use this file plus docs/current_state.md for crawler ingestion."
+  ]
+}
