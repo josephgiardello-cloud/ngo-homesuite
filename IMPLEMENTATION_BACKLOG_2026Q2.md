@@ -489,5 +489,5 @@ Each milestone has a rollback branch (e.g., `rollback/milestone-A`) tagged at th
 ---
 
 **Owner:** [Your team]  
-**Last Updated:** 2026-05-18  
-**Status:** Active; partially completed with documentation reconciliation in progress
+**Last Updated:** 2026-06-04  
+**Status:** Active; release documentation synchronized and evidence refreshed, with external pentest sign-off still pending for strict production gate

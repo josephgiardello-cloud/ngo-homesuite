@@ -1,6 +1,6 @@
 # Performance and Scalability Benchmarking
 
-Last updated: 2026-05-16
+Last updated: 2026-06-04
 
 This document defines the baseline benchmark lane for key public endpoints.
 
@@ -34,6 +34,7 @@ The CI `scalability-benchmark` job:
 - runs the benchmark
 - checks regression against `tools/benchmark_baseline.json`
 - uploads benchmark and regression-summary JSON artifacts
+- release evidence can be attached via `artifacts/scalability-benchmark-local.json` and indexed in `artifacts/release-evidence-bundle.json`
 
 To tune guard strictness, adjust `--max-p95-drift-pct` in workflow config.
 

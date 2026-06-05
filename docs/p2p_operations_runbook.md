@@ -1,6 +1,6 @@
 # P2P Operations Runbook
 
-Last updated: 2026-05-16
+Last updated: 2026-06-04
 
 This runbook covers day-to-day operation and guardrails for staff-managed P2P pages.
 
@@ -37,8 +37,12 @@ Service-level validation now enforces:
 Run these before release:
 
 ```bash
-pytest ngo_homesuite/web/test_sprint1_features.py ngo_homesuite/tests/test_gap_analysis_services.py::TestP2PFundraising -v --maxfail=10
+python -m pytest ngo_homesuite/web/test_campaign_routes.py ngo_homesuite/web/test_public_smoke_paths.py ngo_homesuite/web/test_mobile_intake_routes.py -v --maxfail=10
 ```
+
+Current evidence:
+
+- Public/mobile route validation output is tracked in `artifacts/release/mobile-public-validation-output.txt`.
 
 ## Incident Response
 

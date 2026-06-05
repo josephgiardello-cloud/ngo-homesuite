@@ -1,6 +1,6 @@
 # Full Feature List
 
-Last updated: 2026-06-03
+Last updated: 2026-06-04
 
 This is the current product feature inventory for NGO HomeSuite.
 
@@ -98,3 +98,7 @@ This is the current product feature inventory for NGO HomeSuite.
 - Backup/restore drill playbook and key-rotation drill guidance
 - DAST smoke artifact support and scalability benchmark artifact support
 - CI policy tests for dependency drift, release hygiene, and route protection
+
+Current release-gate note:
+
+- Strict release-evidence validation is blocked only by pending external pentest sign-off (`external_pentest_signoff`).
