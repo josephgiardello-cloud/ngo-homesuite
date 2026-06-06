@@ -20,6 +20,9 @@ from ngo_homesuite.models.core import (
     ProgramCase,
     Project,
     RecurringDonationPlan,
+    StewardshipEnrollment,
+    StewardshipJourney,
+    StewardshipStep,
     Task,
     TaskDependency,
     User,
@@ -1933,6 +1936,85 @@ def test_v2_donor_journey_automation_run_and_audit_contract(client, app):
     assert isinstance(filtered_payload, list)
     assert filtered_payload
     assert all(item.get("trigger_name") == "recurring_failure_recovery" for item in filtered_payload)
+
+
+def test_v2_donor_journey_graph_and_execution_contract(client, app):
+    _login_admin(client)
+
+    with app.app_context():
+        admin_user = User.query.filter_by(username="admin").first()
+        assert admin_user is not None
+        org_id = int(admin_user.organization_id)
+        nonce = int(datetime.now(timezone.utc).timestamp() * 1000000)
+
+        donor = Donor(
+            organization_id=org_id,
+            name=f"Journey Graph Donor {nonce}",
+            email=f"journey-graph-{nonce}@example.org",
+            donor_type="individual",
+            status="active",
+        )
+        db.session.add(donor)
+        db.session.flush()
+
+        journey = StewardshipJourney(
+            organization_id=org_id,
+            name=f"Journey Graph {nonce}",
+            trigger="new_donor",
+            is_active=True,
+        )
+        db.session.add(journey)
+        db.session.flush()
+
+        step_one = StewardshipStep(
+            journey_id=int(journey.id),
+            step_order=0,
+            step_type="email",
+            delay_days=0,
+            subject="Welcome {name}",
+            body="Thanks for joining us, {name}.",
+        )
+        step_two = StewardshipStep(
+            journey_id=int(journey.id),
+            step_order=1,
+            step_type="wait",
+            delay_days=7,
+            body="Wait before next touchpoint.",
+        )
+        db.session.add_all([step_one, step_two])
+        db.session.flush()
+
+        enrollment = StewardshipEnrollment(
+            organization_id=org_id,
+            donor_id=int(donor.id),
+            journey_id=int(journey.id),
+            current_step=1,
+            status="active",
+            next_step_due=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=7),
+        )
+        db.session.add(enrollment)
+        db.session.commit()
+
+        journey_id = int(journey.id)
+
+    graph_rv = client.get(f"/api/v2/donor-journeys/{journey_id}/graph")
+    assert graph_rv.status_code == 200
+    graph_payload = graph_rv.get_json() or {}
+    assert int(((graph_payload.get("journey") or {}).get("id") or 0)) == journey_id
+    assert int(((graph_payload.get("summary") or {}).get("node_count") or 0)) == 2
+    assert len(graph_payload.get("edges") or []) == 1
+
+    executions_rv = client.get(f"/api/v2/donor-journeys/{journey_id}/executions?limit=10")
+    assert executions_rv.status_code == 200
+    executions_payload = executions_rv.get_json() or {}
+    assert int((executions_payload.get("journey") or {}).get("id") or 0) == journey_id
+    assert int(executions_payload.get("count") or 0) >= 1
+    execution = (executions_payload.get("executions") or [])[0]
+    assert execution.get("status") == "active"
+    steps = execution.get("steps") or []
+    assert len(steps) == 2
+    assert any(step.get("state") == "completed" for step in steps)
+    assert any(step.get("state") in {"current", "pending"} for step in steps)
 
 
 def test_v2_integrated_form_ecosystem_ingest_dedupe_and_tenant_isolation_contract(client, app):

@@ -2488,6 +2488,35 @@ def list_donor_journey_automation_events_route():
     return jsonify(payload), 200
 
 
+@v2_bp.route("/donor-journeys/<int:journey_id>/graph", methods=["GET"])
+@login_required
+@roles_required("admin", "staff")
+def donor_journey_graph_route(journey_id: int):
+    from ngo_homesuite.services.stewardship_service import get_stewardship_journey_graph
+
+    payload = get_stewardship_journey_graph(_org_id(), int(journey_id))
+    if payload is None:
+        return jsonify({"error": "Journey not found"}), 404
+    return jsonify(payload), 200
+
+
+@v2_bp.route("/donor-journeys/<int:journey_id>/executions", methods=["GET"])
+@login_required
+@roles_required("admin", "staff")
+def donor_journey_executions_route(journey_id: int):
+    from ngo_homesuite.services.stewardship_service import list_stewardship_journey_executions
+
+    limit = request.args.get("limit", default=50, type=int)
+    payload = list_stewardship_journey_executions(
+        _org_id(),
+        int(journey_id),
+        limit=max(1, min(int(limit or 50), 200)),
+    )
+    if payload is None:
+        return jsonify({"error": "Journey not found"}), 404
+    return jsonify(payload), 200
+
+
 @v2_bp.route("/forms/submissions/public", methods=["POST"])
 def ingest_form_submission_public():
     from ngo_homesuite.services.form_ecosystem_service import FormEcosystemService

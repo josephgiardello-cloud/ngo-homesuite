@@ -27,6 +27,8 @@ DELETE /api/v2/tasks/{task_id}/dependencies/{depends_on_task_id}
 GET /api/v2/membership/members
 POST /api/v2/donor-journeys/automations/run
 GET /api/v2/donor-journeys/automations/events
+GET /api/v2/donor-journeys/{journey_id}/graph
+GET /api/v2/donor-journeys/{journey_id}/executions
 POST /api/v2/forms/submissions/public
 GET /api/v2/intelligence/dashboard
 GET /api/v2/intelligence/financial-guardrails

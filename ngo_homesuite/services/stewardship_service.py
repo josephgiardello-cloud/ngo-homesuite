@@ -761,3 +761,129 @@ def list_donor_journey_automation_events(
     ]
 
 
+def get_stewardship_journey_graph(organization_id: int, journey_id: int) -> dict[str, Any] | None:
+    journey = db.session.scalars(
+        select(StewardshipJourney).where(
+            StewardshipJourney.id == int(journey_id),
+            StewardshipJourney.organization_id == int(organization_id),
+        ).limit(1)
+    ).first()
+    if journey is None:
+        return None
+
+    steps = list(journey.steps or [])
+    nodes = [
+        {
+            "id": int(step.id),
+            "journey_id": int(journey.id),
+            "step_order": int(step.step_order or 0),
+            "step_type": str(step.step_type or "wait"),
+            "delay_days": int(step.delay_days or 0),
+            "template_name": str(step.template_name or "") or None,
+            "subject": str(step.subject or "") or None,
+            "body": str(step.body or "") or None,
+        }
+        for step in steps
+    ]
+    edges = []
+    for index, step in enumerate(steps[:-1]):
+        next_step = steps[index + 1]
+        edges.append(
+            {
+                "from_step_id": int(step.id),
+                "to_step_id": int(next_step.id),
+                "transition": "next",
+                "delay_days": int(next_step.delay_days or 0),
+            }
+        )
+
+    return {
+        "journey": {
+            "id": int(journey.id),
+            "organization_id": int(journey.organization_id),
+            "name": str(journey.name or ""),
+            "trigger": str(journey.trigger or ""),
+            "is_active": bool(journey.is_active),
+        },
+        "nodes": nodes,
+        "edges": edges,
+        "summary": {
+            "node_count": len(nodes),
+            "edge_count": len(edges),
+        },
+    }
+
+
+def list_stewardship_journey_executions(
+    organization_id: int,
+    journey_id: int,
+    *,
+    limit: int = 50,
+) -> dict[str, Any] | None:
+    journey = db.session.scalars(
+        select(StewardshipJourney).where(
+            StewardshipJourney.id == int(journey_id),
+            StewardshipJourney.organization_id == int(organization_id),
+        ).limit(1)
+    ).first()
+    if journey is None:
+        return None
+
+    safe_limit = max(1, min(int(limit), 200))
+    steps = list(journey.steps or [])
+    enrollments = db.session.scalars(
+        select(StewardshipEnrollment).where(
+            StewardshipEnrollment.organization_id == int(organization_id),
+            StewardshipEnrollment.journey_id == int(journey_id),
+        ).order_by(StewardshipEnrollment.enrolled_at.desc()).limit(safe_limit)
+    ).all()
+
+    items = []
+    for enrollment in enrollments:
+        current_step_index = int(enrollment.current_step or 0)
+        step_states = []
+        for index, step in enumerate(steps):
+            if str(enrollment.status or "") == "completed":
+                state = "completed"
+            elif index < current_step_index:
+                state = "completed"
+            elif index == current_step_index and str(enrollment.status or "") == "active":
+                state = "current"
+            else:
+                state = "pending"
+            step_states.append(
+                {
+                    "step_id": int(step.id),
+                    "step_order": int(step.step_order or 0),
+                    "step_type": str(step.step_type or "wait"),
+                    "state": state,
+                    "delay_days": int(step.delay_days or 0),
+                }
+            )
+
+        items.append(
+            {
+                "enrollment_id": int(enrollment.id),
+                "donor_id": int(enrollment.donor_id),
+                "donor_name": str(getattr(enrollment.donor, "name", "") or ""),
+                "status": str(enrollment.status or "active"),
+                "current_step": current_step_index,
+                "enrolled_at": enrollment.enrolled_at.isoformat() if enrollment.enrolled_at else None,
+                "next_step_due": enrollment.next_step_due.isoformat() if enrollment.next_step_due else None,
+                "completed_at": enrollment.completed_at.isoformat() if enrollment.completed_at else None,
+                "steps": step_states,
+            }
+        )
+
+    return {
+        "journey": {
+            "id": int(journey.id),
+            "organization_id": int(journey.organization_id),
+            "name": str(journey.name or ""),
+            "trigger": str(journey.trigger or ""),
+        },
+        "count": len(items),
+        "executions": items,
+    }
+
+

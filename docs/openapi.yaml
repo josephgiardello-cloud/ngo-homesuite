@@ -964,6 +964,67 @@ paths:
                 type: object
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /api/v2/donor-journeys/{journey_id}/graph:
+    get:
+      operationId: getDonorJourneyGraph
+      summary: Return workflow graph nodes and edges for a stewardship journey
+      tags: [Stewardship]
+      parameters:
+        - in: path
+          name: journey_id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Journey graph payload
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Journey not found
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v2/donor-journeys/{journey_id}/executions:
+    get:
+      operationId: getDonorJourneyExecutions
+      summary: Return enrollment execution state for a stewardship journey
+      tags: [Stewardship]
+      parameters:
+        - in: path
+          name: journey_id
+          required: true
+          schema:
+            type: integer
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Journey execution payload
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Journey not found
+          content:
+            application/json:
+              schema:
+                type: object
   /reports/compliance/evidence:
     get:
       operationId: getComplianceEvidence
