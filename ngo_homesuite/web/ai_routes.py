@@ -5,6 +5,7 @@ import json
 import time
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict
 
 from flask import Blueprint, Response, current_app, jsonify, request, session, stream_with_context
@@ -18,6 +19,7 @@ from ngo_homesuite.ai.pii_redact import redact_pii
 from ngo_homesuite.db.audit_log import log_event
 from ngo_homesuite.models.core import db, AIConversation, AIMessage
 from ngo_homesuite.prompts import NGO_APEX_POLICY_SYSTEM_PROMPT
+from ngo_homesuite.services.ai_insights_service import AIInsightsService
 from ngo_homesuite.web.rbac import roles_required
 
 
@@ -652,6 +654,7 @@ def minion_chat() -> Response:
             "tool_allowlist": tool_allowlist,
             "allow_web_tools": bool(current_app.config.get("MINION_ALLOW_WEB_TOOLS", False)),
             "tool_timeout_sec": float(current_app.config.get("MINION_TOOL_TIMEOUT_SEC", 8.0)),
+            "project_root": str(Path(current_app.root_path).parent),
         },
         allow_actions=allow_actions,
         use_web=use_web,
@@ -709,4 +712,27 @@ def minion_reindex() -> Response:
         current_app.logger.warning("Could not append audit event for reindex: %s", exc)
 
     return jsonify({"ok": True, "chunks_indexed": total_chunks})
+
+
+@ai_bp.route("/insights/query", methods=["POST"])
+@login_required
+@roles_required("admin", "staff", "viewer")
+def insights_query() -> Response:
+    payload: Dict[str, Any] = request.get_json(silent=True) or {}
+    query = str(payload.get("query", "")).strip()
+    if not query:
+        return jsonify({"error": "query is required"}), 400
+
+    org_id = getattr(current_user, "organization_id", None)
+    if org_id is None:
+        return jsonify({"error": "organization_id is required for insights"}), 400
+
+    limit = max(1, min(int(payload.get("limit", 10) or 10), 25))
+    report = AIInsightsService.natural_language_report(
+        int(org_id),
+        query,
+        limit=limit,
+        project_root=str(Path(current_app.root_path).parent),
+    )
+    return jsonify(report)
 

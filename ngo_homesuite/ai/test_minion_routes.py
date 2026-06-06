@@ -231,6 +231,32 @@ def test_minion_chat_rejects_approval_without_valid_token(client, app, monkeypat
     assert runtime_ctx["approved_actions"] == []
 
 
+def test_ai_insights_query_endpoint_returns_report(client, app, monkeypatch):
+    _ensure_user(app, "insights_staff", "insights_staff@test.local", "staff", "insights_staff_pass_123")
+    _login(client, "insights_staff", "insights_staff_pass_123")
+
+    monkeypatch.setattr(
+        "ngo_homesuite.web.ai_routes.AIInsightsService.natural_language_report",
+        lambda org_id, query, limit=10, project_root=None: {
+            "query": query,
+            "sections": [
+                {
+                    "title": "Predictive donor churn and lifetime value",
+                    "summary": "demo",
+                    "items": [{"donor_id": 1, "churn_risk": 0.72}],
+                }
+            ],
+        },
+    )
+
+    rv = client.post("/ai/insights/query", json={"query": "show donor churn", "limit": 5})
+    assert rv.status_code == 200
+    payload = rv.get_json()
+    assert payload["query"] == "show donor churn"
+    assert isinstance(payload["sections"], list)
+    assert payload["sections"][0]["title"] == "Predictive donor churn and lifetime value"
+
+
 def test_minion_chat_logs_approval_token_issue_verify_and_replay_reject(client, app, monkeypatch):
     _ensure_user(app, "minion_admin_token3", "minion_admin_token3@test.local", "admin", "admin_token3_pass_123")
     _login(client, "minion_admin_token3", "admin_token3_pass_123")

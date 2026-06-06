@@ -8,6 +8,7 @@ from typing import Any, Callable
 from sqlalchemy import bindparam, func, inspect, text
 
 from ngo_homesuite.models.core import Donation, Donor, Expense, Organization, db
+from ngo_homesuite.services.ai_insights_service import AIInsightsService
 from ngo_homesuite.services.bank_reconciliation_service import BankReconciliationService
 from ngo_homesuite.services.opinionated_workflows import run_donation_receipt_followup_workflow
 from ngo_homesuite.services.reporting_service import ReportingService
@@ -312,6 +313,114 @@ class MinionToolRegistry:
                     },
                 },
                 handler=self._summarize_program_impact,
+            ),
+            "natural_language_report": MinionTool(
+                name="natural_language_report",
+                description="Run natural-language analytics over donors, grants, compliance, queues, and operations.",
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 10},
+                    },
+                    "required": ["query"],
+                },
+                handler=self._natural_language_report,
+            ),
+            "predict_donor_churn_ltv": MinionTool(
+                name="predict_donor_churn_ltv",
+                description="Rank donors by predicted churn risk and lifetime value estimate.",
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10},
+                    },
+                },
+                handler=self._predict_donor_churn_ltv,
+            ),
+            "match_grant_opportunities": MinionTool(
+                name="match_grant_opportunities",
+                description="Rank grant opportunities by organizational readiness and fit.",
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 5},
+                    },
+                },
+                handler=self._match_grant_opportunities,
+            ),
+            "synthesize_compliance_evidence": MinionTool(
+                name="synthesize_compliance_evidence",
+                description="Synthesize narrative compliance evidence from audit and approval events.",
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 10},
+                    },
+                },
+                handler=self._synthesize_compliance_evidence,
+            ),
+            "match_volunteer_shifts": MinionTool(
+                name="match_volunteer_shifts",
+                description="Recommend volunteer-shift matches and estimate no-show risk.",
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 10},
+                    },
+                },
+                handler=self._match_volunteer_shifts,
+            ),
+            "analyze_sentiment_intent": MinionTool(
+                name="analyze_sentiment_intent",
+                description="Extract sentiment and intent from donor notes, task notes, and collaboration messages.",
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 10},
+                    },
+                },
+                handler=self._analyze_sentiment_intent,
+            ),
+            "generate_campaign_content": MinionTool(
+                name="generate_campaign_content",
+                description="Generate campaign copy suggestions and dynamic CTA recommendations.",
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5},
+                    },
+                },
+                handler=self._generate_campaign_content,
+            ),
+            "prioritize_operational_queues": MinionTool(
+                name="prioritize_operational_queues",
+                description="Prioritize pending tasks, failed campaign deliveries, and recurring plan failures.",
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 10},
+                    },
+                },
+                handler=self._prioritize_operational_queues,
+            ),
+            "detect_financial_anomalies": MinionTool(
+                name="detect_financial_anomalies",
+                description="Detect unusual donation and expense patterns with anomaly scores.",
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 10},
+                    },
+                },
+                handler=self._detect_financial_anomalies,
+            ),
+            "predict_release_risk": MinionTool(
+                name="predict_release_risk",
+                description="Estimate release readiness risk from repo evidence and coverage artifacts.",
+                schema={"type": "object", "properties": {}},
+                handler=self._predict_release_risk,
             ),
         }
 
@@ -1239,4 +1348,85 @@ class MinionToolRegistry:
             return impact_report(org_id, case_type=case_type)
         except Exception as exc:  # noqa: BLE001
             return {"error": str(exc)}
+
+    def _natural_language_report(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
+        org_id = self._org_filter(runtime_ctx)
+        if org_id is None:
+            return {"error": "organization_id is required in runtime context"}
+        query = str(args.get("query", "") or "").strip()
+        if not query:
+            return {"error": "query is required"}
+        limit = max(1, min(int(args.get("limit", 10) or 10), 25))
+        project_root = runtime_ctx.get("project_root")
+        return AIInsightsService.natural_language_report(org_id, query, limit=limit, project_root=project_root)
+
+    def _predict_donor_churn_ltv(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
+        org_id = self._org_filter(runtime_ctx)
+        if org_id is None:
+            return {"error": "organization_id is required in runtime context"}
+        limit = max(1, min(int(args.get("limit", 10) or 10), 50))
+        section = AIInsightsService.predict_donor_retention(org_id, limit=limit)
+        return {"title": section.title, "summary": section.summary, "items": section.items}
+
+    def _match_grant_opportunities(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
+        org_id = self._org_filter(runtime_ctx)
+        if org_id is None:
+            return {"error": "organization_id is required in runtime context"}
+        limit = max(1, min(int(args.get("limit", 5) or 5), 25))
+        section = AIInsightsService.match_grant_opportunities(org_id, limit=limit)
+        return {"title": section.title, "summary": section.summary, "items": section.items}
+
+    def _synthesize_compliance_evidence(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
+        org_id = self._org_filter(runtime_ctx)
+        if org_id is None:
+            return {"error": "organization_id is required in runtime context"}
+        limit = max(1, min(int(args.get("limit", 10) or 10), 25))
+        section = AIInsightsService.synthesize_compliance_evidence(org_id, limit=limit)
+        return {"title": section.title, "summary": section.summary, "items": section.items}
+
+    def _match_volunteer_shifts(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
+        org_id = self._org_filter(runtime_ctx)
+        if org_id is None:
+            return {"error": "organization_id is required in runtime context"}
+        limit = max(1, min(int(args.get("limit", 10) or 10), 25))
+        section = AIInsightsService.match_volunteer_shifts(org_id, limit=limit)
+        return {"title": section.title, "summary": section.summary, "items": section.items}
+
+    def _analyze_sentiment_intent(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
+        org_id = self._org_filter(runtime_ctx)
+        if org_id is None:
+            return {"error": "organization_id is required in runtime context"}
+        limit = max(1, min(int(args.get("limit", 10) or 10), 25))
+        section = AIInsightsService.analyze_sentiment_and_intent(org_id, limit=limit)
+        return {"title": section.title, "summary": section.summary, "items": section.items}
+
+    def _generate_campaign_content(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
+        org_id = self._org_filter(runtime_ctx)
+        if org_id is None:
+            return {"error": "organization_id is required in runtime context"}
+        limit = max(1, min(int(args.get("limit", 5) or 5), 10))
+        query = str(args.get("query", "") or "").strip()
+        section = AIInsightsService.generate_campaign_content(org_id, query=query, limit=limit)
+        return {"title": section.title, "summary": section.summary, "items": section.items}
+
+    def _prioritize_operational_queues(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
+        org_id = self._org_filter(runtime_ctx)
+        if org_id is None:
+            return {"error": "organization_id is required in runtime context"}
+        limit = max(1, min(int(args.get("limit", 10) or 10), 25))
+        section = AIInsightsService.prioritize_queues(org_id, limit=limit)
+        return {"title": section.title, "summary": section.summary, "items": section.items}
+
+    def _detect_financial_anomalies(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
+        org_id = self._org_filter(runtime_ctx)
+        if org_id is None:
+            return {"error": "organization_id is required in runtime context"}
+        limit = max(1, min(int(args.get("limit", 10) or 10), 25))
+        section = AIInsightsService.detect_financial_anomalies(org_id, limit=limit)
+        return {"title": section.title, "summary": section.summary, "items": section.items}
+
+    def _predict_release_risk(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
+        project_root = runtime_ctx.get("project_root")
+        section = AIInsightsService.predict_release_readiness(project_root=project_root)
+        return {"title": section.title, "summary": section.summary, "items": section.items}
 

@@ -122,6 +122,30 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+  /ai/insights/query:
+    post:
+      operationId: postAiInsightsQuery
+      summary: Generate AI insights report from natural-language query
+      tags: [AI]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AIInsightsQueryRequest'
+      responses:
+        '200':
+          description: Insights report payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIInsightsQueryResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /api/workflows/donation/{donationId}/run:
     post:
       operationId: postRunDonationWorkflow
@@ -737,6 +761,35 @@ components:
           type: object
           additionalProperties: true
       required: [schema, sha256]
+    AIInsightsQueryRequest:
+      type: object
+      properties:
+        query:
+          type: string
+          description: Natural-language analytics query.
+          minLength: 1
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 25
+          description: Optional maximum items per insight section.
+      required: [query]
+    AIInsightsQueryResponse:
+      type: object
+      properties:
+        query:
+          type: string
+        generated_at:
+          type: string
+        sections:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        summary:
+          type: object
+          additionalProperties: true
+      additionalProperties: true
     MinionActionApprovalItem:
       type: object
       properties:

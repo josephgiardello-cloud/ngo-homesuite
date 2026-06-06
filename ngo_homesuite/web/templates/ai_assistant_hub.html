@@ -29,5 +29,89 @@
             </div>
         </div>
     </div>
+
+    <hr class="my-4" />
+
+    <div class="border rounded p-3">
+        <h2 class="h5 mb-2">Insights Query Console</h2>
+        <p class="small text-muted mb-3">Run a natural-language analytics query and get a structured response from the AI insights service.</p>
+
+        <form id="insights-query-form" class="row g-2">
+            <div class="col-12 col-lg-8">
+                <label for="insights-query" class="form-label">Query</label>
+                <input
+                    id="insights-query"
+                    name="query"
+                    class="form-control"
+                    type="text"
+                    placeholder="Example: show donor churn risk and top grant matches"
+                    required
+                />
+            </div>
+            <div class="col-12 col-lg-2">
+                <label for="insights-limit" class="form-label">Limit</label>
+                <input id="insights-limit" name="limit" class="form-control" type="number" min="1" max="25" value="10" />
+            </div>
+            <div class="col-12 col-lg-2 d-flex align-items-end">
+                <button id="insights-submit" type="submit" class="btn btn-primary w-100">Run Query</button>
+            </div>
+        </form>
+
+        <div id="insights-status" class="small text-muted mt-3" aria-live="polite"></div>
+        <pre id="insights-output" class="mt-2 p-3 bg-dark text-light rounded small" style="min-height: 140px; white-space: pre-wrap;">No query executed yet.</pre>
+    </div>
 </section>
+
+<script>
+(() => {
+    const form = document.getElementById("insights-query-form");
+    const queryInput = document.getElementById("insights-query");
+    const limitInput = document.getElementById("insights-limit");
+    const statusEl = document.getElementById("insights-status");
+    const outputEl = document.getElementById("insights-output");
+    const submitBtn = document.getElementById("insights-submit");
+
+    if (!form || !queryInput || !limitInput || !statusEl || !outputEl || !submitBtn) {
+        return;
+    }
+
+    form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+
+        const query = String(queryInput.value || "").trim();
+        const limit = Number(limitInput.value || 10);
+        if (!query) {
+            statusEl.textContent = "Enter a query to continue.";
+            return;
+        }
+
+        submitBtn.disabled = true;
+        statusEl.textContent = "Running insights query...";
+
+        try {
+            const response = await fetch("/ai/insights/query", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ query, limit }),
+            });
+
+            const payload = await response.json();
+            if (!response.ok) {
+                throw new Error(payload.error || `Request failed with status ${response.status}`);
+            }
+
+            outputEl.textContent = JSON.stringify(payload, null, 2);
+            statusEl.textContent = "Insights query completed.";
+        } catch (error) {
+            const message = (error && error.message) ? error.message : "Unexpected error";
+            statusEl.textContent = `Insights query failed: ${message}`;
+            outputEl.textContent = JSON.stringify({ error: message }, null, 2);
+        } finally {
+            submitBtn.disabled = false;
+        }
+    });
+})();
+</script>
 {% endblock %}
