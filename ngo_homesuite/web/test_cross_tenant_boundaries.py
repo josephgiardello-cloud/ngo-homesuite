@@ -15,7 +15,10 @@ from ngo_homesuite.models.core import (
     MembershipRecord,
     MembershipTier,
     Organization,
+    Project,
     ProgramCase,
+    Task,
+    TaskDependency,
     User,
     db,
 )
@@ -250,6 +253,99 @@ def test_program_beneficiary_cross_tenant_isolation(client, app):
     assert list_rv.status_code == 200
     ids = [b["id"] for b in list_rv.get_json()]
     assert ben_b_id not in ids
+    _logout(client)
+
+
+def test_v2_project_milestone_cross_tenant_create_denied(client, app):
+    """Org A staff cannot create milestones on Org B project board."""
+    org_a = _make_org(app, "CT V2 PM Org A", "ct-v2-pm-org-a")
+    org_b = _make_org(app, "CT V2 PM Org B", "ct-v2-pm-org-b")
+    _make_user(app, "ct_v2_pm_a_staff", "ct_v2_pm_a@test.local", "staff", "CTPass123!", org_a)
+    _make_user(app, "ct_v2_pm_b_staff", "ct_v2_pm_b@test.local", "staff", "CTPass123!", org_b)
+
+    with app.app_context():
+        project_b = Project(
+            organization_id=org_b,
+            name="Org B Private Project",
+            status="active",
+            budget=1000.0,
+            spent=100.0,
+            currency="USD",
+        )
+        db.session.add(project_b)
+        db.session.commit()
+        project_b_id = int(project_b.id)
+
+    _login(client, "ct_v2_pm_a_staff", "CTPass123!")
+    rv = client.post(
+        f"/api/v2/projects/{project_b_id}/milestones",
+        json={"title": "Should fail", "status": "planned"},
+    )
+    assert rv.status_code == 404
+    _logout(client)
+
+
+def test_v2_task_dependency_cross_tenant_mutations_denied(client, app):
+    """Org A staff cannot create/delete dependency edges on Org B tasks."""
+    org_a = _make_org(app, "CT V2 TD Org A", "ct-v2-td-org-a")
+    org_b = _make_org(app, "CT V2 TD Org B", "ct-v2-td-org-b")
+    _make_user(app, "ct_v2_td_a_staff", "ct_v2_td_a@test.local", "staff", "CTPass123!", org_a)
+    _make_user(app, "ct_v2_td_b_staff", "ct_v2_td_b@test.local", "staff", "CTPass123!", org_b)
+
+    with app.app_context():
+        project_b = Project(
+            organization_id=org_b,
+            name="Org B Dependency Project",
+            status="active",
+            budget=0.0,
+            spent=0.0,
+            currency="USD",
+        )
+        db.session.add(project_b)
+        db.session.flush()
+
+        prereq_b = Task(
+            organization_id=org_b,
+            project_id=int(project_b.id),
+            title="Org B prereq",
+            status="open",
+            priority="medium",
+            task_type="general",
+        )
+        dependent_b = Task(
+            organization_id=org_b,
+            project_id=int(project_b.id),
+            title="Org B dependent",
+            status="open",
+            priority="medium",
+            task_type="general",
+        )
+        db.session.add_all([prereq_b, dependent_b])
+        db.session.flush()
+
+        dep_edge = TaskDependency(
+            organization_id=org_b,
+            task_id=int(dependent_b.id),
+            depends_on_task_id=int(prereq_b.id),
+            dependency_type="blocks",
+        )
+        db.session.add(dep_edge)
+        db.session.commit()
+
+        prereq_b_id = int(prereq_b.id)
+        dependent_b_id = int(dependent_b.id)
+
+    _login(client, "ct_v2_td_a_staff", "CTPass123!")
+
+    create_rv = client.post(
+        f"/api/v2/tasks/{dependent_b_id}/dependencies",
+        json={"depends_on_task_id": prereq_b_id, "dependency_type": "blocks"},
+    )
+    assert create_rv.status_code == 404
+
+    delete_rv = client.delete(f"/api/v2/tasks/{dependent_b_id}/dependencies/{prereq_b_id}")
+    assert delete_rv.status_code == 404
+
     _logout(client)
 
 
