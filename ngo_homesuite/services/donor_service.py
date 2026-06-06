@@ -21,6 +21,13 @@ class DonorNotFound(Exception):
 
 
 class DonorService:
+    def _commit_or_rollback(self) -> None:
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            raise
+
     # ------------------------------------------------------------------
     # Read
     # ------------------------------------------------------------------
@@ -179,7 +186,7 @@ class DonorService:
             notes=notes,
         )
         db.session.add(donor)
-        db.session.commit()
+        self._commit_or_rollback()
         return donor
 
     def find_or_create_by_email(
@@ -290,7 +297,7 @@ class DonorService:
             if key in {"salutation", "preferred_name", "address", "city", "country", "postal_code", "employer", "source"} and value is not None:
                 value = str(value).strip() or None
             setattr(donor, key, value)
-        db.session.commit()
+        self._commit_or_rollback()
         return donor
 
     def delete_donor(self, donor_id: int, org_id: int, actor_id: Optional[int] = None) -> None:
@@ -306,7 +313,7 @@ class DonorService:
                 f"Cannot delete donor {donor_id} with existing donations. Edit donor instead."
             )
         db.session.delete(donor)
-        db.session.commit()
+        self._commit_or_rollback()
 
     def merge_donors(self, org_id: int, primary_id: int, duplicate_id: int) -> tuple[Donor, Donor]:
         if primary_id == duplicate_id:
@@ -336,5 +343,5 @@ class DonorService:
             primary.notes = ((primary.notes or "").strip() + "\n" + f"[Merged from donor #{duplicate.id}] {duplicate.notes}").strip()
 
         db.session.delete(duplicate)
-        db.session.commit()
+        self._commit_or_rollback()
         return primary, duplicate

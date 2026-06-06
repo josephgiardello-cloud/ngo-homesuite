@@ -5,7 +5,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from sqlalchemy import func, inspect, text
+from sqlalchemy import bindparam, func, inspect, text
 
 from ngo_homesuite.models.core import Donation, Donor, Expense, Organization, db
 from ngo_homesuite.services.bank_reconciliation_service import BankReconciliationService
@@ -27,6 +27,7 @@ class MinionToolRegistry:
     def __init__(self) -> None:
         self.reporting_service = ReportingService()
         self.bank_reconciliation_service = BankReconciliationService()
+        self._relationship_schema_cache: dict[str, bool] | None = None
         self._tools = {
             "list_recent_donations": MinionTool(
                 name="list_recent_donations",
@@ -314,39 +315,59 @@ class MinionToolRegistry:
             ),
         }
 
-    def _optional_donor_relationship_counts(self, donor_id: int, org_id: int) -> dict[str, int]:
+    def _relationship_schema(self) -> dict[str, bool]:
+        if self._relationship_schema_cache is not None:
+            return self._relationship_schema_cache
+
         inspector = inspect(db.engine)
         table_names = set(inspector.get_table_names())
-        metrics = {"interactions": 0, "pledges": 0, "events": 0}
+        schema: dict[str, bool] = {}
+        for table_name in ("interactions", "pledges", "registrations"):
+            if table_name not in table_names:
+                continue
+            columns = {str(col.get("name")) for col in inspector.get_columns(table_name)}
+            schema[table_name] = "organization_id" in columns
 
-        static_queries = {
-            "interactions": "SELECT COUNT(*) FROM interactions WHERE donor_id = :donor_id",
-            "pledges": "SELECT COUNT(*) FROM pledges WHERE donor_id = :donor_id",
-            "registrations": "SELECT COUNT(*) FROM registrations WHERE donor_id = :donor_id",
+        self._relationship_schema_cache = schema
+        return schema
+
+    def _bulk_donor_relationship_counts(self, donor_ids: list[int], org_id: int) -> dict[int, dict[str, int]]:
+        unique_ids = [donor_id for donor_id in dict.fromkeys(int(d) for d in donor_ids) if donor_id > 0]
+        counts = {donor_id: {"interactions": 0, "pledges": 0, "events": 0} for donor_id in unique_ids}
+        if not unique_ids:
+            return {}
+
+        schema = self._relationship_schema()
+        table_to_metric = {
+            "interactions": "interactions",
+            "pledges": "pledges",
+            "registrations": "events",
         }
 
-        def _query_count(table_name: str) -> int:
-            query = static_queries.get(table_name)
-            if not query:
-                return 0
-            params: dict[str, Any] = {"donor_id": donor_id}
-            columns = {str(col.get("name")) for col in inspector.get_columns(table_name)}
-            if "organization_id" in columns:
+        for table_name, metric_name in table_to_metric.items():
+            if table_name not in schema:
+                continue
+
+            query = f"SELECT donor_id, COUNT(*) AS count FROM {table_name} WHERE donor_id IN :donor_ids"
+            params: dict[str, Any] = {"donor_ids": unique_ids}
+            if schema[table_name]:
                 query += " AND organization_id = :org_id"
                 params["org_id"] = org_id
-            row = db.session.execute(text(query), params).scalar()
-            return int(row or 0)
+            query += " GROUP BY donor_id"
 
-        if "interactions" in table_names:
-            metrics["interactions"] = _query_count("interactions")
+            stmt = text(query).bindparams(bindparam("donor_ids", expanding=True))
+            for donor_id, count in db.session.execute(stmt, params):
+                donor_key = int(donor_id)
+                if donor_key in counts:
+                    counts[donor_key][metric_name] = int(count or 0)
 
-        if "pledges" in table_names:
-            metrics["pledges"] = _query_count("pledges")
+        return counts
 
-        if "registrations" in table_names:
-            metrics["events"] = _query_count("registrations")
-
-        return metrics
+    def _optional_donor_relationship_counts(self, donor_id: int, org_id: int) -> dict[str, int]:
+        return self._bulk_donor_relationship_counts([int(donor_id)], org_id).get(
+            int(donor_id),
+            {"interactions": 0, "pledges": 0, "events": 0},
+        )
 
     def _compute_rfm_signals(self, donor: Donor, org_id: int) -> dict[str, Any]:
         now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -805,11 +826,12 @@ class MinionToolRegistry:
 
         limit = max(1, min(int(args.get("limit", 10) or 10), 25))
         donors = Donor.query.filter_by(organization_id=org_id).order_by(Donor.created_at.asc()).all()
+        related_counts = self._bulk_donor_relationship_counts([donor.id for donor in donors], org_id)
 
         ranked: list[dict[str, Any]] = []
         for donor in donors:
             metrics = self._compute_rfm_signals(donor, org_id)
-            related = self._optional_donor_relationship_counts(donor.id, org_id)
+            related = related_counts.get(donor.id, {"interactions": 0, "pledges": 0, "events": 0})
             score = round(
                 (0.5 * metrics["predictions"]["giving_likelihood"]) +
                 (0.3 * metrics["predictions"]["major_gift_potential"]) +
@@ -1160,11 +1182,12 @@ class MinionToolRegistry:
             from ngo_homesuite.services.engagement_scoring_service import high_priority_lapsed
 
             records = high_priority_lapsed(org_id, limit=limit)
+            related_counts = self._bulk_donor_relationship_counts([int(rec.donor_id) for rec in records], org_id)
             result = []
             for rec in records:
                 donor = Donor.query.filter_by(id=rec.donor_id, organization_id=org_id).first()
                 rfm = self._compute_rfm_signals(donor, org_id) if donor else {}
-                related = self._optional_donor_relationship_counts(rec.donor_id, org_id)
+                related = related_counts.get(int(rec.donor_id), {"interactions": 0, "pledges": 0, "events": 0})
                 actions = self._recommended_actions(rfm, related) if rfm else []
                 result.append(
                     {

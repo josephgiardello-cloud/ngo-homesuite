@@ -36,6 +36,7 @@ dependencies = [
   "APScheduler==3.11.2",
   "Pydantic==2.13.4",
   "PyYAML==6.0.3",
+  "defusedxml==0.7.1",
   "SQLAlchemy==2.0.36",
   "alembic==1.14.0",
   "greenlet==3.5.1",

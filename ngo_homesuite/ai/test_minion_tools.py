@@ -139,8 +139,8 @@ def test_optional_relationship_counts_adds_org_filter_when_column_exists(registr
     captured: list[tuple[str, dict[str, int]]] = []
 
     class _ScalarResult:
-        def scalar(self):
-            return 1
+        def __iter__(self):
+            return iter([(11, 1)])
 
     def _fake_execute(statement, params):
         captured.append((str(statement), dict(params)))
@@ -154,7 +154,9 @@ def test_optional_relationship_counts_adds_org_filter_when_column_exists(registr
     assert metrics == {"interactions": 1, "pledges": 1, "events": 1}
     assert len(captured) == 3
     assert all("organization_id = :org_id" in sql for sql, _ in captured)
+    assert all("donor_id IN" in sql for sql, _ in captured)
     assert all(params.get("org_id") == 42 for _, params in captured)
+    assert all(params.get("donor_ids") == [11] for _, params in captured)
 
 
 def test_generate_report_requires_organization_context(registry):
