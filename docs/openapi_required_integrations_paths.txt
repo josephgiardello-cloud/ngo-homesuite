@@ -1,0 +1,3 @@
+POST /integrations/calendar/caldav/sync
+POST /integrations/contacts/carddav/sync
+GET /integrations/dav/capabilities

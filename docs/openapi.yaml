@@ -9,6 +9,76 @@ info:
 servers:
   - url: /
 paths:
+  /integrations/calendar/caldav/sync:
+    post:
+      operationId: postIntegrationsCaldavSync
+      summary: Synchronize open task deadlines to CalDAV provider
+      tags: [Integrations]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dry_run:
+                  type: boolean
+      responses:
+        '200':
+          description: CalDAV sync result payload
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          description: CalDAV sync failed
+  /integrations/contacts/carddav/sync:
+    post:
+      operationId: postIntegrationsCarddavSync
+      summary: Synchronize donor contacts to CardDAV provider
+      tags: [Integrations]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dry_run:
+                  type: boolean
+      responses:
+        '200':
+          description: CardDAV sync result payload
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          description: CardDAV sync failed
+  /integrations/dav/capabilities:
+    get:
+      operationId: getIntegrationsDavCapabilities
+      summary: Report DAV integration capabilities and provider state
+      tags: [Integrations]
+      responses:
+        '200':
+          description: DAV capability and provider-state payload
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /api/docs:
     get:
       operationId: getApiDocsIndex

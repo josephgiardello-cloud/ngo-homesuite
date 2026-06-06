@@ -5,6 +5,52 @@ from pathlib import Path
 import yaml
 
 
+def _assert_required_paths_manifest(spec: dict, required_file: str) -> None:
+    declared_paths = spec.get("paths") or {}
+
+    required_path = Path(required_file)
+    assert required_path.exists(), f"Missing required paths file: {required_file}"
+    required_entries = [
+        line.strip()
+        for line in required_path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    assert required_entries, f"{required_file} must contain at least one required path"
+
+    valid_methods = {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"}
+    missing_paths: list[str] = []
+    missing_methods: list[str] = []
+
+    for entry in required_entries:
+        method = None
+        path = entry
+
+        parts = entry.split(maxsplit=1)
+        if len(parts) == 2 and parts[0].upper() in valid_methods:
+            method = parts[0].upper()
+            path = parts[1].strip()
+
+        assert path.startswith("/"), f"Invalid required path entry: {entry}"
+
+        operations = declared_paths.get(path)
+        if operations is None:
+            missing_paths.append(path)
+            continue
+
+        if method is not None:
+            if not isinstance(operations, dict) or method.lower() not in {
+                str(op).lower() for op in operations.keys()
+            }:
+                missing_methods.append(f"{method} {path}")
+
+    assert not missing_paths, (
+        f"Required OpenAPI paths missing from docs/openapi.yaml ({required_file}): {missing_paths}"
+    )
+    assert not missing_methods, (
+        f"Required OpenAPI methods missing from docs/openapi.yaml ({required_file}): {missing_methods}"
+    )
+
+
 def test_openapi_spec_has_unique_operation_ids_and_responses() -> None:
     spec_path = Path("docs/openapi.yaml")
     assert spec_path.exists(), "OpenAPI spec file is missing: docs/openapi.yaml"
@@ -42,50 +88,12 @@ def test_openapi_spec_has_unique_operation_ids_and_responses() -> None:
 
 def test_openapi_required_v2_paths_are_declared() -> None:
     spec = yaml.safe_load(Path("docs/openapi.yaml").read_text(encoding="utf-8"))
-    declared_paths = spec.get("paths") or {}
+    _assert_required_paths_manifest(spec, "docs/openapi_required_v2_paths.txt")
 
-    required_file = Path("docs/openapi_required_v2_paths.txt")
-    assert required_file.exists(), "Missing required v2 paths file: docs/openapi_required_v2_paths.txt"
-    required_entries = [
-        line.strip()
-        for line in required_file.read_text(encoding="utf-8").splitlines()
-        if line.strip() and not line.strip().startswith("#")
-    ]
-    assert required_entries, "docs/openapi_required_v2_paths.txt must contain at least one required path"
 
-    valid_methods = {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"}
-    missing_paths: list[str] = []
-    missing_methods: list[str] = []
-
-    for entry in required_entries:
-        method = None
-        path = entry
-
-        parts = entry.split(maxsplit=1)
-        if len(parts) == 2 and parts[0].upper() in valid_methods:
-            method = parts[0].upper()
-            path = parts[1].strip()
-
-        assert path.startswith("/"), f"Invalid required path entry: {entry}"
-
-        operations = declared_paths.get(path)
-        if operations is None:
-            missing_paths.append(path)
-            continue
-
-        if method is not None:
-            if not isinstance(operations, dict) or method.lower() not in {
-                str(op).lower() for op in operations.keys()
-            }:
-                missing_methods.append(f"{method} {path}")
-
-    assert not missing_paths, (
-        f"Required OpenAPI paths missing from docs/openapi.yaml: {missing_paths}"
-    )
-    assert not missing_methods, (
-        "Required OpenAPI methods missing from docs/openapi.yaml: "
-        f"{missing_methods}"
-    )
+def test_openapi_required_integrations_paths_are_declared() -> None:
+    spec = yaml.safe_load(Path("docs/openapi.yaml").read_text(encoding="utf-8"))
+    _assert_required_paths_manifest(spec, "docs/openapi_required_integrations_paths.txt")
 
 
 def test_openapi_route_drift_checker_script_exists() -> None:
