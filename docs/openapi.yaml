@@ -222,6 +222,48 @@ paths:
                 type: object
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /api/v2/campaigns/email/preferences/donors/{donorId}/lifecycle:
+    post:
+      operationId: postCampaignPreferenceLifecycleForDonor
+      summary: Apply communication lifecycle transitions for a donor (pause/resume/opt-in/opt-out)
+      tags: [Campaigns]
+      parameters:
+        - in: path
+          name: donorId
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                action:
+                  type: string
+                  enum: [pause, resume, opt_out_all, opt_in_all]
+                digest_frequency:
+                  type: string
+                  enum: [immediate, daily, weekly, monthly]
+                source:
+                  type: string
+              required: [action]
+      responses:
+        '200':
+          description: Donor communication lifecycle transition applied
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          description: Invalid lifecycle transition request
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /reports/compliance/evidence:
     get:
       operationId: getComplianceEvidence

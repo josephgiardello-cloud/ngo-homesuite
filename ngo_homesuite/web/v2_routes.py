@@ -3847,6 +3847,40 @@ def campaign_email_preferences_donor_patch_route(donor_id: int):
     return jsonify(payload), 200
 
 
+@v2_bp.post("/campaigns/email/preferences/donors/<int:donor_id>/lifecycle")
+@login_required
+@roles_required("admin", "staff")
+def campaign_email_preferences_donor_lifecycle_route(donor_id: int):
+    from ngo_homesuite.services.campaign_email_service import apply_campaign_communication_preference_lifecycle_action
+
+    donor = db.session.get(Donor, int(donor_id))
+    if donor is None or int(donor.organization_id) != _org_id():
+        return jsonify({"error": "Donor not found"}), 404
+    if not donor.email:
+        return jsonify({"error": "Donor does not have an email address"}), 400
+
+    data = request.get_json(silent=True) or {}
+    action = str(data.get("action") or "").strip().lower()
+    digest_frequency = str(data.get("digest_frequency") or "").strip().lower() or None
+    source = str(data.get("source") or "staff_console").strip() or "staff_console"
+    try:
+        payload = apply_campaign_communication_preference_lifecycle_action(
+            _org_id(),
+            email=str(donor.email),
+            donor_id=int(donor.id),
+            action=action,
+            digest_frequency=digest_frequency,
+            source=source,
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    _record_campaign_preference_audit(organization_id=_org_id(), email=str(donor.email), payload=payload)
+    payload["donor"] = {"id": int(donor.id), "name": str(donor.name or "")}
+    payload["lifecycle_action"] = action
+    return jsonify(payload), 200
+
+
 @v2_bp.get("/campaigns/email/preferences/donors/<int:donor_id>/history")
 @login_required
 @roles_required("admin", "staff")

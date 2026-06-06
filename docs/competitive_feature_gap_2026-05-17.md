@@ -24,7 +24,7 @@ Status legend:
 | OAuth login (user auth) | Exists | `ngo_homesuite/web/auth_routes.py` | OAuth provider status, authorize redirects, callbacks, identity normalization, account linking, and auto-provisioning are implemented for end-user sign-in. |
 | CardDAV/CalDAV sync | Missing | `ngo_homesuite/web/integrations_routes.py` | Calendar sync endpoint exists, but not CardDAV/CalDAV protocol support. |
 | Contact status workflows | Exists | `ngo_homesuite/services/stewardship_service.py`, `ngo_homesuite/models/core.py`, `ngo_homesuite/web/v2_routes.py` | Donor-journey triggers, cooldown/idempotency controls, and automation audit events are live; richer visual workflow tooling is still a polish opportunity. |
-| Newsletter subscription management | Partial | `ngo_homesuite/utils/mailchimp_service.py` | External unsubscribe helper exists; no first-class internal subscription center/preferences model. |
+| Newsletter subscription management | Exists | `ngo_homesuite/services/campaign_email_service.py`, `ngo_homesuite/web/v2_routes.py` | First-class internal preference center supports signed public updates, donor-specific staff updates, consent-history retrieval, and lifecycle transitions (pause/resume/opt-in-all/opt-out-all). |
 | Photo uploads | Exists | `ngo_homesuite/web/v2_routes.py`, `ngo_homesuite/web/main_routes.py` | Donor/campaign photo upload and media serving endpoints are implemented. |
 | Custom fields | Exists | `ngo_homesuite/web/admin_routes.py`, `ngo_homesuite/web/templates/settings.html` | Admin custom-field schema management (donor/campaign) and UI editing flow are implemented. |
 

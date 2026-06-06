@@ -38,7 +38,8 @@ from ngo_homesuite.utils.email import email_connectivity_smoke
 
 logger = logging.getLogger(__name__)
 _EMAIL_ADDRESS_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-_VALID_DIGEST_FREQUENCIES = {"immediate", "daily", "weekly", "monthly"}
+_VALID_DIGEST_FREQUENCIES = {"immediate", "daily", "weekly", "monthly", "paused"}
+_VALID_LIFECYCLE_ACTIONS = {"pause", "resume", "opt_out_all", "opt_in_all"}
 
 
 def _preference_topics_payload(*, newsletter_opt_in: bool, campaign_opt_in: bool, events_opt_in: bool, volunteer_opt_in: bool) -> dict[str, bool]:
@@ -48,6 +49,13 @@ def _preference_topics_payload(*, newsletter_opt_in: bool, campaign_opt_in: bool
         "events": bool(events_opt_in),
         "volunteer": bool(volunteer_opt_in),
     }
+
+
+def _consent_status(*, topics: dict[str, bool], digest_frequency: str) -> str:
+    normalized_digest = str(digest_frequency or "").strip().lower()
+    if normalized_digest == "paused":
+        return "paused"
+    return "opted_in" if any(bool(v) for v in topics.values()) else "opted_out"
 
 
 def _utcnow() -> datetime:
@@ -370,7 +378,7 @@ def get_campaign_communication_preference(
             "digest_frequency": "weekly",
             "cadence": "weekly",
             "topics": topics,
-            "consent_status": "opted_in",
+            "consent_status": _consent_status(topics=topics, digest_frequency="weekly"),
             "source": "default",
             "updated_at": None,
         }
@@ -393,7 +401,7 @@ def get_campaign_communication_preference(
         "digest_frequency": str(preference.digest_frequency or "weekly"),
         "cadence": str(preference.digest_frequency or "weekly"),
         "topics": topics,
-        "consent_status": ("opted_in" if any(topics.values()) else "opted_out"),
+        "consent_status": _consent_status(topics=topics, digest_frequency=str(preference.digest_frequency or "weekly")),
         "source": str(preference.source or "preference_center"),
         "updated_at": preference.updated_at.isoformat() if preference.updated_at else None,
     }
@@ -461,6 +469,92 @@ def upsert_campaign_communication_preference(
         int(organization_id),
         email=normalized_email,
         donor_id=donor_id,
+    )
+
+
+def apply_campaign_communication_preference_lifecycle_action(
+    organization_id: int,
+    *,
+    email: str,
+    donor_id: int | None = None,
+    action: str,
+    digest_frequency: str | None = None,
+    source: str | None = None,
+) -> dict[str, Any]:
+    normalized_email = _normalized_email(email)
+    if not _looks_like_email(normalized_email):
+        raise ValueError("valid email is required")
+
+    normalized_action = str(action or "").strip().lower()
+    if normalized_action not in _VALID_LIFECYCLE_ACTIONS:
+        raise ValueError("action must be one of: pause, resume, opt_out_all, opt_in_all")
+
+    current = get_campaign_communication_preference(
+        int(organization_id),
+        email=normalized_email,
+        donor_id=donor_id,
+    )
+    current_digest = str(current.get("digest_frequency") or "weekly").strip().lower() or "weekly"
+    normalized_source = str(source or "staff_console").strip()[:40] or "staff_console"
+
+    if normalized_action == "pause":
+        previous_digest = current_digest if current_digest in _VALID_DIGEST_FREQUENCIES and current_digest != "paused" else "weekly"
+        return upsert_campaign_communication_preference(
+            int(organization_id),
+            email=normalized_email,
+            donor_id=donor_id,
+            digest_frequency="paused",
+            source=f"lifecycle_pause:{previous_digest}"[:40],
+        )
+
+    if normalized_action == "resume":
+        requested_digest = str(digest_frequency or "").strip().lower()
+        if requested_digest and requested_digest not in _VALID_DIGEST_FREQUENCIES:
+            raise ValueError("digest_frequency must be one of immediate, daily, weekly, monthly, paused")
+        if requested_digest == "paused":
+            raise ValueError("digest_frequency cannot be paused when action is resume")
+
+        restored_digest = requested_digest
+        if not restored_digest:
+            source_hint = str(current.get("source") or "")
+            if source_hint.startswith("lifecycle_pause:"):
+                restored_digest = source_hint.split(":", 1)[1].strip().lower()
+            if restored_digest not in {"immediate", "daily", "weekly", "monthly"}:
+                restored_digest = "weekly"
+
+        return upsert_campaign_communication_preference(
+            int(organization_id),
+            email=normalized_email,
+            donor_id=donor_id,
+            digest_frequency=restored_digest,
+            source=f"lifecycle_resume:{normalized_source}"[:40],
+        )
+
+    if normalized_action == "opt_out_all":
+        return upsert_campaign_communication_preference(
+            int(organization_id),
+            email=normalized_email,
+            donor_id=donor_id,
+            newsletter_opt_in=False,
+            campaign_opt_in=False,
+            events_opt_in=False,
+            volunteer_opt_in=False,
+            source=f"lifecycle_opt_out:{normalized_source}"[:40],
+        )
+
+    requested_digest = str(digest_frequency or "").strip().lower() or "weekly"
+    if requested_digest not in {"immediate", "daily", "weekly", "monthly"}:
+        raise ValueError("digest_frequency must be one of immediate, daily, weekly, monthly")
+    return upsert_campaign_communication_preference(
+        int(organization_id),
+        email=normalized_email,
+        donor_id=donor_id,
+        newsletter_opt_in=True,
+        campaign_opt_in=True,
+        events_opt_in=True,
+        volunteer_opt_in=True,
+        digest_frequency=requested_digest,
+        source=f"lifecycle_opt_in:{normalized_source}"[:40],
     )
 
 

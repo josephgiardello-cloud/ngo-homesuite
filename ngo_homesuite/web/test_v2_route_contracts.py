@@ -956,6 +956,78 @@ def test_v2_campaign_preference_history_contract(client, app, monkeypatch):
     assert int(history_payload.get("count") or 0) >= 1
 
 
+def test_v2_campaign_preference_lifecycle_contract(client, app):
+    _login_admin(client)
+
+    with app.app_context():
+        admin_user = db.session.scalar(select(User).where(User.username == "admin").limit(1))
+        assert admin_user is not None
+        org_id = int(admin_user.organization_id)
+
+        donor = Donor(
+            organization_id=org_id,
+            name="Lifecycle Preference Donor",
+            email="lifecycle-preferences@example.org",
+            donor_type="individual",
+            status="active",
+        )
+        db.session.add(donor)
+        db.session.commit()
+        donor_id = int(donor.id)
+
+    pause = client.post(
+        f"/api/v2/campaigns/email/preferences/donors/{donor_id}/lifecycle",
+        json={"action": "pause"},
+    )
+    assert pause.status_code == 200
+    pause_payload = pause.get_json() or {}
+    assert pause_payload.get("lifecycle_action") == "pause"
+    assert pause_payload.get("consent_status") == "paused"
+    assert pause_payload.get("digest_frequency") == "paused"
+
+    resume = client.post(
+        f"/api/v2/campaigns/email/preferences/donors/{donor_id}/lifecycle",
+        json={"action": "resume", "digest_frequency": "daily"},
+    )
+    assert resume.status_code == 200
+    resume_payload = resume.get_json() or {}
+    assert resume_payload.get("lifecycle_action") == "resume"
+    assert resume_payload.get("digest_frequency") == "daily"
+    assert resume_payload.get("consent_status") == "opted_in"
+
+    opt_out = client.post(
+        f"/api/v2/campaigns/email/preferences/donors/{donor_id}/lifecycle",
+        json={"action": "opt_out_all"},
+    )
+    assert opt_out.status_code == 200
+    opt_out_payload = opt_out.get_json() or {}
+    assert opt_out_payload.get("consent_status") == "opted_out"
+    topics = opt_out_payload.get("topics") or {}
+    assert topics.get("newsletter") is False
+    assert topics.get("campaigns") is False
+    assert topics.get("events") is False
+    assert topics.get("volunteer") is False
+
+    opt_in = client.post(
+        f"/api/v2/campaigns/email/preferences/donors/{donor_id}/lifecycle",
+        json={"action": "opt_in_all", "digest_frequency": "weekly"},
+    )
+    assert opt_in.status_code == 200
+    opt_in_payload = opt_in.get_json() or {}
+    assert opt_in_payload.get("consent_status") == "opted_in"
+    topics_after = opt_in_payload.get("topics") or {}
+    assert topics_after.get("newsletter") is True
+    assert topics_after.get("campaigns") is True
+    assert topics_after.get("events") is True
+    assert topics_after.get("volunteer") is True
+
+    invalid_action = client.post(
+        f"/api/v2/campaigns/email/preferences/donors/{donor_id}/lifecycle",
+        json={"action": "freeze"},
+    )
+    assert invalid_action.status_code == 400
+
+
 def test_v2_collaboration_message_endpoints_block_cross_tenant_access(client, app):
     with app.app_context():
         org_a = Organization.query.filter_by(slug="collab-route-org-a").first()
