@@ -82,6 +82,8 @@ def test_donor_profile_summary(app):
         assert summary["last_gift_date"] == "2026-02-01"
         assert summary["active_recurring_plans"] == 1
         assert len(summary["recent_donations"]) == 2
+        assert summary["donor_signal"]["donor_id"] == donor.id
+        assert summary["donor_signal"]["signal_version"] == "v1"
 
 
 def test_dashboard_summary_uses_cache_within_ttl(app, monkeypatch):

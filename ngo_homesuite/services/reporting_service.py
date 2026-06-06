@@ -22,6 +22,7 @@ from ngo_homesuite.models.core import (
     Task,
     db,
 )
+from ngo_homesuite.services.donor_signal_service import get_donor_signal
 
 
 class ReportingService:
@@ -1518,6 +1519,7 @@ class ReportingService:
             ).all(),
         )
         dates: list[datetime] = [d.donation_date for d in recent_donations if d.donation_date is not None]
+        donor_signal = get_donor_signal(int(organization_id), donor=donor)
         return {
             "donor": donor,
             "donation_count": donation_count,
@@ -1527,6 +1529,7 @@ class ReportingService:
             "first_gift_date": min(dates).date().isoformat() if dates else None,
             "last_gift_date": max(dates).date().isoformat() if dates else None,
             "active_recurring_plans": sum(1 for plan in recurring_plans if plan.status == "active"),
+            "donor_signal": donor_signal,
         }
 
     def financial_overview(self, organization_id: int) -> dict[str, Any]:

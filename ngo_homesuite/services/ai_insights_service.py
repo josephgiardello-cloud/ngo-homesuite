@@ -22,10 +22,8 @@ from ngo_homesuite.models.core import (
     Donor,
     DonorEngagementScore,
     Expense,
-    GrantApprovalDecision,
     GrantApprovalRequest,
     GrantOutcomeRecord,
-    MembershipRecord,
     ProgramCase,
     RecurringDonationPlan,
     Task,
@@ -35,6 +33,7 @@ from ngo_homesuite.models.core import (
     VolunteerTraining,
     db,
 )
+from ngo_homesuite.services.donor_signal_service import get_donor_signal, list_donor_signals
 
 
 _POSITIVE_WORDS = {
@@ -131,144 +130,18 @@ class AIInsightsService:
 
     @staticmethod
     def predict_donor_retention(org_id: int, *, limit: int = 10) -> NaturalLanguageSection:
-        scores = list(
-            db.session.scalars(
-                select(DonorEngagementScore)
-                .where(DonorEngagementScore.organization_id == org_id)
-                .order_by(DonorEngagementScore.score.asc())
-                .limit(limit)
-            )
-        )
-        if not scores:
-            donors = list(
-                db.session.scalars(
-                    select(Donor)
-                    .where(Donor.organization_id == org_id)
-                    .order_by(Donor.created_at.desc())
-                    .limit(limit)
-                )
-            )
-            items = []
-            for donor in donors:
-                computed = AIInsightsService._donor_ltv_snapshot(org_id, donor)
-                items.append(computed)
-            return NaturalLanguageSection(
-                title="Predictive donor churn and lifetime value",
-                summary="Computed from recent donations, engagement signals, membership, tasks, and soft credits.",
-                items=items,
-            )
-
-        items: list[dict[str, Any]] = []
-        for score in scores:
-            donor = db.session.get(Donor, score.donor_id)
-            if donor is None:
-                continue
-            snapshot = AIInsightsService._donor_ltv_snapshot(org_id, donor)
-            snapshot.update(
-                {
-                    "engagement_score": round(float(score.score or 0.0), 2),
-                    "segment": score.segment,
-                    "cultivation_priority": score.cultivation_priority,
-                    "explanation": score.explanation,
-                }
-            )
-            items.append(snapshot)
+        items = list_donor_signals(org_id, limit=limit, ascending_engagement=True)
 
         items.sort(key=lambda row: (row.get("churn_risk", 0.0), row.get("lifetime_value_estimate", 0.0)), reverse=True)
         return NaturalLanguageSection(
             title="Predictive donor churn and lifetime value",
-            summary="Donors ranked by churn risk and estimated lifetime value so staff can intervene early.",
+            summary="Canonical donor signal combining recency, value, engagement, and lifecycle indicators.",
             items=items[:limit],
         )
 
     @staticmethod
     def _donor_ltv_snapshot(org_id: int, donor: Donor) -> dict[str, Any]:
-        donations = list(
-            db.session.scalars(
-                select(Donation)
-                .where(Donation.organization_id == org_id, Donation.donor_id == donor.id)
-                .order_by(Donation.donation_date.asc())
-            )
-        )
-        today = datetime.now(timezone.utc).date()
-        last_gift = donations[-1].donation_date.date() if donations and donations[-1].donation_date else None
-        recency_days = (today - last_gift).days if last_gift else 9999
-        last_12m_cutoff = datetime.combine(today - timedelta(days=365), datetime.min.time())
-        donations_12m = [d for d in donations if d.donation_date and d.donation_date >= last_12m_cutoff]
-        lifetime_total = sum(float(d.amount or 0.0) for d in donations)
-        avg_gift = lifetime_total / len(donations) if donations else 0.0
-        annualized_value = sum(float(d.amount or 0.0) for d in donations_12m)
-        membership = db.session.scalars(
-            select(MembershipRecord).where(
-                MembershipRecord.organization_id == org_id,
-                MembershipRecord.donor_id == donor.id,
-                MembershipRecord.status == "active",
-            ).limit(1)
-        ).first()
-        open_tasks = db.session.scalar(
-            select(func.count(Task.id)).where(
-                Task.organization_id == org_id,
-                Task.donor_id == donor.id,
-                Task.status.in_(["open", "in_progress"]),
-            )
-        ) or 0
-        completed_tasks = db.session.scalar(
-            select(func.count(Task.id)).where(
-                Task.organization_id == org_id,
-                Task.donor_id == donor.id,
-                Task.status == "done",
-            )
-        ) or 0
-        soft_credit_total = db.session.scalar(
-            select(func.coalesce(func.sum(GrantOutcomeRecord.current_value), 0.0)).where(
-                GrantOutcomeRecord.organization_id == org_id,
-                GrantOutcomeRecord.program_case_id.isnot(None),
-            )
-        ) or 0.0
-        journey_events = db.session.scalar(
-            select(func.count()).select_from(GrantApprovalDecision).where(GrantApprovalDecision.organization_id == org_id)
-        ) or 0
-
-        engagement_boost = 0.0
-        if membership is not None:
-            engagement_boost += 0.20
-        engagement_boost += min(open_tasks * 0.04, 0.16)
-        engagement_boost += min(completed_tasks * 0.02, 0.10)
-
-        churn_risk = min(1.0, round((recency_days / 365.0) * 0.45 + max(0.0, 0.45 - engagement_boost), 4))
-        lifetime_value_estimate = max(
-            lifetime_total * (1.0 + (1.0 - churn_risk)),
-            annualized_value * 2.0,
-            avg_gift * max(1.0, 1.0 + (12.0 - min(recency_days / 30.0, 12.0)) / 12.0),
-        )
-        priority = "high" if churn_risk >= 0.65 else "medium" if churn_risk >= 0.35 else "low"
-
-        return {
-            "donor_id": donor.id,
-            "donor_name": donor.name,
-            "email": donor.email,
-            "last_gift_at": last_gift.isoformat() if last_gift else None,
-            "recency_days": recency_days,
-            "gifts_12m": len(donations_12m),
-            "lifetime_total": round(lifetime_total, 2),
-            "annualized_value": round(annualized_value, 2),
-            "avg_gift": round(avg_gift, 2),
-            "membership_active": bool(membership),
-            "open_tasks": int(open_tasks),
-            "completed_tasks": int(completed_tasks),
-            "soft_credit_total": round(float(soft_credit_total), 2),
-            "journey_events": int(journey_events),
-            "churn_risk": round(churn_risk, 4),
-            "lifetime_value_estimate": round(float(lifetime_value_estimate), 2),
-            "next_action": (
-                "Schedule stewardship outreach"
-                if priority == "high"
-                else "Send impact update"
-                if priority == "medium"
-                else "Keep warm with periodic stewardship"
-            ),
-            "priority": priority,
-        }
+        return get_donor_signal(org_id, donor=donor)
 
     @staticmethod
     def match_grant_opportunities(org_id: int, *, limit: int = 5) -> NaturalLanguageSection:

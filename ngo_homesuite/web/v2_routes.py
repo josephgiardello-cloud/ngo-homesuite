@@ -1814,6 +1814,17 @@ def _p2p_dict(p) -> dict:
 @login_required
 def get_engagement_score(donor_id: int):
     from ngo_homesuite.services.engagement_scoring_service import compute_score, get_score
+    from ngo_homesuite.services.donor_signal_service import get_donor_signal
+
+    donor = db.session.scalars(
+        select(Donor).where(
+            Donor.organization_id == _org_id(),
+            Donor.id == int(donor_id),
+        ).limit(1)
+    ).first()
+    if donor is None:
+        raise NotFound("donor not found")
+
     rec = get_score(_org_id(), donor_id) or compute_score(_org_id(), donor_id)
     return jsonify({
         "donor_id": rec.donor_id,
@@ -1821,6 +1832,7 @@ def get_engagement_score(donor_id: int):
         "segment": rec.segment,
         "cultivation_priority": rec.cultivation_priority,
         "explanation": rec.explanation,
+        "donor_signal": get_donor_signal(_org_id(), donor=donor),
         "breakdown": {
             "recency": float(rec.recency_score),
             "frequency": float(rec.frequency_score),
@@ -1842,17 +1854,28 @@ def batch_recompute_scores():
 @login_required
 def at_risk_donors():
     from ngo_homesuite.services.engagement_scoring_service import high_priority_lapsed
+    from ngo_homesuite.services.donor_signal_service import get_donor_signal
+
     limit = request.args.get("limit", 20, type=int)
     records = high_priority_lapsed(_org_id(), limit=limit)
-    return jsonify([
-        {
-            "donor_id": r.donor_id,
-            "score": float(r.score),
-            "segment": r.segment,
-            "priority": r.cultivation_priority,
-        }
-        for r in records
-    ])
+    payload: list[dict[str, Any]] = []
+    for r in records:
+        donor = db.session.scalars(
+            select(Donor).where(
+                Donor.organization_id == _org_id(),
+                Donor.id == int(r.donor_id),
+            ).limit(1)
+        ).first()
+        payload.append(
+            {
+                "donor_id": r.donor_id,
+                "score": float(r.score),
+                "segment": r.segment,
+                "priority": r.cultivation_priority,
+                "donor_signal": get_donor_signal(_org_id(), donor=donor) if donor is not None else None,
+            }
+        )
+    return jsonify(payload)
 
 
 # ------------------------------------------------------------------ #

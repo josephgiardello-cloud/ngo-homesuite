@@ -1298,6 +1298,63 @@ def test_v2_donor_journey_and_soft_credit_contract(client, app):
     assert any(item.get("activity_type") == "soft_credit" for item in journey_payload["timeline"])
 
 
+def test_v2_engagement_score_includes_canonical_donor_signal(client, app):
+    _login_admin(client)
+
+    with app.app_context():
+        admin_user = User.query.filter_by(username="admin").first()
+        assert admin_user is not None
+        org_id = int(admin_user.organization_id)
+
+        nonce = int(datetime.now(timezone.utc).timestamp() * 1000000)
+        donor = Donor(
+            organization_id=org_id,
+            name=f"Engagement Contract Donor {nonce}",
+            email=f"engagement-contract-{nonce}@example.org",
+            donor_type="individual",
+            status="active",
+        )
+        db.session.add(donor)
+        db.session.flush()
+
+        db.session.add(
+            Donation(
+                organization_id=org_id,
+                donor_id=int(donor.id),
+                donor_name=str(donor.name),
+                donor_email=donor.email,
+                amount=180.0,
+                currency="USD",
+                status="received",
+                donation_date=datetime.now(timezone.utc).replace(tzinfo=None),
+                reference_number=f"ENGAGEMENT-CONTRACT-{nonce}",
+            )
+        )
+        db.session.commit()
+
+        donor_id = int(donor.id)
+
+    response = client.get(f"/api/v2/donors/{donor_id}/engagement-score")
+    assert response.status_code == 200
+    payload = response.get_json() or {}
+    assert int(payload.get("donor_id") or 0) == donor_id
+    assert isinstance(payload.get("breakdown"), dict)
+    assert isinstance(payload.get("donor_signal"), dict)
+    assert int(payload["donor_signal"].get("donor_id") or 0) == donor_id
+    assert payload["donor_signal"].get("signal_version") == "v1"
+    required = {"donor_id", "donor_name", "churn_risk", "lifetime_value_estimate", "priority", "signal_version"}
+    assert required.issubset(set(payload["donor_signal"].keys()))
+
+    at_risk = client.get("/api/v2/engagement-scores/at-risk?limit=50")
+    assert at_risk.status_code == 200
+    at_risk_payload = at_risk.get_json()
+    assert isinstance(at_risk_payload, list)
+    if at_risk_payload:
+        assert "donor_signal" in at_risk_payload[0]
+        if isinstance(at_risk_payload[0].get("donor_signal"), dict):
+            assert required.issubset(set(at_risk_payload[0]["donor_signal"].keys()))
+
+
 def test_v2_role_based_dashboard_intelligence_contract(client, app):
     _login_admin(client)
 
