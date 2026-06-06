@@ -14,6 +14,15 @@ GET /api/v2/dedupe/workbench
 POST /api/v2/dedupe/workbench/merge
 POST /api/v2/dedupe/workbench/merge/simulate
 POST /api/v2/dedupe/workbench/merge/undo
+GET /api/v2/tasks/board
+GET /api/v2/projects/{project_id}/board
+GET /api/v2/projects/portfolio/overview
+GET /api/v2/projects/{project_id}/dependency-conflicts
+GET /api/v2/projects/{project_id}/milestones
+POST /api/v2/projects/{project_id}/milestones
+PATCH /api/v2/projects/{project_id}/milestones/{milestone_id}
+POST /api/v2/tasks/{task_id}/dependencies
+DELETE /api/v2/tasks/{task_id}/dependencies/{depends_on_task_id}
 
 GET /api/v2/membership/members
 POST /api/v2/donor-journeys/automations/run

@@ -417,14 +417,14 @@ paths:
                 type: object
         '401':
           $ref: '#/components/responses/Unauthorized'
-  /api/v2/projects/{projectId}/dependency-conflicts:
+  /api/v2/projects/{project_id}/dependency-conflicts:
     get:
       operationId: getProjectDependencyConflicts
       summary: Detect project dependency blockers and cyclic conflicts
       tags: [Projects]
       parameters:
         - in: path
-          name: projectId
+          name: project_id
           required: true
           schema:
             type: integer
@@ -437,6 +437,290 @@ paths:
                 type: object
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /api/v2/tasks/board:
+    get:
+      operationId: getTaskBoardSnapshot
+      summary: Return task board snapshot with summary and reminder candidates
+      tags: [Tasks]
+      parameters:
+        - in: query
+          name: donor_id
+          required: false
+          schema:
+            type: integer
+        - in: query
+          name: grant_id
+          required: false
+          schema:
+            type: integer
+        - in: query
+          name: project_id
+          required: false
+          schema:
+            type: integer
+        - in: query
+          name: donation_id
+          required: false
+          schema:
+            type: integer
+        - in: query
+          name: assigned_to_id
+          required: false
+          schema:
+            type: integer
+        - in: query
+          name: status
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: priority
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: reminders_limit
+          required: false
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Task board payload
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v2/projects/{project_id}/board:
+    get:
+      operationId: getProjectBoardSnapshot
+      summary: Return project board snapshot with task dependencies and milestones
+      tags: [Projects]
+      parameters:
+        - in: path
+          name: project_id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Project board payload
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v2/projects/{project_id}/milestones:
+    get:
+      operationId: getProjectMilestones
+      summary: List milestones for a project
+      tags: [Projects]
+      parameters:
+        - in: path
+          name: project_id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Milestone list payload
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                type: object
+    post:
+      operationId: postProjectMilestone
+      summary: Create a project milestone
+      tags: [Projects]
+      parameters:
+        - in: path
+          name: project_id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                description:
+                  type: string
+                due_date:
+                  type: string
+                  format: date-time
+                status:
+                  type: string
+                  enum: [planned, in_progress, completed, blocked]
+                owner_user_id:
+                  type: integer
+              required: [title]
+      responses:
+        '201':
+          description: Milestone created
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v2/projects/{project_id}/milestones/{milestone_id}:
+    patch:
+      operationId: patchProjectMilestone
+      summary: Update a project milestone
+      tags: [Projects]
+      parameters:
+        - in: path
+          name: project_id
+          required: true
+          schema:
+            type: integer
+        - in: path
+          name: milestone_id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                description:
+                  type: string
+                due_date:
+                  type: string
+                  format: date-time
+                status:
+                  type: string
+                  enum: [planned, in_progress, completed, blocked]
+                owner_user_id:
+                  type: integer
+      responses:
+        '200':
+          description: Milestone updated
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Milestone not found
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v2/tasks/{task_id}/dependencies:
+    post:
+      operationId: postTaskDependency
+      summary: Create a dependency edge for a task
+      tags: [Tasks]
+      parameters:
+        - in: path
+          name: task_id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                depends_on_task_id:
+                  type: integer
+                dependency_type:
+                  type: string
+                  enum: [blocks, related]
+              required: [depends_on_task_id]
+      responses:
+        '201':
+          description: Dependency created
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                type: object
+        '409':
+          description: Dependency already exists
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v2/tasks/{task_id}/dependencies/{depends_on_task_id}:
+    delete:
+      operationId: deleteTaskDependency
+      summary: Remove a dependency edge for a task
+      tags: [Tasks]
+      parameters:
+        - in: path
+          name: task_id
+          required: true
+          schema:
+            type: integer
+        - in: path
+          name: depends_on_task_id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Dependency removed
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Dependency not found
+          content:
+            application/json:
+              schema:
+                type: object
   /api/v2/campaigns/email/preferences/donors/{donorId}/history:
     get:
       operationId: getCampaignPreferenceHistoryForDonor
