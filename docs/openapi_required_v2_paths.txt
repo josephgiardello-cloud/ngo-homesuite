@@ -1,10 +1,28 @@
-/api/v2/collab/channels
-/api/v2/collab/channels/{channel_id}/messages
-/api/v2/collab/presence
-/api/v2/membership/members
-/api/v2/donor-journeys/automations/run
-/api/v2/donor-journeys/automations/events
-/api/v2/forms/submissions/public
-/api/v2/intelligence/dashboard
-/api/v2/intelligence/financial-guardrails
-/api/v2/campaigns/{campaign_id}/emails/send
+GET /api/v2/collab/inbox
+GET /api/v2/collab/channels
+POST /api/v2/collab/channels
+GET /api/v2/collab/channels/{channel_id}/messages
+POST /api/v2/collab/channels/{channel_id}/messages
+GET /api/v2/collab/channels/{channel_id}/stream
+GET /api/v2/collab/channels/{channel_id}/typing
+POST /api/v2/collab/channels/{channel_id}/typing
+PATCH /api/v2/collab/channels/{channel_id}/moderation
+GET /api/v2/collab/presence
+POST /api/v2/collab/presence
+
+GET /api/v2/dedupe/workbench
+POST /api/v2/dedupe/workbench/merge
+POST /api/v2/dedupe/workbench/merge/simulate
+POST /api/v2/dedupe/workbench/merge/undo
+
+GET /api/v2/membership/members
+POST /api/v2/donor-journeys/automations/run
+GET /api/v2/donor-journeys/automations/events
+POST /api/v2/forms/submissions/public
+GET /api/v2/intelligence/dashboard
+GET /api/v2/intelligence/financial-guardrails
+
+POST /api/v2/campaigns/{campaign_id}/emails/send
+POST /api/v2/campaigns/{campaign_id}/emails/preview
+GET /api/v2/campaigns/email/preferences/donors/{donorId}/history
+POST /api/v2/campaigns/email/preferences/donors/{donorId}/lifecycle

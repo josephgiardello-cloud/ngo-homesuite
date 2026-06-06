@@ -65,14 +65,14 @@ paths:
                 type: object
         '401':
           $ref: '#/components/responses/Unauthorized'
-  /api/v2/collab/channels/{channelId}/typing:
+  /api/v2/collab/channels/{channel_id}/typing:
     get:
       operationId: getCollabTypingState
       summary: List users currently typing in a collaboration channel
       tags: [Collaboration]
       parameters:
         - in: path
-          name: channelId
+          name: channel_id
           required: true
           schema:
             type: integer
@@ -91,7 +91,7 @@ paths:
       tags: [Collaboration]
       parameters:
         - in: path
-          name: channelId
+          name: channel_id
           required: true
           schema:
             type: integer
@@ -113,6 +113,97 @@ paths:
                 type: object
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /api/v2/collab/channels/{channel_id}/moderation:
+    patch:
+      operationId: patchCollabChannelModeration
+      summary: Update collaboration channel moderation state
+      tags: [Collaboration]
+      parameters:
+        - in: path
+          name: channel_id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Moderation state updated
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Channel not found
+  /api/v2/dedupe/workbench:
+    get:
+      operationId: getDedupeWorkbench
+      summary: List cross-entity duplicate candidates and merge opportunities
+      tags: [DataQuality]
+      parameters:
+        - in: query
+          name: entity_scope
+          required: false
+          schema:
+            type: string
+            enum: [all, donor, beneficiary, volunteer]
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+        - in: query
+          name: max_scan
+          required: false
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Duplicate candidate payload
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v2/dedupe/workbench/merge:
+    post:
+      operationId: postDedupeWorkbenchMerge
+      summary: Merge donor records from dedupe workbench selection
+      tags: [DataQuality]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                primary_donor_id:
+                  type: integer
+                duplicate_donor_id:
+                  type: integer
+              required: [primary_donor_id, duplicate_donor_id]
+      responses:
+        '200':
+          description: Merge result payload
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /api/v2/dedupe/workbench/merge/simulate:
     post:
       operationId: postDedupeMergeSimulate
@@ -547,14 +638,14 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
-  /api/v2/campaigns/{campaignId}/emails/send:
+  /api/v2/campaigns/{campaign_id}/emails/send:
     post:
       operationId: postV2CampaignEmailsSend
       summary: Send or schedule campaign bulk email delivery
       tags: [CampaignsV2]
       parameters:
         - in: path
-          name: campaignId
+          name: campaign_id
           required: true
           schema:
             type: integer
@@ -600,14 +691,14 @@ paths:
           description: Campaign not found
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /api/v2/campaigns/{campaignId}/emails/preview:
+  /api/v2/campaigns/{campaign_id}/emails/preview:
     post:
       operationId: postV2CampaignEmailsPreview
       summary: Preview campaign email recipients and personalization data
       tags: [CampaignsV2]
       parameters:
         - in: path
-          name: campaignId
+          name: campaign_id
           required: true
           schema:
             type: integer
@@ -938,28 +1029,6 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-  /api/v2/campaigns/{campaign_id}/emails/send:
-    post:
-      operationId: postV2CampaignEmailSend
-      summary: Send campaign email batches
-      tags: [CampaignsV2]
-      parameters:
-        - in: path
-          name: campaign_id
-          required: true
-          schema:
-            type: integer
-      responses:
-        '200':
-          description: Campaign email send payload
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          description: Campaign not found
   /ai/minion/chat:
     post:
       operationId: postMinionChat
