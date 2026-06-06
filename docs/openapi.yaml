@@ -121,6 +121,94 @@ paths:
                 type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /admin/compliance/grant-deadlines:
+    get:
+      operationId: getAdminGrantDeadlineAlerts
+      summary: List overdue and approaching grant deadlines for compliance operations
+      tags: [Compliance]
+      responses:
+        '200':
+          description: Grant deadline alert payload
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /admin/compliance/grant/{grant_id}/readiness:
+    get:
+      operationId: getAdminGrantReadiness
+      summary: Return pre-submission readiness analysis for a grant
+      tags: [Compliance]
+      parameters:
+        - in: path
+          name: grant_id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Grant readiness payload
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Grant not found
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/events/{event_id}/send-reminders:
+    post:
+      operationId: postEventRemindersDispatch
+      summary: Dispatch reminder emails to registered event attendees
+      tags: [Events]
+      parameters:
+        - in: path
+          name: event_id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Reminder dispatch summary
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/events/{event_id}/registrations:
+    get:
+      operationId: getEventRegistrations
+      summary: List attendee registrations for an event
+      tags: [Events]
+      parameters:
+        - in: path
+          name: event_id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Event registration payload
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /api/v2/collab/inbox:
     get:
       operationId: getCollabInboxSummary

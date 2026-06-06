@@ -96,6 +96,11 @@ def test_openapi_required_integrations_paths_are_declared() -> None:
     _assert_required_paths_manifest(spec, "docs/openapi_required_integrations_paths.txt")
 
 
+def test_openapi_required_operations_paths_are_declared() -> None:
+    spec = yaml.safe_load(Path("docs/openapi.yaml").read_text(encoding="utf-8"))
+    _assert_required_paths_manifest(spec, "docs/openapi_required_operations_paths.txt")
+
+
 def test_openapi_route_drift_checker_script_exists() -> None:
     assert Path("tools/check_openapi_route_drift.py").exists(), (
         "Missing OpenAPI drift checker: tools/check_openapi_route_drift.py"

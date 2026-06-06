@@ -1,0 +1,4 @@
+GET /admin/compliance/grant-deadlines
+GET /admin/compliance/grant/{grant_id}/readiness
+POST /api/events/{event_id}/send-reminders
+GET /api/events/{event_id}/registrations
