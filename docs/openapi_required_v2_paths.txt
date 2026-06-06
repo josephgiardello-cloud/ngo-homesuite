@@ -33,5 +33,10 @@ GET /api/v2/intelligence/financial-guardrails
 
 POST /api/v2/campaigns/{campaign_id}/emails/send
 POST /api/v2/campaigns/{campaign_id}/emails/preview
+GET /api/v2/campaigns/email/segments
+POST /api/v2/campaigns/email/segments
+PATCH /api/v2/campaigns/email/segments/{segment_id}
+DELETE /api/v2/campaigns/email/segments/{segment_id}
+GET /api/v2/campaigns/email/segments/{segment_id}/preview
 GET /api/v2/campaigns/email/preferences/donors/{donorId}/history
 POST /api/v2/campaigns/email/preferences/donors/{donorId}/lifecycle

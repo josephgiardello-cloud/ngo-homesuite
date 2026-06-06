@@ -746,6 +746,182 @@ paths:
                 type: object
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /api/v2/campaigns/email/segments:
+    get:
+      operationId: getCampaignEmailSegments
+      summary: List saved Smart Groups usable as campaign email segments
+      tags: [Campaigns]
+      responses:
+        '200':
+          description: Campaign segment list payload
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: postCampaignEmailSegment
+      summary: Create a saved campaign email segment with optional preview
+      tags: [Campaigns]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                rules:
+                  type: array
+                  items:
+                    type: object
+                include_preview:
+                  type: boolean
+                preview_limit:
+                  type: integer
+              required: [name, rules]
+      responses:
+        '201':
+          description: Campaign segment created
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Segment name already exists
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v2/campaigns/email/segments/{segment_id}:
+    patch:
+      operationId: patchCampaignEmailSegment
+      summary: Update a saved campaign email segment
+      tags: [Campaigns]
+      parameters:
+        - in: path
+          name: segment_id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                rules:
+                  type: array
+                  items:
+                    type: object
+                include_preview:
+                  type: boolean
+      responses:
+        '200':
+          description: Campaign segment updated
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Segment not found
+          content:
+            application/json:
+              schema:
+                type: object
+        '409':
+          description: Segment name already exists
+          content:
+            application/json:
+              schema:
+                type: object
+    delete:
+      operationId: deleteCampaignEmailSegment
+      summary: Delete a saved campaign email segment
+      tags: [Campaigns]
+      parameters:
+        - in: path
+          name: segment_id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Campaign segment deleted
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Segment not found
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v2/campaigns/email/segments/{segment_id}/preview:
+    get:
+      operationId: getCampaignEmailSegmentPreview
+      summary: Preview members for a saved campaign email segment
+      tags: [Campaigns]
+      parameters:
+        - in: path
+          name: segment_id
+          required: true
+          schema:
+            type: integer
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Campaign segment preview payload
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Segment not found
+          content:
+            application/json:
+              schema:
+                type: object
   /api/v2/campaigns/email/preferences/donors/{donorId}/lifecycle:
     post:
       operationId: postCampaignPreferenceLifecycleForDonor
