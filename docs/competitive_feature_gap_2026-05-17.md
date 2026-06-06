@@ -11,7 +11,7 @@ Status legend:
 ## Feature Status Matrix
 | Feature | Status | Evidence | Notes |
 |---|---|---|---|
-| Real-time chat | Partial | `ngo_homesuite/web/v2_collab_handlers.py`, `ngo_homesuite/web/v2_routes.py` | Collaboration channels/messages/presence APIs exist under `/api/v2/collab/*` and now include SSE message streaming; full websocket transport and richer operator UX are still pending. |
+| Real-time chat | Exists | `ngo_homesuite/web/v2_collab_handlers.py`, `ngo_homesuite/web/v2_routes.py`, `ngo_homesuite/web/test_v2_route_contracts.py` | Collaboration channels/messages/presence APIs provide SSE real-time message streaming, typing indicators, moderation, and inbox/presence workflows under `/api/v2/collab/*` with route-contract coverage. |
 | Email campaign sending | Exists | `ngo_homesuite/services/campaign_email_service.py`, `ngo_homesuite/web/v2_routes.py`, `ngo_homesuite/web/integrations_routes.py` | Audience preview/send, suppression controls, tracking metrics, and operational smoke checks are implemented; advanced orchestration depth remains iterative. |
 | Public registration pages | Exists | `ngo_homesuite/web/auth_routes.py`, `ngo_homesuite/web/main_routes.py`, `ngo_homesuite/web/p2p_routes.py` | Public account registration, public donation page, and public P2P pages are already implemented. |
 | Project management | Exists | `ngo_homesuite/models/core.py`, `ngo_homesuite/web/v2_routes.py`, `ngo_homesuite/web/test_v2_route_contracts.py` | Project board, milestone lifecycle (create/list/update), task dependency graphing (create/delete), dependency conflict detection, and portfolio overview APIs are implemented and contract-tested. |
