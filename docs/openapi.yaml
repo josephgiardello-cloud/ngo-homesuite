@@ -51,6 +51,177 @@ paths:
                 type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /api/v2/collab/inbox:
+    get:
+      operationId: getCollabInboxSummary
+      summary: List collaboration inbox channels with SLA-oriented unread prioritization
+      tags: [Collaboration]
+      responses:
+        '200':
+          description: Collaboration inbox summary
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v2/collab/channels/{channelId}/typing:
+    get:
+      operationId: getCollabTypingState
+      summary: List users currently typing in a collaboration channel
+      tags: [Collaboration]
+      parameters:
+        - in: path
+          name: channelId
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Typing state payload
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: postCollabTypingState
+      summary: Upsert current user's typing indicator in a collaboration channel
+      tags: [Collaboration]
+      parameters:
+        - in: path
+          name: channelId
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                is_typing:
+                  type: boolean
+      responses:
+        '200':
+          description: Typing state updated
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v2/dedupe/workbench/merge/simulate:
+    post:
+      operationId: postDedupeMergeSimulate
+      summary: Simulate donor merge impacts and conflicts
+      tags: [DataQuality]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                primary_donor_id:
+                  type: integer
+                duplicate_donor_id:
+                  type: integer
+              required: [primary_donor_id, duplicate_donor_id]
+      responses:
+        '200':
+          description: Merge simulation result
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v2/dedupe/workbench/merge/undo:
+    post:
+      operationId: postDedupeMergeUndo
+      summary: Undo a donor merge operation using an undo token
+      tags: [DataQuality]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                undo_id:
+                  type: string
+              required: [undo_id]
+      responses:
+        '200':
+          description: Merge undo result
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v2/projects/portfolio/overview:
+    get:
+      operationId: getProjectsPortfolioOverview
+      summary: Return portfolio-level task and milestone risk overview
+      tags: [Projects]
+      responses:
+        '200':
+          description: Portfolio overview payload
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v2/projects/{projectId}/dependency-conflicts:
+    get:
+      operationId: getProjectDependencyConflicts
+      summary: Detect project dependency blockers and cyclic conflicts
+      tags: [Projects]
+      parameters:
+        - in: path
+          name: projectId
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Dependency conflict payload
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v2/campaigns/email/preferences/donors/{donorId}/history:
+    get:
+      operationId: getCampaignPreferenceHistoryForDonor
+      summary: List communication preference consent history for a donor
+      tags: [Campaigns]
+      parameters:
+        - in: path
+          name: donorId
+          required: true
+          schema:
+            type: integer
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Preference history payload
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /reports/compliance/evidence:
     get:
       operationId: getComplianceEvidence

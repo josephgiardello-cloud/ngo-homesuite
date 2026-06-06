@@ -312,6 +312,13 @@ def test_caldav_and_carddav_sync_routes(client, app):
     assert "caldav_sync" in status_payload["by_kind"]
     assert "carddav_sync" in status_payload["by_kind"]
 
+    capabilities_rv = client.get("/integrations/dav/capabilities")
+    assert capabilities_rv.status_code == 200
+    capabilities_payload = capabilities_rv.get_json() or {}
+    assert capabilities_payload.get("ok") is True
+    assert isinstance((capabilities_payload.get("capabilities") or {}).get("carddav_sync"), bool)
+    assert isinstance((capabilities_payload.get("provider_state") or {}).get("carddav_contacts"), int)
+
 
 
 def test_ops_routes_require_authentication(client):
@@ -345,7 +352,7 @@ def test_email_smoke_returns_readiness(client, app):
 
 
 def test_email_smoke_probe_mode_passes_flag(client, app):
-    _ensure_user(app, "email_smoke_admin", "email_smoke_admin@test.local", "admin", "email_smoke_admin_pass_123")
+    _ensure_user(app, "email_smoke_admin", "email_smoke_admin@test.local", "staff", "email_smoke_admin_pass_123")
     _login(client, "email_smoke_admin", "email_smoke_admin_pass_123")
 
     with mock.patch("ngo_homesuite.utils.email.email_connectivity_smoke", return_value={
@@ -366,7 +373,7 @@ def test_email_smoke_probe_mode_passes_flag(client, app):
 
 
 def test_email_queue_status_page_renders_table(client, app):
-    _ensure_user(app, "email_queue_admin", "email_queue_admin@test.local", "admin", "email_queue_admin_pass_123")
+    _ensure_user(app, "email_queue_admin", "email_queue_admin@test.local", "staff", "email_queue_admin_pass_123")
     _login(client, "email_queue_admin", "email_queue_admin_pass_123")
 
     with app.app_context():

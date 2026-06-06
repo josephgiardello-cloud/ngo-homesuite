@@ -642,6 +642,18 @@ def test_v2_dedupe_workbench_merge_contract_relinks_and_removes_duplicate(client
     assert dry_run_payload["dry_run"] is True
     assert int(dry_run_payload["impact"]["duplicate_donation_count"]) == 1
 
+    simulation = client.post(
+        "/api/v2/dedupe/workbench/merge/simulate",
+        json={
+            "primary_donor_id": primary_id,
+            "duplicate_donor_id": duplicate_id,
+        },
+    )
+    assert simulation.status_code == 200
+    simulation_payload = simulation.get_json()
+    assert simulation_payload["merge_supported"] is True
+    assert int(simulation_payload["impact"]["donations_to_relink"]) == 1
+
     merge_rv = client.post(
         "/api/v2/dedupe/workbench/merge",
         json={
@@ -655,12 +667,25 @@ def test_v2_dedupe_workbench_merge_contract_relinks_and_removes_duplicate(client
     assert int(merge_payload["primary_donor_id"]) == primary_id
     assert int(merge_payload["removed_donor_id"]) == duplicate_id
     assert int(merge_payload["relinked"]["donations"]) == 1
+    undo_id = str(merge_payload.get("undo_id") or "")
+    assert undo_id
 
     with app.app_context():
         assert db.session.get(Donor, duplicate_id) is None
         updated = db.session.get(Donation, donation_id)
         assert updated is not None
         assert int(updated.donor_id) == primary_id
+
+    undo = client.post("/api/v2/dedupe/workbench/merge/undo", json={"undo_id": undo_id})
+    assert undo.status_code == 200
+    undo_payload = undo.get_json()
+    assert undo_payload["undone"] is True
+    assert int(undo_payload["relinked"]["donations"]) == 1
+
+    with app.app_context():
+        updated = db.session.get(Donation, donation_id)
+        assert updated is not None
+        assert int(updated.donor_id) == int(undo_payload["restored_donor_id"])
 
 
 def test_v2_project_board_milestones_and_dependencies_contract(client, app):
@@ -722,6 +747,16 @@ def test_v2_project_board_milestones_and_dependencies_contract(client, app):
     dep_task_before = next(item for item in board_before_payload["tasks"] if int(item["id"]) == dependent_id)
     assert dep_task_before["blocked"] is True
 
+    conflicts_before = client.get(f"/api/v2/projects/{project_id}/dependency-conflicts")
+    assert conflicts_before.status_code == 200
+    conflicts_before_payload = conflicts_before.get_json() or {}
+    assert int(conflicts_before_payload.get("conflict_count") or 0) >= 1
+
+    portfolio_before = client.get("/api/v2/projects/portfolio/overview")
+    assert portfolio_before.status_code == 200
+    portfolio_before_payload = portfolio_before.get_json() or {}
+    assert int((portfolio_before_payload.get("summary") or {}).get("total_projects") or 0) >= 1
+
     create_milestone = client.post(
         f"/api/v2/projects/{project_id}/milestones",
         json={
@@ -760,6 +795,11 @@ def test_v2_project_board_milestones_and_dependencies_contract(client, app):
     assert int(board_after_payload["summary"]["blocked_tasks"]) == 0
     dep_task_after = next(item for item in board_after_payload["tasks"] if int(item["id"]) == dependent_id)
     assert dep_task_after["blocked"] is False
+
+    conflicts_after = client.get(f"/api/v2/projects/{project_id}/dependency-conflicts")
+    assert conflicts_after.status_code == 200
+    conflicts_after_payload = conflicts_after.get_json() or {}
+    assert int(conflicts_after_payload.get("conflict_count") or 0) == 0
 
     remove_dep = client.delete(f"/api/v2/tasks/{dependent_id}/dependencies/{prereq_id}")
     assert remove_dep.status_code == 200
@@ -849,6 +889,71 @@ def test_v2_collaboration_channels_messages_and_presence_contract(client, app):
     by_user = {int(item["user_id"]): item for item in presence_list_payload["items"]}
     assert by_user[admin_id]["status"] == "away"
     assert int(by_user[peer_id]["user_id"]) == peer_id
+
+    typing_start = client.post(f"/api/v2/collab/channels/{direct_channel_id}/typing", json={"is_typing": True})
+    assert typing_start.status_code == 200
+    typing_state = client.get(f"/api/v2/collab/channels/{direct_channel_id}/typing")
+    assert typing_state.status_code == 200
+    assert isinstance(typing_state.get_json().get("typing_user_ids"), list)
+
+    moderation = client.patch(
+        f"/api/v2/collab/channels/{team_channel_id}/moderation",
+        json={"action": "archive"},
+    )
+    assert moderation.status_code == 200
+    assert moderation.get_json()["is_archived"] is True
+
+    inbox = client.get("/api/v2/collab/inbox")
+    assert inbox.status_code == 200
+    inbox_payload = inbox.get_json() or {}
+    assert isinstance(inbox_payload.get("items"), list)
+    assert isinstance(inbox_payload.get("summary"), dict)
+
+
+def test_v2_campaign_preference_history_contract(client, app, monkeypatch):
+    _login_admin(client)
+
+    with app.app_context():
+        admin_user = db.session.scalar(select(User).where(User.username == "admin").limit(1))
+        assert admin_user is not None
+        org_id = int(admin_user.organization_id)
+
+        donor = Donor(
+            organization_id=org_id,
+            name="Preference History Donor",
+            email="preference-history@example.org",
+            donor_type="individual",
+            status="active",
+        )
+        db.session.add(donor)
+        db.session.commit()
+        donor_id = int(donor.id)
+
+    patch_pref = client.patch(
+        f"/api/v2/campaigns/email/preferences/donors/{donor_id}",
+        json={"newsletter_opt_in": False, "digest_frequency": "monthly"},
+    )
+    assert patch_pref.status_code == 200
+
+    monkeypatch.setattr(
+        "ngo_homesuite.services.campaign_email_service.list_campaign_communication_preference_history",
+        lambda organization_id, *, email, limit=25: [
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "details": {
+                    "email": email,
+                    "newsletter_opt_in": False,
+                    "digest_frequency": "monthly",
+                },
+            }
+        ],
+    )
+
+    history = client.get(f"/api/v2/campaigns/email/preferences/donors/{donor_id}/history?limit=25")
+    assert history.status_code == 200
+    history_payload = history.get_json() or {}
+    assert isinstance(history_payload.get("items"), list)
+    assert int(history_payload.get("count") or 0) >= 1
 
 
 def test_v2_collaboration_message_endpoints_block_cross_tenant_access(client, app):

@@ -20,6 +20,7 @@ from flask import current_app, has_app_context
 from sqlalchemy import case, func, select, text
 
 from ngo_homesuite.policy import enforce_error_contract
+from ngo_homesuite.db.connection import run_db
 from ngo_homesuite.models.core import (
     Campaign,
     CampaignCommunicationPreference,
@@ -38,6 +39,15 @@ from ngo_homesuite.utils.email import email_connectivity_smoke
 logger = logging.getLogger(__name__)
 _EMAIL_ADDRESS_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _VALID_DIGEST_FREQUENCIES = {"immediate", "daily", "weekly", "monthly"}
+
+
+def _preference_topics_payload(*, newsletter_opt_in: bool, campaign_opt_in: bool, events_opt_in: bool, volunteer_opt_in: bool) -> dict[str, bool]:
+    return {
+        "newsletter": bool(newsletter_opt_in),
+        "campaigns": bool(campaign_opt_in),
+        "events": bool(events_opt_in),
+        "volunteer": bool(volunteer_opt_in),
+    }
 
 
 def _utcnow() -> datetime:
@@ -343,6 +353,12 @@ def get_campaign_communication_preference(
     ).first()
 
     if preference is None:
+        topics = _preference_topics_payload(
+            newsletter_opt_in=True,
+            campaign_opt_in=True,
+            events_opt_in=True,
+            volunteer_opt_in=True,
+        )
         return {
             "organization_id": int(organization_id),
             "donor_id": int(donor_id) if donor_id else None,
@@ -352,9 +368,19 @@ def get_campaign_communication_preference(
             "events_opt_in": True,
             "volunteer_opt_in": True,
             "digest_frequency": "weekly",
+            "cadence": "weekly",
+            "topics": topics,
+            "consent_status": "opted_in",
             "source": "default",
             "updated_at": None,
         }
+
+    topics = _preference_topics_payload(
+        newsletter_opt_in=bool(preference.newsletter_opt_in),
+        campaign_opt_in=bool(preference.campaign_opt_in),
+        events_opt_in=bool(preference.events_opt_in),
+        volunteer_opt_in=bool(preference.volunteer_opt_in),
+    )
 
     return {
         "organization_id": int(preference.organization_id),
@@ -365,6 +391,9 @@ def get_campaign_communication_preference(
         "events_opt_in": bool(preference.events_opt_in),
         "volunteer_opt_in": bool(preference.volunteer_opt_in),
         "digest_frequency": str(preference.digest_frequency or "weekly"),
+        "cadence": str(preference.digest_frequency or "weekly"),
+        "topics": topics,
+        "consent_status": ("opted_in" if any(topics.values()) else "opted_out"),
         "source": str(preference.source or "preference_center"),
         "updated_at": preference.updated_at.isoformat() if preference.updated_at else None,
     }
@@ -433,6 +462,56 @@ def upsert_campaign_communication_preference(
         email=normalized_email,
         donor_id=donor_id,
     )
+
+
+def list_campaign_communication_preference_history(
+    organization_id: int,
+    *,
+    email: str,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    normalized_email = _normalized_email(email)
+    if not _looks_like_email(normalized_email):
+        raise ValueError("valid email is required")
+
+    def _op(_conn: Any, cur: Any) -> list[tuple[str, str]]:
+        cur.execute(
+            """
+            SELECT at_utc, details_json
+            FROM audit_log
+            WHERE action = 'campaign.preference.updated'
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (max(1, min(int(limit), 500)),),
+        )
+        rows = cur.fetchall() or []
+        return [(str(row[0] or ""), str(row[1] or "")) for row in rows]
+
+    rows = run_db(_op) or []
+    history: list[dict[str, Any]] = []
+    for at_utc, details_json in rows:
+        try:
+            loaded = json.loads(details_json) if details_json else {}
+        except (TypeError, ValueError):
+            loaded = {}
+        payload = loaded.get("payload") if isinstance(loaded, dict) else None
+        if not isinstance(payload, dict):
+            continue
+        if int(payload.get("organization_id") or 0) != int(organization_id):
+            continue
+        if _normalized_email(payload.get("email")) != normalized_email:
+            continue
+        history.append(
+            {
+                "at_utc": at_utc,
+                "source": str(payload.get("source") or "unknown"),
+                "topics": payload.get("topics") if isinstance(payload.get("topics"), dict) else {},
+                "digest_frequency": str(payload.get("digest_frequency") or ""),
+                "consent_status": str(payload.get("consent_status") or "unknown"),
+            }
+        )
+    return history
 
 
 def verify_tracking_signature(
@@ -1041,6 +1120,9 @@ def campaign_email_automation_templates(campaign: Campaign) -> list[dict[str, An
         {
             "key": "welcome_nurture",
             "label": "Welcome Nurture (3-touch)",
+            "journey_stage": "onboarding",
+            "recommended_audience": "all_active_donors",
+            "audience_hint": "Best for new supporters and recent donors who should receive a structured follow-up sequence.",
             "step_count": 3,
             "cadence_days": 7,
             "subject": f"Welcome to {campaign_name}",
@@ -1055,6 +1137,9 @@ def campaign_email_automation_templates(campaign: Campaign) -> list[dict[str, An
         {
             "key": "lapsed_reengagement",
             "label": "Lapsed Donor Re-engagement",
+            "journey_stage": "reactivation",
+            "recommended_audience": "lapsed_donors",
+            "audience_hint": "Use for donors who have gone quiet and need a reconnection sequence with softer urgency.",
             "step_count": 4,
             "cadence_days": 10,
             "subject": f"{campaign_name}: we'd love to reconnect",
@@ -1069,6 +1154,9 @@ def campaign_email_automation_templates(campaign: Campaign) -> list[dict[str, An
         {
             "key": "deadline_last_call",
             "label": "Deadline Last Call",
+            "journey_stage": "conversion",
+            "recommended_audience": "campaign_donors",
+            "audience_hint": "Best for supporters already engaged with the campaign when a deadline or match window is closing.",
             "step_count": 2,
             "cadence_days": 3,
             "subject": f"Last chance to support {campaign_name}",
@@ -1122,6 +1210,9 @@ def instantiate_campaign_email_automation_template(
     )
     result["template_key"] = str(template.get("key") or "")
     result["template_label"] = str(template.get("label") or "")
+    result["journey_stage"] = str(template.get("journey_stage") or "")
+    result["recommended_audience"] = str(template.get("recommended_audience") or "")
+    result["audience_hint"] = str(template.get("audience_hint") or "")
     return result
 
 

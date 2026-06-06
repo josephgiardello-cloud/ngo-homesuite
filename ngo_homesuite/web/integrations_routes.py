@@ -57,6 +57,10 @@ def _dav_provider() -> InMemoryDavSyncProvider:
     return provider
 
 
+def _env_present(name: str) -> bool:
+    return bool(str(os.environ.get(name) or "").strip())
+
+
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -468,6 +472,35 @@ def integrations_status_route():
     summary["calendar_cached_events"] = len(provider.events)
     summary["organization_id"] = int(current_user.organization_id) if current_user.organization_id else None
     return jsonify(summary)
+
+
+@integrations_bp.get("/dav/capabilities")
+@login_required
+@roles_required("admin", "staff")
+def dav_capabilities_route():
+    provider = _dav_provider()
+    return jsonify(
+        {
+            "ok": True,
+            "organization_id": int(current_user.organization_id) if current_user.organization_id else None,
+            "capabilities": {
+                "caldav_sync": True,
+                "carddav_sync": True,
+                "dry_run_supported": True,
+                "background_jobs_supported": True,
+            },
+            "provider_state": {
+                "caldav_events": len(provider.caldav_events),
+                "carddav_contacts": len(provider.carddav_contacts),
+            },
+            "env_hints": {
+                "caldav_url_configured": _env_present("CALDAV_URL"),
+                "caldav_username_configured": _env_present("CALDAV_USERNAME"),
+                "carddav_url_configured": _env_present("CARDDAV_URL"),
+                "carddav_username_configured": _env_present("CARDDAV_USERNAME"),
+            },
+        }
+    ), 200
 
 
 @integrations_bp.get("/ops/recent")

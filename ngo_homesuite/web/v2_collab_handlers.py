@@ -4,7 +4,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
 
-from flask import jsonify, request
+from flask import current_app, jsonify, request
 from flask_login import current_user
 from sqlalchemy import func, select
 
@@ -41,6 +41,26 @@ def _parse_user_ids_csv(raw: str) -> list[int]:
         except (TypeError, ValueError):
             continue
     return values
+
+
+def _typing_store() -> dict[tuple[int, int, int], datetime]:
+    store = current_app.extensions.get("collab_typing_store")
+    if store is None:
+        store = {}
+        current_app.extensions["collab_typing_store"] = store
+    return store
+
+
+def _typing_ttl_seconds() -> int:
+    return 20
+
+
+def _moderation_store() -> dict[int, dict[str, Any]]:
+    store = current_app.extensions.get("collab_moderation_store")
+    if store is None:
+        store = {}
+        current_app.extensions["collab_moderation_store"] = store
+    return store
 
 
 def _collab_message_dict(message) -> dict[str, Any]:
@@ -445,3 +465,191 @@ def list_collaboration_presence():
         )
 
     return jsonify({"count": len(payload), "items": payload})
+
+
+def upsert_collaboration_typing(channel_id: int):
+    org_id = _org_id()
+    current_user_id = int(getattr(current_user, "id", 0) or 0)
+    membership = db.session.scalar(
+        select(CollaborationChannelMember).where(
+            CollaborationChannelMember.organization_id == org_id,
+            CollaborationChannelMember.channel_id == int(channel_id),
+            CollaborationChannelMember.user_id == current_user_id,
+            CollaborationChannelMember.is_active.is_(True),
+        ).limit(1)
+    )
+    if membership is None:
+        return jsonify({"error": "channel not found"}), 404
+
+    data = request.get_json(silent=True) or {}
+    is_typing = bool(data.get("is_typing", True))
+    key = (int(org_id), int(channel_id), int(current_user_id))
+    store = _typing_store()
+    if is_typing:
+        store[key] = _utcnow_naive()
+    else:
+        store.pop(key, None)
+    return jsonify({"channel_id": int(channel_id), "user_id": current_user_id, "is_typing": is_typing}), 200
+
+
+def list_collaboration_typing(channel_id: int):
+    org_id = _org_id()
+    current_user_id = int(getattr(current_user, "id", 0) or 0)
+    membership = db.session.scalar(
+        select(CollaborationChannelMember).where(
+            CollaborationChannelMember.organization_id == org_id,
+            CollaborationChannelMember.channel_id == int(channel_id),
+            CollaborationChannelMember.user_id == current_user_id,
+            CollaborationChannelMember.is_active.is_(True),
+        ).limit(1)
+    )
+    if membership is None:
+        return jsonify({"error": "channel not found"}), 404
+
+    now = _utcnow_naive()
+    ttl_seconds = _typing_ttl_seconds()
+    store = _typing_store()
+
+    stale_keys = [k for k, started_at in store.items() if (now - started_at).total_seconds() > ttl_seconds]
+    for stale in stale_keys:
+        store.pop(stale, None)
+
+    user_ids = [
+        int(user_id)
+        for (store_org_id, store_channel_id, user_id), _started_at in store.items()
+        if int(store_org_id) == int(org_id)
+        and int(store_channel_id) == int(channel_id)
+        and int(user_id) != int(current_user_id)
+    ]
+
+    return jsonify({"channel_id": int(channel_id), "count": len(user_ids), "typing_user_ids": sorted(user_ids)}), 200
+
+
+def moderate_collaboration_channel(channel_id: int):
+    org_id = _org_id()
+    current_user_id = int(getattr(current_user, "id", 0) or 0)
+    channel = db.session.scalar(
+        select(CollaborationChannel).where(
+            CollaborationChannel.organization_id == org_id,
+            CollaborationChannel.id == int(channel_id),
+        ).limit(1)
+    )
+    if channel is None:
+        return jsonify({"error": "channel not found"}), 404
+
+    actor_member = db.session.scalar(
+        select(CollaborationChannelMember).where(
+            CollaborationChannelMember.organization_id == org_id,
+            CollaborationChannelMember.channel_id == int(channel_id),
+            CollaborationChannelMember.user_id == current_user_id,
+            CollaborationChannelMember.is_active.is_(True),
+        ).limit(1)
+    )
+    if actor_member is None:
+        return jsonify({"error": "channel not found"}), 404
+
+    data = _json_or_400(required=["action"])
+    action = str(data.get("action") or "").strip().lower()
+    if action in {"archive", "unarchive"}:
+        can_moderate = str(actor_member.role or "").lower() == "owner" or int(channel.created_by_user_id or 0) == current_user_id
+        if not can_moderate:
+            return jsonify({"error": "insufficient permissions for moderation"}), 403
+        channel.is_archived = bool(action == "archive")
+        channel.updated_at = _utcnow_naive()
+        db.session.commit()
+        return jsonify({"channel_id": int(channel.id), "is_archived": bool(channel.is_archived), "action": action}), 200
+
+    if action in {"mute_member", "unmute_member"}:
+        target_user_id = data.get("target_user_id")
+        try:
+            target_user_id_int = int(target_user_id)
+        except (TypeError, ValueError):
+            return jsonify({"error": "target_user_id must be an integer"}), 400
+        moderation = _moderation_store().setdefault(int(channel_id), {"muted_user_ids": set()})
+        muted_user_ids = moderation.setdefault("muted_user_ids", set())
+        if action == "mute_member":
+            muted_user_ids.add(int(target_user_id_int))
+        else:
+            muted_user_ids.discard(int(target_user_id_int))
+        return jsonify({"channel_id": int(channel_id), "action": action, "muted_user_ids": sorted(int(x) for x in muted_user_ids)}), 200
+
+    return jsonify({"error": "action must be one of: archive, unarchive, mute_member, unmute_member"}), 400
+
+
+def collaboration_inbox_summary():
+    org_id = _org_id()
+    current_user_id = int(getattr(current_user, "id", 0) or 0)
+    memberships = list(
+        db.session.scalars(
+            select(CollaborationChannelMember)
+            .where(
+                CollaborationChannelMember.organization_id == org_id,
+                CollaborationChannelMember.user_id == current_user_id,
+                CollaborationChannelMember.is_active.is_(True),
+            )
+        )
+    )
+    channel_ids = [int(item.channel_id) for item in memberships]
+    if not channel_ids:
+        return jsonify({"count": 0, "items": [], "summary": {"sla_breached": 0, "high_priority": 0}}), 200
+
+    channels = list(
+        db.session.scalars(
+            select(CollaborationChannel)
+            .where(
+                CollaborationChannel.organization_id == org_id,
+                CollaborationChannel.id.in_(channel_ids),
+                CollaborationChannel.is_archived.is_(False),
+            )
+        )
+    )
+
+    now = _utcnow_naive()
+    items: list[dict[str, Any]] = []
+    sla_breached = 0
+    high_priority = 0
+    for channel in channels:
+        latest = db.session.scalar(
+            select(CollaborationMessage)
+            .where(
+                CollaborationMessage.organization_id == org_id,
+                CollaborationMessage.channel_id == int(channel.id),
+            )
+            .order_by(CollaborationMessage.created_at.desc(), CollaborationMessage.id.desc())
+            .limit(1)
+        )
+        unread = int(
+            db.session.scalar(
+                select(func.count(CollaborationMessage.id)).where(
+                    CollaborationMessage.organization_id == org_id,
+                    CollaborationMessage.channel_id == int(channel.id),
+                    CollaborationMessage.sender_user_id != current_user_id,
+                    CollaborationMessage.created_at > (next((m.last_read_at for m in memberships if int(m.channel_id) == int(channel.id)), None) or datetime(1970, 1, 1)),
+                )
+            )
+            or 0
+        )
+        latest_age_minutes = None
+        if latest is not None and latest.created_at is not None:
+            latest_age_minutes = max(0, int((now - latest.created_at).total_seconds() // 60))
+        sla_status = "healthy"
+        if unread > 0 and latest_age_minutes is not None and latest_age_minutes >= 180:
+            sla_status = "breached"
+            sla_breached += 1
+        elif unread > 0 and latest_age_minutes is not None and latest_age_minutes >= 60:
+            sla_status = "warning"
+            high_priority += 1
+        items.append(
+            {
+                "channel_id": int(channel.id),
+                "channel_type": str(channel.channel_type or "team"),
+                "name": channel.name,
+                "unread_count": unread,
+                "latest_message_at": latest.created_at.isoformat() if latest is not None and latest.created_at else None,
+                "latest_message_age_minutes": latest_age_minutes,
+                "sla_status": sla_status,
+            }
+        )
+
+    items.sort(key=lambda row: (str(row.get("sla_status") != "breached"), -int(row.get("unread_count") or 0)))
+    return jsonify({"count": len(items), "items": items, "summary": {"sla_breached": sla_breached, "high_priority": high_priority}}), 200
