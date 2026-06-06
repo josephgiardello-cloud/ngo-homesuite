@@ -185,6 +185,7 @@ class TestTonyScorerGrants:
         assert "final_risk_probability" in result
         assert "risk_descriptor" in result
         assert "grant_recommendation" in result
+        assert "component_explanations" in result
         assert "altman_zscore" in result
         assert "organizational_health" in result
         assert "features" in result
@@ -194,6 +195,8 @@ class TestTonyScorerGrants:
         assert 0.0 <= result["base_risk_probability"] <= 1.0
         assert 0.0 <= result["final_risk_probability"] <= 1.0
         assert 0.0 <= result["organizational_health"] <= 1.0
+        assert isinstance(result["component_explanations"].get("base_score"), str)
+        assert isinstance(result["component_explanations"].get("final_probability"), str)
 
     def test_score_grant_with_different_presets(self, org_with_data):
         """Test scoring with different presets produces different results."""
@@ -229,6 +232,21 @@ class TestTonyScorerGrants:
         assert "recommendation" in recommendation
         assert "risk_factors" in recommendation
         assert isinstance(recommendation["risk_factors"], list)
+
+    def test_score_grant_respects_threshold_overrides(self, org_with_data):
+        """Threshold overrides should change recommendation boundary behavior."""
+        grant = org_with_data.grants[0]
+        strict = TonyScorer.score_grant(
+            str(grant.id),
+            str(org_with_data.id),
+            config={
+                "thresholds": {
+                    "recommendation_conditional": 0.01,
+                    "recommendation_elevated": 0.99,
+                }
+            },
+        )
+        assert strict["grant_recommendation"]["label"] in ("Conditional", "Elevated Risk")
 
     def test_invalid_grant_raises_error(self, org_with_data):
         """Test scoring invalid grant raises error."""

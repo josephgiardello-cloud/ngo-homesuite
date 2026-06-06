@@ -80,8 +80,15 @@ DEFAULT_CONFIG = {
     "thresholds": {
         "continuity_low": 180.0,
         "continuity_moderate": 90.0,
+        "continuity_warning": 90.0,
         "risk_probability_moderate": 0.35,
         "risk_probability_high": 0.6,
+        "recommendation_conditional": 0.4,
+        "recommendation_elevated": 0.65,
+        "org_health_weak": 0.45,
+        "admin_expense_high": 0.35,
+        "ratio_score_warning": 0.75,
+        "trussel_greenlee_flag": 0.7,
     },
     "weights": {
         "base_score": 0.50,
@@ -111,6 +118,39 @@ DEFAULT_CONFIG = {
         "lookback_days": 1825,
     },
 }
+
+
+def _effective_config(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Return normalized scoring config with defaults merged in."""
+    base = DEFAULT_CONFIG
+    incoming = config or {}
+
+    normalized: dict[str, Any] = {
+        "thresholds": dict(base.get("thresholds", {})),
+        "weights": dict(base.get("weights", {})),
+        "scoring_presets": {
+            key: dict(value)
+            for key, value in dict(base.get("scoring_presets", {})).items()
+            if isinstance(value, dict)
+        },
+        "calibration": dict(base.get("calibration", {})),
+    }
+
+    for section in ("thresholds", "weights", "calibration"):
+        update = incoming.get(section)
+        if isinstance(update, dict):
+            normalized[section].update(update)
+
+    incoming_presets = incoming.get("scoring_presets")
+    if isinstance(incoming_presets, dict):
+        for preset_name, preset_value in incoming_presets.items():
+            if not isinstance(preset_value, dict):
+                continue
+            existing = dict(normalized["scoring_presets"].get(str(preset_name), {}))
+            existing.update(preset_value)
+            normalized["scoring_presets"][str(preset_name)] = existing
+
+    return normalized
 
 
 class TonyScorer:
@@ -248,13 +288,56 @@ class TonyScorer:
             revenue=max(features.get("continuity_months", 0.0), 1.0),
             administrative_cost_ratio=features.get("admin_expense_ratio", 0.25),
         )
-        ratio_risk = np.mean([
-            TonyScorer.program_expense_efficiency_score(features.get("program_expense_ratio", 0.0)),
-            TonyScorer.current_ratio_score(features.get("current_ratio", 0.0), 1.0),
-            TonyScorer.operating_reserves_score(features.get("operating_reserves_days", 0.0)),
-            TonyScorer.debt_to_assets_score(features.get("debt_to_assets", features.get("liabilities_to_assets", 0.0))),
-        ])
+        ratio_risk = np.mean(
+            list(
+                TonyScorer._financial_ratio_scores(
+                    program_expense_ratio=features.get("program_expense_ratio", 0.0),
+                    current_assets=features.get("current_ratio", 0.0),
+                    current_liabilities=1.0,
+                    operating_reserves_days=features.get("operating_reserves_days", 0.0),
+                    debt_to_assets=features.get("debt_to_assets", features.get("liabilities_to_assets", 0.0)),
+                ).values()
+            )
+        )
         return round(float(_clamp(float(0.7 * base + 0.3 * ratio_risk))), 4)
+
+    @staticmethod
+    def _financial_ratio_scores(
+        *,
+        program_expense_ratio: float,
+        current_assets: float,
+        current_liabilities: float,
+        operating_reserves_days: float,
+        debt_to_assets: float,
+    ) -> dict[str, float]:
+        return {
+            "program_expense_efficiency": TonyScorer.program_expense_efficiency_score(program_expense_ratio),
+            "current_ratio": TonyScorer.current_ratio_score(current_assets, current_liabilities),
+            "operating_reserves": TonyScorer.operating_reserves_score(operating_reserves_days),
+            "debt_to_assets": TonyScorer.debt_to_assets_score(debt_to_assets),
+        }
+
+    @staticmethod
+    def _component_explanations(
+        *,
+        base_prob: float,
+        ratio_risk: float,
+        capacity_risk: float,
+        calibrated_probability: float | None,
+        final_prob: float,
+    ) -> dict[str, str]:
+        calibration_text = (
+            "No calibration model available; using heuristic blend only."
+            if calibrated_probability is None
+            else f"Historical calibration adjusted the heuristic probability toward {round(float(calibrated_probability), 4):.4f}."
+        )
+        return {
+            "base_score": f"Tuckman-Chang base vulnerability is {round(float(base_prob), 4):.4f} (higher means more vulnerability).",
+            "financial_ratios": f"Liquidity/leverage/program-efficiency composite risk is {round(float(ratio_risk), 4):.4f}.",
+            "organizational_health": f"Organizational capacity risk is {round(float(capacity_risk), 4):.4f}.",
+            "calibration": calibration_text,
+            "final_probability": f"Final blended risk probability is {round(float(final_prob), 4):.4f}.",
+        }
 
     @staticmethod
     def tuckman_chang_vulnerability(
@@ -597,8 +680,7 @@ class TonyScorer:
             - organizational_health
             - components (breakdown of scoring)
         """
-        if config is None:
-            config = DEFAULT_CONFIG
+        config = _effective_config(config)
 
         grant = db.session.get(Grant, grant_id)
         if not grant:
@@ -630,15 +712,13 @@ class TonyScorer:
         preset_weights = config["scoring_presets"].get(preset, config["scoring_presets"]["balanced"])
         calibration = TonyScorer.calibrate_model_from_history(org_id, config=config, feature_vector=features)
 
-        ratio_scores = {
-            "program_expense_efficiency": TonyScorer.program_expense_efficiency_score(features.get("program_expense_ratio", 0.0)),
-            "current_ratio": TonyScorer.current_ratio_score(
-                financial_data.get("current_assets", financial_data.get("assets", 0.0)),
-                financial_data.get("current_liabilities", financial_data.get("liabilities", 0.0)),
-            ),
-            "operating_reserves": TonyScorer.operating_reserves_score(features.get("operating_reserves_days", 0.0)),
-            "debt_to_assets": TonyScorer.debt_to_assets_score(features.get("debt_to_assets", features.get("liabilities_to_assets", 0.0))),
-        }
+        ratio_scores = TonyScorer._financial_ratio_scores(
+            program_expense_ratio=features.get("program_expense_ratio", 0.0),
+            current_assets=financial_data.get("current_assets", financial_data.get("assets", 0.0)),
+            current_liabilities=financial_data.get("current_liabilities", financial_data.get("liabilities", 0.0)),
+            operating_reserves_days=features.get("operating_reserves_days", 0.0),
+            debt_to_assets=features.get("debt_to_assets", features.get("liabilities_to_assets", 0.0)),
+        )
         ratio_risk = float(np.mean(list(ratio_scores.values())))
         capacity_risk = 1.0 - org_health["score"]
 
@@ -650,6 +730,13 @@ class TonyScorer:
         calibrated_probability = calibration.get("calibrated_probability")
         final_prob = hybrid_probability if calibrated_probability is None else (0.8 * hybrid_probability) + (0.2 * calibrated_probability)
         final_prob = float(_clamp(final_prob))
+        explanations = TonyScorer._component_explanations(
+            base_prob=base_prob,
+            ratio_risk=ratio_risk,
+            capacity_risk=capacity_risk,
+            calibrated_probability=calibrated_probability,
+            final_prob=final_prob,
+        )
 
         thresholds = config["thresholds"]
         reserve_days = features.get("operating_reserves_days", 0.0)
@@ -667,19 +754,21 @@ class TonyScorer:
             leverage=features.get("debt_to_assets", features.get("liabilities_to_assets", 0.0)),
             altman_zone=altman_zone,
             org_health_score=org_health["score"],
+            thresholds=thresholds,
         )
 
         risk_factors = list(recommendation.get("risk_factors", []))
-        if administrative_cost_ratio >= 0.35:
+        if administrative_cost_ratio >= float(thresholds.get("admin_expense_high", 0.35)):
             risk_factors.append("high_administrative_cost_ratio")
         if financial_data.get("unrestricted_net_assets", 0.0) <= 0:
             risk_factors.append("insufficient_equity")
-        if ratio_scores["current_ratio"] >= 0.75:
+        ratio_warning = float(thresholds.get("ratio_score_warning", 0.75))
+        if ratio_scores["current_ratio"] >= ratio_warning:
             risk_factors.append("weak_liquidity")
-        if ratio_scores["operating_reserves"] >= 0.75:
+        if ratio_scores["operating_reserves"] >= ratio_warning:
             risk_factors.append("thin_operating_reserves")
 
-        if trussel_greenlee >= 0.7:
+        if trussel_greenlee >= float(thresholds.get("trussel_greenlee_flag", 0.7)):
             risk_factors.append("trussel_greenlee_flag")
 
         risk_factors = list(dict.fromkeys(risk_factors))
@@ -704,12 +793,14 @@ class TonyScorer:
             "hybrid_weights": preset_weights,
             "calibration": calibration,
             "grant_recommendation": recommendation,
+            "component_explanations": explanations,
             "adjustments": {
                 "base_score": round(float(base_prob), 4),
                 "financial_ratios": round(float(ratio_risk), 4),
                 "organizational_health": round(float(capacity_risk), 4),
                 "calibration_probability": calibrated_probability,
                 "trussel_greenlee_secondary_check": round(float(trussel_greenlee), 4),
+                "explanations": explanations,
             },
             "financial_snapshot": {
                 "revenue": round(financial_data.get("revenue", 0.0), 2),
@@ -733,11 +824,18 @@ class TonyScorer:
         leverage: float,
         altman_zone: str | None = None,
         org_health_score: float = 0.5,
+        thresholds: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Generate grant recommendation based on risk factors."""
+        threshold_values = thresholds if isinstance(thresholds, dict) else DEFAULT_CONFIG.get("thresholds", {})
+        continuity_warning = float(threshold_values.get("continuity_warning", 90.0))
+        org_health_weak = float(threshold_values.get("org_health_weak", 0.45))
+        recommendation_conditional = float(threshold_values.get("recommendation_conditional", 0.4))
+        recommendation_elevated = float(threshold_values.get("recommendation_elevated", 0.65))
+
         reasons: list[str] = []
 
-        if continuity < 90:
+        if continuity < continuity_warning:
             reasons.append("low_operating_reserves")
         if operating_margin < 0:
             reasons.append("negative_operating_margin")
@@ -747,13 +845,13 @@ class TonyScorer:
             reasons.append("altman_distress_zone")
         elif altman_zone == "grey":
             reasons.append("altman_grey_zone")
-        if org_health_score < 0.45:
+        if org_health_score < org_health_weak:
             reasons.append("weak_organizational_health")
 
-        if risk_probability >= 0.65 or altman_zone == "distress" or len(reasons) >= 2:
+        if risk_probability >= recommendation_elevated or altman_zone == "distress" or len(reasons) >= 2:
             label = "Elevated Risk"
             recommendation = "CAUTION: Elevated risk detected. Recommend conditional approval with monitoring."
-        elif risk_probability >= 0.4 or len(reasons) == 1:
+        elif risk_probability >= recommendation_conditional or len(reasons) == 1:
             label = "Conditional"
             recommendation = "CONDITIONAL: Approved pending additional documentation or milestones."
         else:
