@@ -1454,7 +1454,11 @@ def test_campaign_email_automation_templates_and_instantiate_route(client, app):
     assert templates_rv.status_code == 200
     templates = templates_rv.get_json() or []
     assert isinstance(templates, list)
-    assert any(str(item.get("key") or "") == "welcome_nurture" for item in templates)
+    welcome_template = next((item for item in templates if str(item.get("key") or "") == "welcome_nurture"), None)
+    assert welcome_template is not None
+    assert welcome_template.get("journey_stage") == "onboarding"
+    assert welcome_template.get("recommended_audience") == "all_active_donors"
+    assert welcome_template.get("audience_hint")
 
     instantiate_rv = client.post(
         f"/api/v2/campaigns/{campaign_id}/emails/automation/templates/welcome_nurture/instantiate",
@@ -1466,6 +1470,8 @@ def test_campaign_email_automation_templates_and_instantiate_route(client, app):
     assert instantiate_rv.status_code == 200
     payload = instantiate_rv.get_json() or {}
     assert payload.get("template_key") == "welcome_nurture"
+    assert payload.get("journey_stage") == "onboarding"
+    assert payload.get("recommended_audience") == "all_active_donors"
     assert int(payload.get("step_count") or 0) >= 1
     assert isinstance(payload.get("batches"), list)
 

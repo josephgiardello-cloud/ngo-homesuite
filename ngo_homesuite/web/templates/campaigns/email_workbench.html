@@ -175,6 +175,74 @@
   }
   .ai-badge strong { color: var(--text); }
 
+  /* ── Template intelligence ───────────────────────────────── */
+  .template-panel {
+    margin-top: .8rem;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface-soft);
+    padding: .75rem;
+  }
+  .template-panel-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: .5rem;
+    margin-bottom: .55rem;
+  }
+  .template-panel-title {
+    margin: 0;
+    font-size: .88rem;
+    font-weight: 700;
+  }
+  .template-grid {
+    display: grid;
+    gap: .45rem;
+  }
+  .template-card {
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--surface);
+    padding: .6rem .7rem;
+  }
+  .template-card-top {
+    display: flex;
+    justify-content: space-between;
+    gap: .5rem;
+    align-items: baseline;
+  }
+  .template-card-title {
+    font-size: .86rem;
+    font-weight: 700;
+    margin: 0;
+  }
+  .template-card-meta {
+    font-size: .74rem;
+    color: var(--muted);
+  }
+  .template-card-body {
+    margin-top: .35rem;
+    font-size: .82rem;
+    color: var(--text);
+  }
+  .template-card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .4rem;
+    margin-top: .5rem;
+  }
+  .template-pill {
+    display: inline-block;
+    font-size: .68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    padding: .14em .5em;
+    border-radius: 999px;
+    background: rgba(10,84,108,.1);
+    color: #0a546c;
+  }
+
   /* ── details/summary cleanup ──────────────────────────────── */
   details > summary { cursor: pointer; font-size: .84rem; font-weight: 600; color: var(--primary); padding: .2rem 0; user-select: none; }
   details > summary:hover { text-decoration: underline; }
@@ -382,6 +450,18 @@
         </div>
       </div>
 
+      {# Template intelligence #}
+      <div class="ew-section">
+        <div class="ew-section-title">Template Intelligence</div>
+        <div id="templateIntelligence" class="template-panel">
+          <div class="template-panel-head">
+            <h3 class="template-panel-title">Select a template to inspect its lifecycle fit.</h3>
+          </div>
+          <div id="templateSummary" class="text-muted" style="font-size:.84rem;">Template details will appear here.</div>
+          <div id="templateDetails" class="template-grid mt-1"></div>
+        </div>
+      </div>
+
       {# Compliance section #}
       <div class="ew-section">
         <details id="complianceDetails">
@@ -538,6 +618,8 @@
   const recentBatchRows       = document.getElementById('recentBatchRows');
   const aiDraftMeta           = document.getElementById('aiDraftMeta');
   const aiModelLabel          = document.getElementById('aiModelLabel');
+  const templateSummary       = document.getElementById('templateSummary');
+  const templateDetails       = document.getElementById('templateDetails');
   let automationTemplateMap   = {};
 
   // ── Subject counter ───────────────────────────────────────────────────
@@ -602,6 +684,55 @@
   // ── Button loading state ──────────────────────────────────────────────
   function setLoading(btn, on) {
     if (on) btn.classList.add('loading'); else btn.classList.remove('loading');
+  }
+
+  function applyRecommendedAudience(row) {
+    const preset = String(row.recommended_audience || '').trim();
+    if (!preset || savedSegmentSelect.value) return;
+    segmentPreset.value = preset;
+  }
+
+  function renderAutomationTemplateDetails(key) {
+    const row = automationTemplateMap[key];
+    templateDetails.innerHTML = '';
+    if (!row) {
+      templateSummary.textContent = 'Template details will appear here.';
+      return;
+    }
+
+    templateSummary.textContent = String(row.audience_hint || '');
+
+    const detailRows = [
+      ['Journey stage', row.journey_stage || '—'],
+      ['Cadence', String(Number(row.cadence_days || 0)) + ' days'],
+      ['Touches', String(Number(row.step_count || 0))],
+      ['Audience', row.recommended_audience || '—'],
+    ];
+
+    detailRows.forEach(([label, value]) => {
+      const card = document.createElement('div');
+      card.className = 'template-card';
+      card.innerHTML =
+        '<div class="template-card-top">' +
+          '<p class="template-card-title">' + label + '</p>' +
+          '<span class="template-pill">' + value + '</span>' +
+        '</div>' +
+        '<div class="template-card-body">' + (row.audience_hint || '') + '</div>';
+      templateDetails.appendChild(card);
+    });
+
+    const actions = document.createElement('div');
+    actions.className = 'template-card-actions';
+    actions.innerHTML = '<button type="button" class="btn btn-outline-primary btn-sm" id="applyTemplateAudienceBtn">Apply recommended audience</button>';
+    templateDetails.appendChild(actions);
+
+    const btn = document.getElementById('applyTemplateAudienceBtn');
+    if (btn) {
+      btn.addEventListener('click', () => {
+        applyRecommendedAudience(row);
+        showResult({ applied_template_audience: row.recommended_audience || null }, 'ok');
+      });
+    }
   }
 
   // ── Result box helpers ────────────────────────────────────────────────
@@ -778,6 +909,8 @@
     if (!id) return;
     automationTemplateMap = {};
     automationTemplateSelect.innerHTML = '<option value="">Custom message (manual)</option>';
+    templateSummary.textContent = 'Template details will appear here.';
+    templateDetails.innerHTML = '';
     try {
       const resp = await fetch('/api/v2/campaigns/' + id + '/emails/automation/templates');
       if (!resp.ok) return;
@@ -791,6 +924,7 @@
         opt.textContent = row.label || key;
         automationTemplateSelect.appendChild(opt);
       });
+      if (automationTemplateSelect.value) renderAutomationTemplateDetails(automationTemplateSelect.value);
     } catch (_) {}
   }
 
@@ -810,6 +944,8 @@
     automationStepsInput.value = String(Number(row.step_count || 3));
     automationCadenceDaysInput.value = String(Number(row.cadence_days || 7));
     updateSubjectCounter();
+    applyRecommendedAudience(row);
+    renderAutomationTemplateDetails(key);
     showResult({ applied_template: key, label: row.label || key }, 'ok');
   }
 
@@ -1134,6 +1270,9 @@
     if (selected && savedSegmentSelect.value) {
       savedSegmentNameInput.value = String(selected.textContent || '').replace(/\s\[\d+\]$/, '');
     }
+  });
+  automationTemplateSelect.addEventListener('change', () => {
+    renderAutomationTemplateDetails(String(automationTemplateSelect.value || '').trim());
   });
   document.getElementById('sendBtn').addEventListener('click', () => {
     // Auto-open compliance section when send is triggered so user sees fields
