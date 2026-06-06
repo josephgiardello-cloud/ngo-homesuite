@@ -847,6 +847,7 @@ def test_v2_collaboration_channels_messages_and_presence_contract(client, app):
     )
     assert direct_message.status_code == 201
     message_payload = direct_message.get_json()
+    message_id = int(message_payload["id"])
     assert int(message_payload["channel_id"]) == direct_channel_id
     assert int(message_payload["sender_user_id"]) == admin_id
 
@@ -855,6 +856,15 @@ def test_v2_collaboration_channels_messages_and_presence_contract(client, app):
     list_messages_payload = list_messages.get_json()
     assert int(list_messages_payload["count"]) >= 1
     assert any(str(item.get("body") or "") == "Hello from Wave E contract" for item in list_messages_payload["messages"])
+
+    stream_messages = client.get(
+        f"/api/v2/collab/channels/{direct_channel_id}/stream?since_id={message_id - 1}&timeout_seconds=0"
+    )
+    assert stream_messages.status_code == 200
+    assert stream_messages.headers.get("Content-Type", "").startswith("text/event-stream")
+    stream_body = stream_messages.data.decode("utf-8", errors="ignore")
+    assert "event: message" in stream_body
+    assert f'"channel_id": {direct_channel_id}' in stream_body or f'"channel_id":{direct_channel_id}' in stream_body
 
     team_create = client.post(
         "/api/v2/collab/channels",

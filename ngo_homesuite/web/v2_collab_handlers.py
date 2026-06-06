@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timezone
+import json
+import time
 from typing import Any
 
-from flask import current_app, jsonify, request
+from flask import Response, current_app, jsonify, request, stream_with_context
 from flask_login import current_user
 from sqlalchemy import func, select
 
@@ -375,6 +377,73 @@ def create_collaboration_message(channel_id: int):
     membership.last_read_at = _utcnow_naive()
     db.session.commit()
     return jsonify(_collab_message_dict(message)), 201
+
+
+def stream_collaboration_messages(channel_id: int):
+    org_id = _org_id()
+    current_user_id = int(getattr(current_user, "id", 0) or 0)
+    membership = db.session.scalar(
+        select(CollaborationChannelMember).where(
+            CollaborationChannelMember.organization_id == org_id,
+            CollaborationChannelMember.channel_id == int(channel_id),
+            CollaborationChannelMember.user_id == current_user_id,
+            CollaborationChannelMember.is_active.is_(True),
+        ).limit(1)
+    )
+    if membership is None:
+        return jsonify({"error": "channel not found"}), 404
+
+    since_id = request.args.get("since_id", type=int) or 0
+    timeout_seconds = request.args.get("timeout_seconds", type=int)
+    timeout_seconds = 15 if timeout_seconds is None else max(0, min(30, int(timeout_seconds)))
+    poll_interval = 0.5
+
+    def _event(event: str, payload: dict[str, Any]) -> str:
+        return f"event: {event}\ndata: {json.dumps(payload)}\n\n"
+
+    @stream_with_context
+    def _iter() -> Any:
+        cursor = max(0, int(since_id))
+        started = time.monotonic()
+        while True:
+            rows = list(
+                db.session.scalars(
+                    select(CollaborationMessage)
+                    .where(
+                        CollaborationMessage.organization_id == org_id,
+                        CollaborationMessage.channel_id == int(channel_id),
+                        CollaborationMessage.id > int(cursor),
+                    )
+                    .order_by(CollaborationMessage.id.asc())
+                    .limit(200)
+                )
+            )
+            if rows:
+                for row in rows:
+                    payload = _collab_message_dict(row)
+                    cursor = int(row.id)
+                    yield _event("message", payload)
+                if timeout_seconds <= 0:
+                    break
+
+            elapsed = time.monotonic() - started
+            if elapsed >= float(timeout_seconds):
+                break
+
+            yield ": keep-alive\n\n"
+            time.sleep(poll_interval)
+
+        yield _event("sync", {"channel_id": int(channel_id), "cursor": int(cursor), "complete": True})
+
+    return Response(
+        _iter(),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 def upsert_collaboration_presence():

@@ -158,6 +158,13 @@ def create_collaboration_message(channel_id: int):
     return v2_collab_handlers.create_collaboration_message(channel_id)
 
 
+@v2_bp.get("/collab/channels/<int:channel_id>/stream")
+@login_required
+@roles_required("admin", "staff", "viewer")
+def stream_collaboration_messages(channel_id: int):
+    return v2_collab_handlers.stream_collaboration_messages(channel_id)
+
+
 @v2_bp.post("/collab/presence")
 @login_required
 @roles_required("admin", "staff", "viewer")

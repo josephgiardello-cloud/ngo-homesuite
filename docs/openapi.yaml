@@ -799,6 +799,40 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           description: Channel not found
+  /api/v2/collab/channels/{channel_id}/stream:
+    get:
+      operationId: getV2CollabChannelMessageStream
+      summary: Stream channel messages as server-sent events for near real-time updates
+      tags: [CollaborationV2]
+      parameters:
+        - in: path
+          name: channel_id
+          required: true
+          schema:
+            type: integer
+        - in: query
+          name: since_id
+          required: false
+          schema:
+            type: integer
+        - in: query
+          name: timeout_seconds
+          required: false
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: SSE message stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Channel not found
   /api/v2/collab/presence:
     get:
       operationId: getV2CollabPresence
