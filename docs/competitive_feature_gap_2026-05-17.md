@@ -17,7 +17,7 @@ Status legend:
 | Project management | Partial | `ngo_homesuite/models/core.py`, `ngo_homesuite/web/tasks_routes.py` | Project entity and tasks exist; not yet a full PM suite (milestones/board views/dependencies). |
 | Group management | Exists | `ngo_homesuite/services/smart_groups_service.py`, `ngo_homesuite/web/smart_groups_routes.py` | Smart Groups / dynamic audience CRUD + evaluation already present. |
 | Dashboard charts | Exists | `ngo_homesuite/web/main_routes.py`, `ngo_homesuite/web/templates/reports.html` | Report charts are present via Chart.js (plus TONY dashboard charts). |
-| Duplicate detection | Partial | `ngo_homesuite/services/donor_service.py`, `ngo_homesuite/services/form_ecosystem_service.py` | Donor merge and form-intake idempotency/dedupe are implemented; a universal operator dedupe workbench is still pending. |
+| Duplicate detection | Exists | `ngo_homesuite/web/v2_routes.py`, `ngo_homesuite/services/donor_service.py`, `ngo_homesuite/services/form_ecosystem_service.py` | Operator dedupe workbench now supports cross-entity candidate surfacing, confidence/merge-supported triage filters, simulation/merge/undo workflows, and actionable conflict metadata for manual-review queues. |
 | Volunteer shift scheduling | Exists | `ngo_homesuite/services/volunteer_service.py`, `ngo_homesuite/web/volunteer_routes.py` | Shift CRUD + completion flows are implemented. |
 | 2FA | Exists | `ngo_homesuite/models/core.py`, `ngo_homesuite/web/auth_routes.py` | TOTP enrollment/confirm/login paths, backup-code rotation/consumption, role-based enrollment policy, and step-up OTP are implemented. |
 | WebAuthn/passkeys | Exists | `ngo_homesuite/web/auth_routes.py` | Passkey registration and authentication begin/complete flows are implemented. |

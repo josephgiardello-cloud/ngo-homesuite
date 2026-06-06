@@ -581,11 +581,37 @@ def test_v2_dedupe_workbench_surfaces_cross_entity_candidates_contract(client, a
     assert isinstance(candidates, list)
     match = next((item for item in candidates if str(item.get("reason") or "") == "matching_email"), None)
     assert match is not None
+    assert str(match.get("recommended_action") or "") in {
+        "merge_donors",
+        "manual_review_cross_entity",
+        "manual_review_conflicts",
+    }
+    assert isinstance(match.get("donor_merge_candidates") or [], list)
+    conflicts = match.get("conflicts") or {}
+    assert isinstance(conflicts.get("donor_email_mismatch"), bool)
+    assert isinstance(conflicts.get("donor_phone_mismatch"), bool)
+    assert isinstance(conflicts.get("donor_name_mismatch"), bool)
+
     records = match.get("records") or []
     entity_types = {str(item.get("entity_type") or "") for item in records}
     assert "donor" in entity_types
     assert "beneficiary" in entity_types
     assert "volunteer" in entity_types
+
+    filtered = client.get("/api/v2/dedupe/workbench?entity_scope=all&limit=50&merge_supported_only=true&min_confidence=0.8")
+    assert filtered.status_code == 200
+    filtered_payload = filtered.get_json() or {}
+    for item in filtered_payload.get("candidates") or []:
+        assert bool(item.get("merge_supported")) is True
+        assert float(item.get("confidence") or 0.0) >= 0.8
+    filtered_meta = filtered_payload.get("meta") or {}
+    action_counts = filtered_meta.get("action_counts") or {}
+    assert isinstance(action_counts.get("merge_donors"), int)
+
+    bad_filter = client.get("/api/v2/dedupe/workbench?min_confidence=1.5")
+    assert bad_filter.status_code == 400
+    bad_flag = client.get("/api/v2/dedupe/workbench?merge_supported_only=maybe")
+    assert bad_flag.status_code == 400
 
 
 def test_v2_dedupe_workbench_merge_contract_relinks_and_removes_duplicate(client, app):

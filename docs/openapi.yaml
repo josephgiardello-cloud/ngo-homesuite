@@ -161,6 +161,18 @@ paths:
           required: false
           schema:
             type: integer
+        - in: query
+          name: min_confidence
+          required: false
+          schema:
+            type: number
+            minimum: 0
+            maximum: 1
+        - in: query
+          name: merge_supported_only
+          required: false
+          schema:
+            type: boolean
       responses:
         '200':
           description: Duplicate candidate payload
@@ -168,6 +180,73 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  organization_id:
+                    type: integer
+                  entity_scope:
+                    type: string
+                  count:
+                    type: integer
+                  candidates:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        candidate_id:
+                          type: string
+                        reason:
+                          type: string
+                        match_key:
+                          type: string
+                        confidence:
+                          type: number
+                        record_count:
+                          type: integer
+                        merge_supported:
+                          type: boolean
+                        suggested_primary_donor_id:
+                          type: integer
+                          nullable: true
+                        donor_merge_candidates:
+                          type: array
+                          items:
+                            type: integer
+                        recommended_action:
+                          type: string
+                          enum: [merge_donors, manual_review_cross_entity, manual_review_conflicts]
+                        cross_entity_types:
+                          type: array
+                          items:
+                            type: string
+                        conflicts:
+                          type: object
+                          properties:
+                            donor_email_mismatch:
+                              type: boolean
+                            donor_phone_mismatch:
+                              type: boolean
+                            donor_name_mismatch:
+                              type: boolean
+                  meta:
+                    type: object
+                    properties:
+                      limit:
+                        type: integer
+                      max_scan:
+                        type: integer
+                      min_confidence:
+                        type: number
+                      merge_supported_only:
+                        type: boolean
+                      action_counts:
+                        type: object
+                        properties:
+                          merge_donors:
+                            type: integer
+                          manual_review_cross_entity:
+                            type: integer
+                          manual_review_conflicts:
+                            type: integer
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':

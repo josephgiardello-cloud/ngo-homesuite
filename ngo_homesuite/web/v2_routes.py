@@ -220,11 +220,29 @@ def dedupe_workbench_route():
 
     limit_raw = request.args.get("limit", "100")
     max_scan_raw = request.args.get("max_scan", "2000")
+    min_confidence_raw = request.args.get("min_confidence")
+    merge_supported_only_raw = request.args.get("merge_supported_only")
     try:
         limit = max(1, min(500, int(limit_raw)))
         max_scan = max(100, min(20000, int(max_scan_raw)))
     except (TypeError, ValueError):
         return jsonify({"error": "limit and max_scan must be integers"}), 400
+
+    if min_confidence_raw in (None, ""):
+        min_confidence = 0.0
+    else:
+        try:
+            min_confidence = float(min_confidence_raw)
+        except (TypeError, ValueError):
+            return jsonify({"error": "min_confidence must be a number between 0 and 1"}), 400
+        if min_confidence < 0.0 or min_confidence > 1.0:
+            return jsonify({"error": "min_confidence must be a number between 0 and 1"}), 400
+
+    try:
+        merge_supported_only = _bool_or_none(merge_supported_only_raw, field_name="merge_supported_only")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    merge_supported_only = bool(merge_supported_only) if merge_supported_only is not None else False
 
     org_id = _org_id()
     include_donor = entity_scope in {"all", "donor"}
@@ -355,6 +373,21 @@ def dedupe_workbench_route():
             )
             candidate_key = f"{reason}:{signature}"
             mergeable_donors = [r for r in candidate_records if r["entity_type"] == "donor"]
+            donor_emails = {
+                str((row.get("email") or "")).strip().lower()
+                for row in mergeable_donors
+                if str((row.get("email") or "")).strip()
+            }
+            donor_phones = {
+                _normalize_phone(row.get("phone"))
+                for row in mergeable_donors
+                if _normalize_phone(row.get("phone"))
+            }
+            donor_names = {
+                _normalize_text(row.get("name"))
+                for row in mergeable_donors
+                if _normalize_text(row.get("name"))
+            }
             best_primary = None
             if len(mergeable_donors) >= 2:
                 best_primary = sorted(
@@ -365,20 +398,56 @@ def dedupe_workbench_route():
                     ),
                 )[0]
 
+            cross_entity_types = sorted({str(r.get("entity_type") or "") for r in candidate_records if str(r.get("entity_type") or "")})
+            merge_supported = bool(len(mergeable_donors) >= 2)
+            has_donor_conflicts = bool(
+                (len(donor_emails) > 1)
+                or (len(donor_phones) > 1)
+                or (len(donor_names) > 1)
+            )
+            recommended_action = "merge_donors" if merge_supported else "manual_review_cross_entity"
+            if merge_supported and has_donor_conflicts:
+                recommended_action = "manual_review_conflicts"
+            donor_merge_candidates = [
+                int(r.get("entity_id") or 0)
+                for r in sorted(
+                    mergeable_donors,
+                    key=lambda row: (
+                        -int(row.get("donation_count") or 0),
+                        int(row.get("entity_id") or 0),
+                    ),
+                )
+                if int(r.get("entity_id") or 0) > 0
+            ]
+
             candidate_map[candidate_key] = {
+                "candidate_id": candidate_key,
                 "reason": reason,
                 "match_key": f"{key_prefix}:{key}",
                 "confidence": round(_dedupe_confidence(reason, len(candidate_records)), 2),
                 "records": candidate_records,
                 "record_count": int(len(candidate_records)),
-                "merge_supported": bool(len(mergeable_donors) >= 2),
+                "cross_entity_types": cross_entity_types,
+                "merge_supported": merge_supported,
+                "recommended_action": recommended_action,
                 "suggested_primary_donor_id": int(best_primary["entity_id"]) if best_primary else None,
+                "donor_merge_candidates": donor_merge_candidates,
+                "conflicts": {
+                    "donor_email_mismatch": len(donor_emails) > 1,
+                    "donor_phone_mismatch": len(donor_phones) > 1,
+                    "donor_name_mismatch": len(donor_names) > 1,
+                },
             }
 
     _add_candidates("matching_email", "email", by_email)
     _add_candidates("matching_name_phone", "name_phone", by_name_phone)
 
     candidates = list(candidate_map.values())
+    if merge_supported_only:
+        candidates = [item for item in candidates if bool(item.get("merge_supported"))]
+    if min_confidence > 0.0:
+        candidates = [item for item in candidates if float(item.get("confidence") or 0.0) >= min_confidence]
+
     candidates.sort(
         key=lambda row: (
             -float(row.get("confidence") or 0.0),
@@ -387,15 +456,29 @@ def dedupe_workbench_route():
         )
     )
 
+    limited_candidates = candidates[:limit]
+    action_counts = {
+        "merge_donors": 0,
+        "manual_review_cross_entity": 0,
+        "manual_review_conflicts": 0,
+    }
+    for item in limited_candidates:
+        action = str(item.get("recommended_action") or "")
+        if action in action_counts:
+            action_counts[action] += 1
+
     return jsonify(
         {
             "organization_id": int(org_id),
             "entity_scope": entity_scope,
             "count": int(len(candidates)),
-            "candidates": candidates[:limit],
+            "candidates": limited_candidates,
             "meta": {
                 "limit": int(limit),
                 "max_scan": int(max_scan),
+                "min_confidence": float(min_confidence),
+                "merge_supported_only": bool(merge_supported_only),
+                "action_counts": action_counts,
                 "implemented_actions": ["donor_merge", "cross_entity_review"],
             },
         }
