@@ -27,7 +27,7 @@ af.seed_demo_data = patched_seed
 
 from ngo_homesuite.flask_config import TestingConfig
 class _TestCfg(TestingConfig):
-    COPILOT_ENABLED = True
+    MINION_ENABLED = True
     ENABLE_DEMO_SEED = True
 
 from ngo_homesuite.app_factory import create_app
@@ -38,3 +38,4 @@ print("[TRACE] create_app FINISHED")
 from ngo_homesuite.models.core import Donor
 with app.app_context():
     print(f"[FINAL] Donor count = {Donor.query.count()}")
+

@@ -1,9 +1,9 @@
 """SMS messaging service with Twilio integration.
 
 Environment variables required when Twilio is configured:
-    TWILIO_ACCOUNT_SID  — Twilio account SID
-    TWILIO_AUTH_TOKEN   — Twilio auth token
-    TWILIO_FROM_NUMBER  — E.164 sender number, e.g. +15551234567
+    TWILIO_ACCOUNT_SID  â€” Twilio account SID
+    TWILIO_AUTH_TOKEN   â€” Twilio auth token
+    TWILIO_FROM_NUMBER  â€” E.164 sender number, e.g. +15551234567
 
 When variables are absent the service logs and no-ops (offline/stub mode).
 """
@@ -36,7 +36,7 @@ def send_sms(to: str, body: str, *, from_number: Optional[str] = None) -> bool:
 
     if not _is_configured():
         logger.warning(
-            "SMS not configured — TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN/TWILIO_FROM_NUMBER missing. "
+            "SMS not configured â€” TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN/TWILIO_FROM_NUMBER missing. "
             "Message to %s dropped.",
             to,
         )

@@ -152,8 +152,8 @@ def build_compliance_evidence(app: Flask, organization_id: int | None = None) ->
         "session_cookie_httponly": bool(app.config.get("SESSION_COOKIE_HTTPONLY", False)),
         "session_cookie_secure": bool(app.config.get("SESSION_COOKIE_SECURE", False)),
         "session_cookie_samesite": str(app.config.get("SESSION_COOKIE_SAMESITE", "")),
-        "copilot_enabled": bool(app.config.get("COPILOT_ENABLED", False)),
-        "copilot_web_tools_enabled": bool(app.config.get("COPILOT_ALLOW_WEB_TOOLS", False)),
+        "minion_enabled": bool(app.config.get("MINION_ENABLED", False)),
+        "minion_web_tools_enabled": bool(app.config.get("MINION_ALLOW_WEB_TOOLS", False)),
         "rate_limit_enabled": bool(app.config.get("RATELIMIT_ENABLED", False)),
         "db_uri_scheme": "sqlite" if db_uri.startswith("sqlite") else "other",
     }
@@ -187,3 +187,4 @@ def build_compliance_evidence(app: Flask, organization_id: int | None = None) ->
     payload = json.dumps(evidence, sort_keys=True, separators=(",", ":"))
     evidence["sha256"] = hashlib.sha256(payload.encode("utf-8")).hexdigest()
     return evidence
+

@@ -1,14 +1,14 @@
 """
-Copilot Health Probes and Circuit Breaker Pattern.
+Minion Health Probes and Circuit Breaker Pattern.
 
 INDUSTRY STANDARDS APPLIED:
-✅ Health check endpoint (periodic, timeout-protected)
-✅ Circuit breaker pattern (fail-fast, auto-recovery)
-✅ Graceful degradation (fallback to static responses)
-✅ Metrics collection (latency, error rates, circuit state)
-✅ Alerting on degradation
-✅ Request queuing with backpressure
-✅ Timeout enforcement (per-request, per-circuit)
+âœ… Health check endpoint (periodic, timeout-protected)
+âœ… Circuit breaker pattern (fail-fast, auto-recovery)
+âœ… Graceful degradation (fallback to static responses)
+âœ… Metrics collection (latency, error rates, circuit state)
+âœ… Alerting on degradation
+âœ… Request queuing with backpressure
+âœ… Timeout enforcement (per-request, per-circuit)
 """
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ class CircuitBreakerMetrics:
 
 class CircuitBreaker:
     """
-    Circuit breaker for Copilot service.
+    Circuit breaker for Minion service.
     
     Prevents cascading failures by:
     1. Tracking consecutive failures
@@ -140,7 +140,7 @@ class CircuitBreaker:
             if latency_ms < self.metrics.min_latency_ms:
                 self.metrics.min_latency_ms = latency_ms
             
-            # Transition from HALF_OPEN → CLOSED on success
+            # Transition from HALF_OPEN â†’ CLOSED on success
             if self.metrics.current_state == CircuitBreakerState.HALF_OPEN:
                 self.metrics.current_state = CircuitBreakerState.CLOSED
                 self.metrics.reset()
@@ -200,8 +200,8 @@ class CircuitBreakerOpen(Exception):
     pass
 
 
-class CopilotHealthProbe:
-    """Health check for Copilot service."""
+class MinionHealthProbe:
+    """Health check for Minion service."""
     
     def __init__(
         self,
@@ -220,7 +220,7 @@ class CopilotHealthProbe:
         
         # Circuit breaker for health checks
         self.circuit_breaker = CircuitBreaker(
-            name="copilot_health",
+            name="minion_health",
             failure_threshold=3,
             recovery_timeout=60,
         )
@@ -232,7 +232,7 @@ class CopilotHealthProbe:
     
     def probe(self) -> dict:
         """
-        Perform health check on Copilot service.
+        Perform health check on Minion service.
         
         Returns:
             {
@@ -308,15 +308,15 @@ class CopilotHealthProbe:
         }
 
 
-class CopilotRequestGate:
-    """Gate for controlling requests to Copilot with fallback."""
+class MinionRequestGate:
+    """Gate for controlling requests to Minion with fallback."""
     
-    def __init__(self, health_probe: CopilotHealthProbe):
+    def __init__(self, health_probe: MinionHealthProbe):
         """
         Initialize request gate.
         
         Args:
-            health_probe: CopilotHealthProbe instance
+            health_probe: MinionHealthProbe instance
         """
         self.health_probe = health_probe
         self.request_queue = []
@@ -324,7 +324,7 @@ class CopilotRequestGate:
     
     def should_allow_request(self) -> bool:
         """
-        Determine if request should be forwarded to Copilot or rejected.
+        Determine if request should be forwarded to Minion or rejected.
         
         Returns: True if circuit allows, False if should use fallback
         """
@@ -332,7 +332,7 @@ class CopilotRequestGate:
     
     def get_fallback_response(self, query: str) -> str:
         """
-        Return fallback response when Copilot is unavailable.
+        Return fallback response when Minion is unavailable.
         
         **GRACEFUL DEGRADATION**: Return helpful message instead of error.
         """
@@ -340,3 +340,4 @@ class CopilotRequestGate:
             "The AI assistant is currently unavailable. "
             "Please try again in a few moments or contact support if the issue persists."
         )
+

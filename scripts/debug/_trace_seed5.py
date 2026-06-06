@@ -4,7 +4,7 @@ os.chdir(Path(__file__).resolve().parent)
 
 from ngo_homesuite.flask_config import TestingConfig
 class _TestCfg(TestingConfig):
-    COPILOT_ENABLED = True
+    MINION_ENABLED = True
     ENABLE_DEMO_SEED = True
 
 from ngo_homesuite.models.core import db, Donor, Organization, User, Fund, Project, Volunteer, Expense
@@ -64,3 +64,4 @@ af.seed_demo_data = seed_demo_data_traced
 app = create_app(_TestCfg)
 with app.app_context():
     print(f"[END] Final Donor count: {Donor.query.count()}")
+

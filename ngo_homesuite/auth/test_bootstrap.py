@@ -2,11 +2,11 @@
 Comprehensive tests for Secure Bootstrap Flow and Session Hardening.
 
 Validates:
-✅ One-time setup tokens prevent org takeover
-✅ Token expiration and rate limiting
-✅ Session cookie hardening (HttpOnly, Secure, SameSite)
-✅ Bootstrap prevents double initialization
-✅ Audit logging on all bootstrap events
+âœ… One-time setup tokens prevent org takeover
+âœ… Token expiration and rate limiting
+âœ… Session cookie hardening (HttpOnly, Secure, SameSite)
+âœ… Bootstrap prevents double initialization
+âœ… Audit logging on all bootstrap events
 """
 
 import pytest

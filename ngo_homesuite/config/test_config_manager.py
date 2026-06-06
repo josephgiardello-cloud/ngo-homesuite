@@ -2,12 +2,12 @@
 Comprehensive tests for Centralized Configuration Manager.
 
 Validates:
-✅ Configuration loading from environment variables
-✅ Type-safe configuration access
-✅ Secret validation and masking
-✅ Environment-specific profiles
-✅ Feature flag support
-✅ Configuration validation at startup
+âœ… Configuration loading from environment variables
+âœ… Type-safe configuration access
+âœ… Secret validation and masking
+âœ… Environment-specific profiles
+âœ… Feature flag support
+âœ… Configuration validation at startup
 """
 
 import os
@@ -160,13 +160,13 @@ class TestEnvironmentLoadingWithMocking:
         """
         monkeypatch.setenv('SECRET_KEY', 'x' * 32)
         monkeypatch.setenv('DATABASE_URL', 'sqlite:///test.db')
-        monkeypatch.setenv('COPILOT_ENABLED', 'true')
+        monkeypatch.setenv('MINION_ENABLED', 'true')
         monkeypatch.setenv('DB_ENCRYPTION_ENABLED', '1')
         monkeypatch.setenv('ENFORCE_HTTPS', 'yes')
         
         config = AppConfig(Environment.TESTING)
         
-        assert config.copilot.enabled is True
+        assert config.minion.enabled is True
         assert config.database.encryption_enabled is True
         assert config.security.enforce_https is True
 
@@ -178,12 +178,12 @@ class TestEnvironmentLoadingWithMocking:
         """
         monkeypatch.setenv('SECRET_KEY', 'x' * 32)
         monkeypatch.setenv('DATABASE_URL', 'sqlite:///test.db')
-        monkeypatch.setenv('COPILOT_TIMEOUT', '45')
+        monkeypatch.setenv('MINION_TIMEOUT', '45')
         monkeypatch.setenv('RATE_LIMIT_REQUESTS', '200')
         
         config = AppConfig(Environment.TESTING)
         
-        assert config.copilot.timeout == 45
+        assert config.minion.timeout == 45
         assert config.security.rate_limit_requests == 200
 
 
@@ -254,7 +254,7 @@ class TestFeatureFlags:
         config = AppConfig(Environment.TESTING)
         
         assert config.feature_flags.enable_sqlcipher is False
-        assert config.feature_flags.enable_copilot_v2 is False
+        assert config.feature_flags.enable_minion_v2 is False
         assert config.feature_flags.enable_new_dashboard is False
 
 
@@ -291,10 +291,10 @@ class TestEnvironmentProfiles:
         assert config.observability.log_level in ['INFO', 'DEBUG']
 
 
-class TestCopilotConfig:
-    """Test Copilot configuration."""
+class TestMinionConfig:
+    """Test Minion configuration."""
 
-    def test_copilot_tool_allowlist_parsing(self, monkeypatch):
+    def test_minion_tool_allowlist_parsing(self, monkeypatch):
         """
         **Scenario**: Parse comma-separated tool allowlist.
         
@@ -302,13 +302,13 @@ class TestCopilotConfig:
         """
         monkeypatch.setenv('SECRET_KEY', 'x' * 32)
         monkeypatch.setenv('DATABASE_URL', 'sqlite:///test.db')
-        monkeypatch.setenv('COPILOT_TOOL_ALLOWLIST', 'tool_a, tool_b, tool_c')
+        monkeypatch.setenv('MINION_TOOL_ALLOWLIST', 'tool_a, tool_b, tool_c')
         
         config = AppConfig(Environment.TESTING)
         
-        assert config.copilot.tool_allowlist == ['tool_a', 'tool_b', 'tool_c']
+        assert config.minion.tool_allowlist == ['tool_a', 'tool_b', 'tool_c']
 
-    def test_copilot_circuit_breaker_config(self, monkeypatch):
+    def test_minion_circuit_breaker_config(self, monkeypatch):
         """
         **Scenario**: Circuit breaker settings configurable.
         
@@ -316,13 +316,13 @@ class TestCopilotConfig:
         """
         monkeypatch.setenv('SECRET_KEY', 'x' * 32)
         monkeypatch.setenv('DATABASE_URL', 'sqlite:///test.db')
-        monkeypatch.setenv('COPILOT_CIRCUIT_BREAKER_THRESHOLD', '10')
-        monkeypatch.setenv('COPILOT_CIRCUIT_BREAKER_TIMEOUT', '600')
+        monkeypatch.setenv('MINION_CIRCUIT_BREAKER_THRESHOLD', '10')
+        monkeypatch.setenv('MINION_CIRCUIT_BREAKER_TIMEOUT', '600')
         
         config = AppConfig(Environment.TESTING)
         
-        assert config.copilot.circuit_breaker_threshold == 10
-        assert config.copilot.circuit_breaker_timeout == 600
+        assert config.minion.circuit_breaker_threshold == 10
+        assert config.minion.circuit_breaker_timeout == 600
 
 
 class TestConfigValidationOnInit:
@@ -360,9 +360,9 @@ class TestConfigValidationOnInit:
         """
         monkeypatch.setenv('SECRET_KEY', 'x' * 32)
         monkeypatch.setenv('DATABASE_URL', 'sqlite:///test.db')
-        monkeypatch.setenv('COPILOT_TIMEOUT', '2')  # Invalid: too low
+        monkeypatch.setenv('MINION_TIMEOUT', '2')  # Invalid: too low
         
-        with pytest.raises(ConfigValidationError, match="COPILOT_TIMEOUT"):
+        with pytest.raises(ConfigValidationError, match="MINION_TIMEOUT"):
             AppConfig(Environment.TESTING)
 
 
@@ -373,7 +373,7 @@ class TestConfigSerialization:
         """
         **Scenario**: to_dict() includes all config sections.
         
-        **Assertions**: Database, secrets, copilot, security all present.
+        **Assertions**: Database, secrets, minion, security all present.
         """
         monkeypatch.setenv('SECRET_KEY', 'x' * 32)
         monkeypatch.setenv('DATABASE_URL', 'sqlite:///test.db')
@@ -383,7 +383,7 @@ class TestConfigSerialization:
         
         assert 'database' in config_dict
         assert 'secrets' in config_dict
-        assert 'copilot' in config_dict
+        assert 'minion' in config_dict
         assert 'security' in config_dict
         assert 'observability' in config_dict
         assert 'feature_flags' in config_dict
@@ -401,3 +401,4 @@ class TestConfigSerialization:
         config_dict = config.to_dict()
         
         assert config_dict['environment'] == 'production'
+

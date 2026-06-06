@@ -5,7 +5,7 @@ os.chdir(Path(__file__).resolve().parent)
 from ngo_homesuite.flask_config import TestingConfig
 
 class _TestCfg(TestingConfig):
-    COPILOT_ENABLED = True
+    MINION_ENABLED = True
     ENABLE_DEMO_SEED = False  # Disable auto-seed so we can manually trace
 
 from ngo_homesuite.app_factory import create_app
@@ -178,3 +178,4 @@ with app.app_context():
         db.session.rollback()
 
     print(f"=== Final state: Donors={Donor.query.count()} ===")
+

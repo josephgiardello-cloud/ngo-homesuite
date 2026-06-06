@@ -126,12 +126,12 @@ def create_stripe_checkout_route():
 
     Request body (JSON):
         campaign_name (str, required)
-        amount_cents  (int, required)   – amount in the smallest currency unit
+        amount_cents  (int, required)   â€“ amount in the smallest currency unit
         currency      (str, default USD)
         success_url   (str, required)
         cancel_url    (str, required)
         donor_id      (int, optional)
-        campaign_id   (int, optional)   – maps to project_id in the Donation model
+        campaign_id   (int, optional)   â€“ maps to project_id in the Donation model
         donor_email   (str, optional)
     """
     from ngo_homesuite.services.payment_service import PaymentService, StripeNotConfigured

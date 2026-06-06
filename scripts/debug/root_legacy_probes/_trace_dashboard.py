@@ -1,4 +1,4 @@
-﻿import traceback
+import traceback
 from ngo_homesuite.app_factory import create_app
 from ngo_homesuite.models.core import User
 

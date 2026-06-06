@@ -11,7 +11,7 @@ from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.pool import StaticPool
 
 class _TestCfg(TestingConfig):
-    COPILOT_ENABLED = True
+    MINION_ENABLED = True
 
 from ngo_homesuite.app_factory import create_app
 app = create_app(_TestCfg)
@@ -50,3 +50,4 @@ with app.app_context():
             db.session.rollback()
     else:
         print("Organization 'community-hope-initiative' not found.")
+

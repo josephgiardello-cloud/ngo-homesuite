@@ -1,10 +1,10 @@
 """Donor Engagement Scoring service.
 
 Computes a 0-100 composite health score from four RFM-adjacent dimensions:
-    Recency   (0–25)  — days since last gift
-    Frequency (0–25)  — number of gifts in last 3 years
-    Monetary  (0–25)  — total lifetime giving vs org median
-    Engagement(0–25)  — membership, open tasks, events, journey activity
+    Recency   (0â€“25)  â€” days since last gift
+    Frequency (0â€“25)  â€” number of gifts in last 3 years
+    Monetary  (0â€“25)  â€” total lifetime giving vs org median
+    Engagement(0â€“25)  â€” membership, open tasks, events, journey activity
 
 Segments donors: champion | loyal | promising | at_risk | lapsed | new
 Sets cultivation_priority: high | medium | low
@@ -42,7 +42,7 @@ def _utcnow() -> datetime:
 
 
 # ---------------------------------------------------------------------------
-# Dimension calculators (each returns 0.0–25.0)
+# Dimension calculators (each returns 0.0â€“25.0)
 # ---------------------------------------------------------------------------
 
 def _recency_score(org_id: int, donor_id: int) -> float:
@@ -94,7 +94,7 @@ def _frequency_score(org_id: int, donor_id: int) -> float:
 
 
 def _monetary_score(org_id: int, donor_id: int, org_median: float) -> float:
-    """Score based on lifetime giving vs org median (25 = 5× median)."""
+    """Score based on lifetime giving vs org median (25 = 5Ã— median)."""
     total = db.session.scalar(
         select(func.coalesce(func.sum(Donation.amount), 0.0)).where(
             Donation.organization_id == org_id,
@@ -119,7 +119,7 @@ def _monetary_score(org_id: int, donor_id: int, org_median: float) -> float:
 
 
 def _engagement_score(org_id: int, donor_id: int) -> float:
-    """Score based on non-donation engagement signals (0–25)."""
+    """Score based on non-donation engagement signals (0â€“25)."""
     score = 0.0
 
     # Active membership

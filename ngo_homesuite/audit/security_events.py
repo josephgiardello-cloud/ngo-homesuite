@@ -9,12 +9,12 @@ Comprehensive logging of sensitive operations:
 - Compliance events (audit access, export operations)
 
 INDUSTRY STANDARDS:
-✅ Immutable audit trail (append-only, no backfill)
-✅ Standardized event schema
-✅ Causality tracking (who, what, when, where, why)
-✅ Tamper-evident (hashed payload validation)
-✅ Retention policy (configurable)
-✅ SIEM-compatible format (JSON, queryable)
+âœ… Immutable audit trail (append-only, no backfill)
+âœ… Standardized event schema
+âœ… Causality tracking (who, what, when, where, why)
+âœ… Tamper-evident (hashed payload validation)
+âœ… Retention policy (configurable)
+âœ… SIEM-compatible format (JSON, queryable)
 """
 
 from __future__ import annotations

@@ -431,7 +431,7 @@ def login():
                 return render_template('auth/login.html', mfa_required=True, **login_template_context)
             user.reset_mfa_challenge_failures()
 
-        # Successful login — clear lockout counters and rotate session.
+        # Successful login â€” clear lockout counters and rotate session.
         user.failed_login_count = 0
         user.locked_until = None
         db.session.commit()
@@ -1211,7 +1211,7 @@ def oauth_callback(provider: str):
             email=identity.email,
             first_name=first,
             last_name=last,
-            password_hash='!oauth',   # sentinel — not a valid argon2 hash
+            password_hash='!oauth',   # sentinel â€” not a valid argon2 hash
             role='viewer',
             oauth_provider=identity.provider,
             oauth_provider_id=identity.provider_user_id,

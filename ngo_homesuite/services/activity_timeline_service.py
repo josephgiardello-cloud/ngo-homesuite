@@ -229,9 +229,9 @@ class ActivityTimelineService:
         for row in donor_interactions:
             activity_id, occurred_at, channel, summary, next_action, follow_up_due, completed_at, created_by = row
             actor_name = ActivityTimelineService._user_name(created_by)
-            summary_text = f"{channel.title()} — {summary}"
+            summary_text = f"{channel.title()} â€” {summary}"
             if completed_at:
-                summary_text += " ✓"
+                summary_text += " âœ“"
 
             items.append(
                 ActivityFeedItem(
@@ -272,7 +272,7 @@ class ActivityTimelineService:
         for row in donations:
             activity_id, donation_date, amount, fund_id, project_id = row
             amount_dollars = f"${float(amount or 0):,.2f}"
-            summary_text = f"Donation received — {amount_dollars}"
+            summary_text = f"Donation received â€” {amount_dollars}"
 
             items.append(
                 ActivityFeedItem(
@@ -335,7 +335,7 @@ class ActivityTimelineService:
                         entity_id=donor_id,
                         actor_id=None,
                         actor_name=None,
-                        summary=f"Pledge ({pledge_status}) — {amount_dollars} {frequency}",
+                        summary=f"Pledge ({pledge_status}) â€” {amount_dollars} {frequency}",
                         metadata={
                             "amount": ActivityTimelineService._coerce_float(amount_value),
                             "frequency": frequency,
@@ -391,7 +391,7 @@ class ActivityTimelineService:
                         entity_id=donor_id,
                         actor_id=assigned_to_id,
                         actor_name=actor_name,
-                        summary=f"Task ({status}) — {title}",
+                        summary=f"Task ({status}) â€” {title}",
                         metadata={
                             "status": status,
                             "priority": priority,
@@ -504,7 +504,7 @@ class ActivityTimelineService:
                         entity_id=donor_id,
                         actor_id=None,
                         actor_name=None,
-                        summary=f"Event {registration_status} — {event_title}",
+                        summary=f"Event {registration_status} â€” {event_title}",
                         metadata={
                             "event_id": event_id,
                             "event_title": event_title,
@@ -566,7 +566,7 @@ class ActivityTimelineService:
                             entity_id=donor_id,
                             actor_id=None,
                             actor_name=None,
-                            summary=f"Volunteer shift ({shift_status}) — {shift_title}",
+                            summary=f"Volunteer shift ({shift_status}) â€” {shift_title}",
                             metadata={
                                 "volunteer_id": volunteer_id,
                                 "volunteer_name": volunteer_name,
@@ -631,7 +631,7 @@ class ActivityTimelineService:
                         actor_id=None,
                         actor_name=None,
                         summary=(
-                            f"Soft credit ({role}) — influenced {donation_currency} {amount_value:,.2f} "
+                            f"Soft credit ({role}) â€” influenced {donation_currency} {amount_value:,.2f} "
                             f"for {hard_credit_donor_name}"
                         ),
                         metadata={
@@ -685,7 +685,7 @@ class ActivityTimelineService:
                             actor_id=None,
                             actor_name=None,
                             summary=(
-                                f"Soft credit (legacy) — influenced {currency} {amount_value:,.2f} "
+                                f"Soft credit (legacy) â€” influenced {currency} {amount_value:,.2f} "
                                 f"for {hard_credit_donor_name}"
                             ),
                             metadata={
@@ -740,7 +740,7 @@ class ActivityTimelineService:
                         entity_id=donor_id,
                         actor_id=int(actor_id) if actor_id else None,
                         actor_name=actor_name,
-                        summary=f"Workflow event — {event_type}",
+                        summary=f"Workflow event â€” {event_type}",
                         metadata={
                             "event_type": event_type,
                             "aggregate_type": aggregate_type,
@@ -933,7 +933,7 @@ class ActivityTimelineService:
                         entity_id=beneficiary_id,
                         actor_id=staff_user_id,
                         actor_name=actor_name,
-                        summary=f"{service_type} — {detail}",
+                        summary=f"{service_type} â€” {detail}",
                         metadata={"service_type": service_type},
                     )
                 )
@@ -1023,7 +1023,7 @@ class ActivityTimelineService:
                         entity_id=beneficiary_id,
                         actor_id=assigned_to_user_id,
                         actor_name=actor_name,
-                        summary=f"Case task ({status}) — {title}",
+                        summary=f"Case task ({status}) â€” {title}",
                         metadata={
                             "status": status,
                             "priority": priority,
@@ -1129,7 +1129,7 @@ class ActivityTimelineService:
                 continue
 
             actor_name = ActivityTimelineService._user_name(created_by)
-            summary_text = f"{donor_name}: {channel.title()} — {summary}"
+            summary_text = f"{donor_name}: {channel.title()} â€” {summary}"
 
             items.append(
                 ActivityFeedItem(
@@ -1203,7 +1203,7 @@ class ActivityTimelineService:
                         entity_id=entity_id,
                         actor_id=assigned_to_id,
                         actor_name=actor_name,
-                        summary=f"{lead}: Task ({status}) — {title}",
+                        summary=f"{lead}: Task ({status}) â€” {title}",
                         metadata={
                             "task_id": ActivityTimelineService._activity_numeric_id(activity_id),
                             "donor_name": donor_name,
@@ -1241,7 +1241,7 @@ class ActivityTimelineService:
                 continue
 
             amount_dollars = f"${float(amount or 0):,.2f}"
-            summary_text = f"{donor_name}: Donation received — {amount_dollars}"
+            summary_text = f"{donor_name}: Donation received â€” {amount_dollars}"
 
             items.append(
                 ActivityFeedItem(

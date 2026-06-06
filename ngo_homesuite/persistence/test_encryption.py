@@ -2,12 +2,12 @@
 Comprehensive tests for SQLCipher Encryption Integration.
 
 Validates:
-✅ Key generation and validation
-✅ Encryption/decryption functionality
-✅ Database migration (plaintext → encrypted)
-✅ Key rotation framework
-✅ Audit logging for encryption operations
-✅ Backward compatibility with plaintext databases
+âœ… Key generation and validation
+âœ… Encryption/decryption functionality
+âœ… Database migration (plaintext â†’ encrypted)
+âœ… Key rotation framework
+âœ… Audit logging for encryption operations
+âœ… Backward compatibility with plaintext databases
 """
 
 import pytest

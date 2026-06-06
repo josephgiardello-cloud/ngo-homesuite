@@ -7,7 +7,7 @@ refresh) are stored per-organization in app.config extension storage; in
 production these should be persisted to the database or a secrets store.
 
 This module provides:
-  - OAuth helpers (exchange code → tokens, refresh)
+  - OAuth helpers (exchange code â†’ tokens, refresh)
   - Push helpers (create invoice/payment/contact)
   - Sync wrappers that record results in AccountingSyncLog
   - A unified push_donation / push_expense interface

@@ -2343,15 +2343,15 @@ def get_organization_activity_feed():
 @v2_bp.route("/activity/insights", methods=["GET"])
 @login_required
 def get_activity_insights():
-    """AI Copilot summary + suggested next actions for the current activity feed context."""
-    from ngo_homesuite.ai.copilot_tools import CopilotToolRegistry
+    """AI Minion summary + suggested next actions for the current activity feed context."""
+    from ngo_homesuite.ai.minion_tools import MinionToolRegistry
 
     limit = request.args.get("limit", 40, type=int)
     entity_type = request.args.get("entity_type")
     activity_type = request.args.get("activity_type")
     search_query = (request.args.get("q") or "").strip() or None
 
-    payload = CopilotToolRegistry().execute(
+    payload = MinionToolRegistry().execute(
         "summarize_activity_timeline",
         {
             "limit": max(1, min(limit, 100)),
@@ -3558,3 +3558,4 @@ def campaign_projection(campaign_id: int):
         return jsonify({'error': str(exc)}), 404
 
     return jsonify(result), 200
+

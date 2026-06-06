@@ -5,12 +5,12 @@ from pathlib import Path
 
 from ngo_homesuite.app_factory import create_app
 from ngo_homesuite.flask_config import TestingConfig
-from ngo_homesuite.ai.copilot_tools import CopilotToolRegistry
+from ngo_homesuite.ai.minion_tools import MinionToolRegistry
 from ngo_homesuite.models.core import db, Donor, Organization
 
 
 class _TestCfg(TestingConfig):
-    COPILOT_ENABLED = True
+    MINION_ENABLED = True
     SQLALCHEMY_DATABASE_URI = "sqlite://"
 
 
@@ -32,7 +32,7 @@ def main() -> None:
             db.session.add(donor)
             db.session.commit()
 
-        registry = CopilotToolRegistry()
+        registry = MinionToolRegistry()
         payload = registry.execute(
             "donor_profile_insights",
             {"donor_id": 1},
@@ -44,3 +44,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

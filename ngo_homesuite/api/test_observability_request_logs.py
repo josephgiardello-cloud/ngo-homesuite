@@ -12,7 +12,7 @@ from ngo_homesuite.models.core import Organization, User, db
 @pytest.fixture(scope="module")
 def app():
     class _TestCfg(TestingConfig):
-        COPILOT_ENABLED = True
+        MINION_ENABLED = True
         METRICS_ENABLED = True
         ROLES_REQUIRING_2FA = []
 
@@ -96,3 +96,4 @@ def test_request_completed_log_contains_structured_request_fields(client, app):
         "200_to_999ms",
         "gte_1000ms",
     }
+

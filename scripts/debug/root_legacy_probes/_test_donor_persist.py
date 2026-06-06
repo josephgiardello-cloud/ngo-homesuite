@@ -7,7 +7,7 @@ from ngo_homesuite.models.core import db, Donor, Organization, User, Project, Fu
 from sqlalchemy import inspect as sa_inspect
 
 class _TestCfg(TestingConfig):
-    COPILOT_ENABLED = True
+    MINION_ENABLED = True
     SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
 
 app = create_app(_TestCfg)
@@ -34,3 +34,4 @@ with app.app_context():
     
     db.session.commit()
     print(f"Donor count after commit: {Donor.query.filter_by(organization_id=org.id).count()}")
+

@@ -5,7 +5,7 @@ from ngo_homesuite.ai.rag_index import LocalRAGIndex
 
 def reindex():
     project_root = os.getenv("NGO_HOMESUITE_PROJECT_ROOT", os.getcwd())
-    index_dir = os.getenv("COPILOT_INDEX_DIR", "data/copilot_index")
+    index_dir = os.getenv("MINION_INDEX_DIR", "data/minion_index")
     embed_model = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 
     index = LocalRAGIndex(index_dir=index_dir, embed_model=embed_model)
@@ -15,3 +15,4 @@ def reindex():
 
 if __name__ == "__main__":
     reindex()
+

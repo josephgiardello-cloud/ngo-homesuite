@@ -524,7 +524,7 @@ def test_oauth_repeated_login_reuses_account(oauth_client, oauth_app):
     with _stub_token_exchange('google', token, token['userinfo']):
         oauth_client.get('/auth/oauth/google/callback', follow_redirects=False)
 
-    # Second login — same provider UID
+    # Second login â€” same provider UID
     with _stub_token_exchange('google', token, token['userinfo']):
         rv2 = oauth_client.get('/auth/oauth/google/callback', follow_redirects=False)
 

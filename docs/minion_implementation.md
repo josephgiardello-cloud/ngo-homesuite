@@ -1,6 +1,6 @@
-# HomeSuite Copilot Implementation
+# HomeSuite Minion Implementation
 
-This update adds a practical, local-first copilot foundation with RAG and tool execution.
+This update adds a practical, local-first minion foundation with RAG and tool execution.
 
 ## What is now implemented
 
@@ -11,7 +11,7 @@ This update adds a practical, local-first copilot foundation with RAG and tool e
 - Fallback keyword index works without optional dependencies.
 
 2. Tool calling foundation
-- Module: `ngo_homesuite/ai/copilot_tools.py`
+- Module: `ngo_homesuite/ai/minion_tools.py`
 - Built-in tools:
   - `list_recent_donations`
   - `search_donors`
@@ -19,8 +19,8 @@ This update adds a practical, local-first copilot foundation with RAG and tool e
   - `generate_report`
 - Viewer role can chat read-only; action tools are only executed for admin/staff when explicitly requested.
 
-3. Copilot service
-- Module: `ngo_homesuite/ai/copilot_service.py`
+3. Minion service
+- Module: `ngo_homesuite/ai/minion_service.py`
 - Combines:
   - PII redaction
   - Retrieval context injection
@@ -28,29 +28,30 @@ This update adds a practical, local-first copilot foundation with RAG and tool e
   - Optional web check (disabled by default)
 
 4. New API endpoints
-- `POST /ai/copilot/chat`
-- `POST /ai/copilot/reindex` (admin-only)
+- `POST /ai/minion/chat`
+- `POST /ai/minion/reindex` (admin-only)
 - Implemented in: `ngo_homesuite/web/ai_routes.py`
 
 5. Audit and compliance alignment
-- Copilot interactions and reindex actions append events via `ngo_homesuite/db/audit_log.py`.
+- Minion interactions and reindex actions append events via `ngo_homesuite/db/audit_log.py`.
 - PII redaction runs before retrieval/tool flow.
 
 6. CLI reindex command
 - `homesuite reindex`
-- Module: `cli/ngohs_cli/copilot_index.py`
+- Module: `cli/ngohs_cli/minion_index.py`
 
 ## Environment variables
 
-- `COPILOT_ENABLED` (default `True`)
-- `COPILOT_INDEX_DIR` (default `data/copilot_index`)
-- `COPILOT_RAG_K` (default `6`)
-- `COPILOT_ALLOW_WEB_TOOLS` (default `False`)
+- `MINION_ENABLED` (default `True`)
+- `MINION_INDEX_DIR` (default `data/minion_index`)
+- `MINION_RAG_K` (default `6`)
+- `MINION_ALLOW_WEB_TOOLS` (default `False`)
 - `OLLAMA_EMBED_MODEL` (default `nomic-embed-text`)
 
 ## Recommended next increments
 
-1. Add streaming endpoint for copilot responses (`/ai/copilot/stream`).
+1. Add streaming endpoint for minion responses (`/ai/minion/stream`).
 2. Add scheduled reindex job and incremental indexing.
 3. Add richer action tools (backup trigger, export jobs, integrity checks with async status).
 4. Add result citation rendering in web chat UI.
+

@@ -9,7 +9,7 @@
         <p class="text-muted">Beneficiary profile</p>
     </div>
     <div style="margin-left:auto;" class="actions-row">
-        <a href="{{ url_for('main.beneficiaries_list') }}" class="btn btn-secondary">← All Beneficiaries</a>
+        <a href="{{ url_for('main.beneficiaries_list') }}" class="btn btn-secondary">â† All Beneficiaries</a>
     </div>
 </div>
 
@@ -24,23 +24,23 @@
         </div>
         <div>
             <div class="text-muted" style="font-size:0.8em; text-transform:uppercase; letter-spacing:0.05em;">Email</div>
-            <div>{{ beneficiary.email or '—' }}</div>
+            <div>{{ beneficiary.email or 'â€”' }}</div>
         </div>
         <div>
             <div class="text-muted" style="font-size:0.8em; text-transform:uppercase; letter-spacing:0.05em;">Phone</div>
-            <div>{{ beneficiary.phone or '—' }}</div>
+            <div>{{ beneficiary.phone or 'â€”' }}</div>
         </div>
         <div>
             <div class="text-muted" style="font-size:0.8em; text-transform:uppercase; letter-spacing:0.05em;">Program</div>
-            <div>{{ beneficiary.program or '—' }}</div>
+            <div>{{ beneficiary.program or 'â€”' }}</div>
         </div>
         <div>
             <div class="text-muted" style="font-size:0.8em; text-transform:uppercase; letter-spacing:0.05em;">Gender</div>
-            <div>{{ beneficiary.gender or '—' }}</div>
+            <div>{{ beneficiary.gender or 'â€”' }}</div>
         </div>
         <div>
             <div class="text-muted" style="font-size:0.8em; text-transform:uppercase; letter-spacing:0.05em;">Date of Birth</div>
-            <div>{{ beneficiary.date_of_birth.strftime('%Y-%m-%d') if beneficiary.date_of_birth else '—' }}</div>
+            <div>{{ beneficiary.date_of_birth.strftime('%Y-%m-%d') if beneficiary.date_of_birth else 'â€”' }}</div>
         </div>
         <div>
             <div class="text-muted" style="font-size:0.8em; text-transform:uppercase; letter-spacing:0.05em;">Location</div>
@@ -52,13 +52,13 @@
                 {% elif beneficiary.country %}
                     {{ beneficiary.country }}
                 {% else %}
-                    —
+                    â€”
                 {% endif %}
             </div>
         </div>
         <div>
             <div class="text-muted" style="font-size:0.8em; text-transform:uppercase; letter-spacing:0.05em;">Enrolled</div>
-            <div>{{ beneficiary.created_at.strftime('%Y-%m-%d') if beneficiary.created_at else '—' }}</div>
+            <div>{{ beneficiary.created_at.strftime('%Y-%m-%d') if beneficiary.created_at else 'â€”' }}</div>
         </div>
     </div>
     {% if beneficiary.notes %}
@@ -90,7 +90,7 @@
     {% for case in cases %}
         <tr>
             <td>{{ case.title or '(untitled)' }}</td>
-            <td>{{ case.case_type or '—' }}</td>
+            <td>{{ case.case_type or 'â€”' }}</td>
             <td>
                 <span class="badge
                     {% if case.status == 'open' %}badge-info
@@ -100,7 +100,7 @@
                     {{ case.status }}
                 </span>
             </td>
-            <td>{{ case.priority or '—' }}</td>
+            <td>{{ case.priority or 'â€”' }}</td>
             <td>
                 {% if case.progress_percent is not none %}
                 <div style="display:flex; align-items:center; gap:0.5rem;">
@@ -110,10 +110,10 @@
                     <span style="font-size:0.8em; color:var(--muted);">{{ case.progress_percent|int }}%</span>
                 </div>
                 {% else %}
-                —
+                â€”
                 {% endif %}
             </td>
-            <td>{{ case.opened_date.strftime('%Y-%m-%d') if case.opened_date else (case.created_at.strftime('%Y-%m-%d') if case.created_at else '—') }}</td>
+            <td>{{ case.opened_date.strftime('%Y-%m-%d') if case.opened_date else (case.created_at.strftime('%Y-%m-%d') if case.created_at else 'â€”') }}</td>
         </tr>
     {% endfor %}
     </tbody>

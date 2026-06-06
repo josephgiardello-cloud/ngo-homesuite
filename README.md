@@ -28,7 +28,7 @@ NGO HomeSuite is a local-first Flask application designed for nonprofit teams th
 - Membership and volunteer tools: enrollment/tracking, training, searchable list views
 - Reporting and analytics: exports, dashboards, guardrails, activity insights
 - API and integrations: versioned API routes plus docs and OpenAPI spec
-- AI assistant support: local-first Copilot endpoint with role-aware tooling
+- AI assistant support: local-first Minion endpoint with role-aware tooling
 
 ## Current State (June 2026)
 
@@ -148,3 +148,4 @@ Please review [CONTRIBUTING.md](CONTRIBUTING.md) before opening pull requests.
 ## License
 
 Licensed under MIT. See [LICENSE](LICENSE).
+

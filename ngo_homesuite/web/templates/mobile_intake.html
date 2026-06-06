@@ -189,7 +189,7 @@
                 {% for b in beneficiaries %}
                     <div class="recent-item">
                         <strong>{{ b.first_name }} {{ b.last_name }}</strong>
-                        <span>{{ b.program or 'No program' }} • {{ b.status }}</span>
+                        <span>{{ b.program or 'No program' }} â€¢ {{ b.status }}</span>
                     </div>
                 {% endfor %}
             {% else %}
@@ -203,7 +203,7 @@
                 {% for v in volunteers %}
                     <div class="recent-item">
                         <strong>{{ v.name }}</strong>
-                        <span>{{ v.status }}{% if v.email %} • {{ v.email }}{% endif %}</span>
+                        <span>{{ v.status }}{% if v.email %} â€¢ {{ v.email }}{% endif %}</span>
                     </div>
                 {% endfor %}
             {% else %}

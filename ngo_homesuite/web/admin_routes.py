@@ -487,7 +487,7 @@ def list_roles_route():
     counts = {role: count for role, count in rows}
     return jsonify({
         "roles": [
-            {"role": "admin", "count": counts.get("admin", 0), "description": "Full access — can manage users and org settings"},
+            {"role": "admin", "count": counts.get("admin", 0), "description": "Full access â€” can manage users and org settings"},
             {"role": "staff", "count": counts.get("staff", 0), "description": "Can create/edit cases, beneficiaries, donations, reports"},
             {"role": "volunteer", "count": counts.get("volunteer", 0), "description": "Read access to assigned programs; can log hours"},
             {"role": "viewer", "count": counts.get("viewer", 0), "description": "Read-only access to non-PII data"},

@@ -39,7 +39,8 @@ def manual_seed(app):
         print(f"Post-commit donor count: {Donor.query.filter_by(organization_id=org.id).count()}")
 
 class _TestCfg(TestingConfig):
-    COPILOT_ENABLED = False # Disable auto-seed during creation
+    MINION_ENABLED = False # Disable auto-seed during creation
 
 app = create_app(_TestCfg)
 manual_seed(app)
+

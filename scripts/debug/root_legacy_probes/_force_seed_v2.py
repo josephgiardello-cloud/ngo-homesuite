@@ -6,7 +6,7 @@ from ngo_homesuite.flask_config import TestingConfig
 from ngo_homesuite.models.core import db, Donor, Organization, User
 
 class _TestCfg(TestingConfig):
-    COPILOT_ENABLED = True
+    MINION_ENABLED = True
 
 app = create_app(_TestCfg)
 with app.app_context():
@@ -31,3 +31,4 @@ with app.app_context():
     print(f"Donors: {Donor.query.count()}")
     for d in Donor.query.all():
         print(f" - Donor: {d.name}, Org ID: {d.organization_id}")
+

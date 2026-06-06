@@ -22,7 +22,7 @@ class GrantsFacade:
         self.approval = ApprovalService()
         self.accounting = AccountingService()
 
-    # Lifecycle + financial façade methods
+    # Lifecycle + financial faÃ§ade methods
     create_grant = staticmethod(_grant_lifecycle.create_grant)
     list_grants = staticmethod(_grant_lifecycle.list_grants)
     get_grant = staticmethod(_grant_lifecycle.get_grant)
@@ -38,7 +38,7 @@ class GrantsFacade:
     update_allocation = staticmethod(_grant_lifecycle.update_allocation)
     delete_allocation = staticmethod(_grant_lifecycle.delete_allocation)
 
-    # Pre-award façade methods
+    # Pre-award faÃ§ade methods
     create_opportunity = staticmethod(PreawardService.create_opportunity)
     update_opportunity = staticmethod(PreawardService.update_opportunity)
     list_opportunities = staticmethod(PreawardService.list_opportunities)
@@ -62,7 +62,7 @@ class GrantsFacade:
     run_active_saved_search_alerts = staticmethod(_grants_gov.run_active_saved_search_alerts)
     acknowledge_search_alert = staticmethod(_grants_gov.acknowledge_search_alert)
 
-    # Approval façade methods
+    # Approval faÃ§ade methods
     create_approval_request = staticmethod(ApprovalService.create_approval_request)
     decide_approval_request = staticmethod(ApprovalService.decide_approval_request)
     list_approval_chain_configs = staticmethod(ApprovalService.list_chain_configs)

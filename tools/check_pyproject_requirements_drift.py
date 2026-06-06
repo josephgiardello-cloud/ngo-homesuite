@@ -81,7 +81,7 @@ def check_drift(pyproject_path: Path, requirements_path: Path) -> bool:
     # Check for packages in pyproject but missing in requirements
     missing_in_req = set(pyproject_deps.keys()) - set(requirements_deps.keys())
     if missing_in_req:
-        print(f"❌ DRIFT: Packages in pyproject.toml but NOT in requirements.txt:")
+        print(f"âŒ DRIFT: Packages in pyproject.toml but NOT in requirements.txt:")
         for pkg in sorted(missing_in_req):
             print(f"   - {pkg}{pyproject_deps[pkg]}")
         drift_found = True
@@ -89,13 +89,13 @@ def check_drift(pyproject_path: Path, requirements_path: Path) -> bool:
     # Check for packages in requirements but missing in pyproject
     extra_in_req = set(requirements_deps.keys()) - set(pyproject_deps.keys())
     if extra_in_req:
-        print(f"❌ DRIFT: Packages in requirements.txt but NOT in pyproject.toml:")
+        print(f"âŒ DRIFT: Packages in requirements.txt but NOT in pyproject.toml:")
         for pkg in sorted(extra_in_req):
             print(f"   - {pkg}{requirements_deps[pkg]}")
         drift_found = True
     
     if not drift_found:
-        print("✅ No drift detected between pyproject.toml and requirements.txt")
+        print("âœ… No drift detected between pyproject.toml and requirements.txt")
     else:
         print("\nGuidance to fix:")
         print("  1. Update pyproject.toml [project] dependencies")
@@ -112,11 +112,11 @@ def main():
     requirements = repo_root / "requirements.txt"
     
     if not pyproject.exists():
-        print(f"❌ Error: {pyproject} not found")
+        print(f"âŒ Error: {pyproject} not found")
         return 1
     
     if not requirements.exists():
-        print(f"❌ Error: {requirements} not found")
+        print(f"âŒ Error: {requirements} not found")
         return 1
     
     drift_found = check_drift(pyproject, requirements)

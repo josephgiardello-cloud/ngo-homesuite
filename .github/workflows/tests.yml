@@ -199,7 +199,7 @@ jobs:
       env:
         NGO_HOMESUITE_DB_KEY: ""
       run: |
-        pytest ngo_homesuite/ai/test_ai_hardening.py ngo_homesuite/ai/test_copilot_routes.py ngo_homesuite/web/test_auth_security_routes.py ngo_homesuite/web/test_public_smoke_paths.py ngo_homesuite/web/test_cross_tenant_boundaries.py ngo_homesuite/web/test_v2_route_contracts.py ngo_homesuite/web/test_rbac_tenant_route_audit.py ngo_homesuite/db/test_connection.py ngo_homesuite/db/test_connection_hardening.py -v --maxfail=10
+        pytest ngo_homesuite/ai/test_ai_hardening.py ngo_homesuite/ai/test_minion_routes.py ngo_homesuite/web/test_auth_security_routes.py ngo_homesuite/web/test_public_smoke_paths.py ngo_homesuite/web/test_cross_tenant_boundaries.py ngo_homesuite/web/test_v2_route_contracts.py ngo_homesuite/web/test_rbac_tenant_route_audit.py ngo_homesuite/db/test_connection.py ngo_homesuite/db/test_connection_hardening.py -v --maxfail=10
 
   workflow-supply-chain-policy:
     name: Workflow Supply Chain Policy
@@ -545,3 +545,4 @@ jobs:
       with:
         name: scalability-regression-summary
         path: artifacts/scalability-regression-summary.json
+

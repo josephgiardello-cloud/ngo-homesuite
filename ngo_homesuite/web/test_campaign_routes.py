@@ -179,7 +179,7 @@ def test_create_duplicate_slug_gets_suffixed(client, app):
     _login_admin(client)
     # Create first campaign
     client.post("/api/v2/campaigns", json={"name": "Unique Slug Test"})
-    # Create second with same name — slug should be auto-suffixed
+    # Create second with same name â€” slug should be auto-suffixed
     rv = client.post("/api/v2/campaigns", json={"name": "Unique Slug Test"})
     assert rv.status_code == 201
     body = rv.get_json()

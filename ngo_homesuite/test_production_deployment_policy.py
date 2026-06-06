@@ -115,11 +115,11 @@ def test_security_release_policy_enforces_dependency_ai_and_evidence_gates() -> 
     assert "security" in pip_updates["labels"]
     assert "dependabot" in pip_updates["pull-request-branch-name"]["prefix"]
 
-    assert 'copilot_allow_web_tools: bool = Field(default=False)' in config_text
-    assert 'copilot_require_approval_token: bool = Field(default=True)' in config_text
-    assert 'current_app.config.get("COPILOT_REQUIRE_APPROVAL_TOKEN", True)' in ai_routes
+    assert 'minion_allow_web_tools: bool = Field(default=False)' in config_text
+    assert 'minion_require_approval_token: bool = Field(default=True)' in config_text
+    assert 'current_app.config.get("MINION_REQUIRE_APPROVAL_TOKEN", True)' in ai_routes
     assert '_verify_approval_token(' in ai_routes
-    assert '"allow_web_tools": bool(current_app.config.get("COPILOT_ALLOW_WEB_TOOLS", False))' in ai_routes
+    assert '"allow_web_tools": bool(current_app.config.get("MINION_ALLOW_WEB_TOOLS", False))' in ai_routes
 
     assert "pip-audit" in dependency_policy
     assert "Dependabot opens weekly pip dependency PRs." in dependency_policy
@@ -140,8 +140,8 @@ def test_tenant_isolation_release_policy_enforces_cross_org_and_ai_scoping_gates
     pentest_playbook = (ROOT / "docs" / "security_pentest_playbook.md").read_text(encoding="utf-8")
     app_factory = (ROOT / "ngo_homesuite" / "app_factory.py").read_text(encoding="utf-8")
     api_v1 = (ROOT / "ngo_homesuite" / "api" / "v1.py").read_text(encoding="utf-8")
-    ai_routes = (ROOT / "ngo_homesuite" / "ai" / "test_copilot_routes.py").read_text(encoding="utf-8")
-    ai_tools = (ROOT / "ngo_homesuite" / "ai" / "copilot_tools.py").read_text(encoding="utf-8")
+    ai_routes = (ROOT / "ngo_homesuite" / "ai" / "test_minion_routes.py").read_text(encoding="utf-8")
+    ai_tools = (ROOT / "ngo_homesuite" / "ai" / "minion_tools.py").read_text(encoding="utf-8")
     semantic_memory = (ROOT / "ngo_homesuite" / "ai" / "semantic_memory.py").read_text(encoding="utf-8")
 
     assert "ngo_homesuite/web/test_cross_tenant_boundaries.py" in tests_workflow

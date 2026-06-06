@@ -1,4 +1,4 @@
-﻿"""Program Impact / Case Management service.
+"""Program Impact / Case Management service.
 
 CiviCRM-style case tracking: each ProgramCase has an immutable activity log
 and can track qualitative + quantitative outcomes.

@@ -246,7 +246,7 @@ class TestSMSRoutes:
         org_id = _ensure_user(app, "sms_admin", "sms@test.local", "admin", "SmsPass123!")
         _login(client, "sms_admin", "SmsPass123!")
 
-        # No Twilio credentials in test env → expect success=False gracefully
+        # No Twilio credentials in test env â†’ expect success=False gracefully
         rv = client.post(
             "/integrations/sms/notify",
             json={"to": "+15551234567", "body": "Test reminder"},

@@ -266,7 +266,7 @@ class TestAccountingSyncRoutes:
         org_id = _ensure_user(app, "acc_admin", "acc@test.local", "admin", "AccAdmin123!")
         _login(client, "acc_admin", "AccAdmin123!")
 
-        # Need a real donation — use API or fake ID; either way provider check fires first
+        # Need a real donation â€” use API or fake ID; either way provider check fires first
         rv = client.post("/integrations/accounting/sync/donation/1", json={"provider": "stripe"})
         assert rv.status_code == 400
 

@@ -1,7 +1,7 @@
 """Service layer for donor operations.
 
 All write operations are organisation-scoped.  Donors are treated as
-append-only / soft-deactivated records — hard deletes are not permitted
+append-only / soft-deactivated records â€” hard deletes are not permitted
 because donation history depends on donor records remaining intact.
 """
 from __future__ import annotations
@@ -203,7 +203,7 @@ class DonorService:
         source: Optional[str] = None,
         notes: Optional[str] = None,
     ) -> tuple[Donor, bool]:
-        """Return (donor, created) — find by email if available, else create.
+        """Return (donor, created) â€” find by email if available, else create.
 
         When ``email`` is None/blank a new donor is always created (anonymous
         or cash donors without email are legitimate).
@@ -238,7 +238,7 @@ class DonorService:
             notes=notes,
         )
         db.session.add(donor)
-        db.session.flush()  # get PK without committing — caller commits
+        db.session.flush()  # get PK without committing â€” caller commits
         return donor, True
 
     def update_donor(

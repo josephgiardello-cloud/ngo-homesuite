@@ -311,7 +311,7 @@ def generate_proposal_compliance_guidance(
             raw = client.query(
                 prompt=prompt,
                 model=str(model),
-                system_prompt="You are a strict nonprofit grant-compliance copilot. Return JSON only.",
+                system_prompt="You are a strict nonprofit grant-compliance minion. Return JSON only.",
             )
             parsed = json.loads(raw)
             guidance.update(
@@ -477,7 +477,7 @@ def generate_proposal_draft_assist(
             raw = client.query(
                 prompt=prompt,
                 model=str(model),
-                system_prompt="You are a strict nonprofit grant-writing copilot. Return JSON only.",
+                system_prompt="You are a strict nonprofit grant-writing minion. Return JSON only.",
             )
             parsed = json.loads(raw)
             draft_assist.update(
@@ -1134,3 +1134,4 @@ def opportunity_forecast_summary(organization_id: int) -> dict:
         "pipeline_amount": round(pipeline_amount, 2),
         "probability_weighted_amount": round(weighted_amount, 2),
     }
+

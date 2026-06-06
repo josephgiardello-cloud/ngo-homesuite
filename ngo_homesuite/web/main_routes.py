@@ -4,7 +4,7 @@ import csv
 import json
 import time
 import uuid
-from ngo_homesuite.ai.copilot_tools import CopilotToolRegistry
+from ngo_homesuite.ai.minion_tools import MinionToolRegistry
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional as TypingOptional
@@ -273,7 +273,7 @@ def health() -> Response:
 
 @main_bp.route('/health/live', methods=['GET'])
 def health_live() -> Response:
-    """Kubernetes liveness probe — returns 200 as long as the process is running."""
+    """Kubernetes liveness probe â€” returns 200 as long as the process is running."""
     return Response(
         json.dumps({"status": "live"}),
         status=200,
@@ -283,7 +283,7 @@ def health_live() -> Response:
 
 @main_bp.route('/health/ready', methods=['GET'])
 def health_ready() -> Response:
-    """Kubernetes readiness probe — 200 only when DB is up and migrations are current."""
+    """Kubernetes readiness probe â€” 200 only when DB is up and migrations are current."""
     from ngo_homesuite.models.core import db as _db
     from pathlib import Path as _Path
 
@@ -2740,7 +2740,7 @@ def donor_detail(donor_id: int):
 
     donor_ai_insights = None
     try:
-        donor_ai_insights = CopilotToolRegistry().execute(
+        donor_ai_insights = MinionToolRegistry().execute(
             "summarize_donor",
             {"donor_id": donor.id},
             {
@@ -4926,7 +4926,7 @@ def beneficiary_detail(beneficiary_id: int):
 
     beneficiary_ai_insights = None
     try:
-        beneficiary_ai_insights = CopilotToolRegistry().execute(
+        beneficiary_ai_insights = MinionToolRegistry().execute(
             'summarize_activity_timeline',
             {
                 'entity_type': 'beneficiary',
@@ -4961,3 +4961,4 @@ def beneficiary_detail(beneficiary_id: int):
         active_page='beneficiaries',
         ai_context=ai_context,
     )
+

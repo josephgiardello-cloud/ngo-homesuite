@@ -4,7 +4,7 @@ Acceptance criteria:
 1. GrantBudgetLine model with: grant_id, category, allocated_amount, notes
 2. Migration adds table without breaking existing grant rows
 3. Admin routes to create/edit/delete budget lines per grant
-4. Validation: total budget lines ≤ grant award; prevent negative amounts
+4. Validation: total budget lines â‰¤ grant award; prevent negative amounts
 """
 import pytest
 import uuid

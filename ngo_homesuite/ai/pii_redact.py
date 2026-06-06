@@ -2,7 +2,7 @@
 
 Replaces common PII patterns with placeholder tokens before sending
 text to an external AI provider.  The redaction is intentionally
-conservative — it is better to redact a false-positive than to leak
+conservative â€” it is better to redact a false-positive than to leak
 real data.
 """
 
@@ -51,7 +51,7 @@ _PATTERNS: list[Tuple[str, re.Pattern[str], str]] = [
         re.compile(r"\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b"),
         "[REDACTED_SSN]",
     ),
-    # Credit card numbers (13–19 digits, optionally separated by spaces/dashes)
+    # Credit card numbers (13â€“19 digits, optionally separated by spaces/dashes)
     (
         "credit_card",
         re.compile(r"\b(?:\d[ -]?){13,19}\b"),

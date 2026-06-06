@@ -4,9 +4,9 @@ All methods are organisation-scoped: callers must supply the org_id for every
 write operation so a user from org A can never touch org B's donations.
 
 Status lifecycle:
-    pending → received → processed → receipted
-    pending → failed          (e.g. Stripe declined / webhook says not paid)
-    received → refunded       (manual admin action)
+    pending â†’ received â†’ processed â†’ receipted
+    pending â†’ failed          (e.g. Stripe declined / webhook says not paid)
+    received â†’ refunded       (manual admin action)
 """
 from __future__ import annotations
 
@@ -402,7 +402,7 @@ class DonationService:
         actor_id: Optional[int] = None,
         **fields: object,
     ) -> Donation:
-        """Update mutable fields on a donation (not status — use update_status for that).
+        """Update mutable fields on a donation (not status â€” use update_status for that).
 
         Allowed fields: donor_name, donor_email, donor_phone, purpose, notes,
                         payment_method, reference_number, project_id, fund_id.

@@ -1,4 +1,4 @@
-﻿"""Peer-to-Peer Fundraising service.
+"""Peer-to-Peer Fundraising service.
 
 Supports creating public fundraising pages, linking incoming donations,
 tracking progress toward a goal, and listing active pages.

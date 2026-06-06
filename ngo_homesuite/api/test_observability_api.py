@@ -12,7 +12,7 @@ from ngo_homesuite.models.core import Organization, User, db
 @pytest.fixture(scope="module")
 def app():
     class _TestCfg(TestingConfig):
-        COPILOT_ENABLED = True
+        MINION_ENABLED = True
         METRICS_ENABLED = True
         ROLES_REQUIRING_2FA = []
 
@@ -160,3 +160,4 @@ def test_5xx_requests_emit_metrics_and_satisfy_http_error_alert_ratio(client, ap
     assert total_http >= 2.0
     assert total_5xx == 1.0
     assert total_5xx / max(total_http, 0.001) > 0.05
+

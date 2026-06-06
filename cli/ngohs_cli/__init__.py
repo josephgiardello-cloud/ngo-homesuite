@@ -1,6 +1,6 @@
 import sys
 from .migrate import migrate
-from .copilot_index import reindex
+from .minion_index import reindex
 
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == 'migrate':
@@ -9,3 +9,4 @@ def main():
         reindex()
     else:
         print('Usage: homesuite [migrate|reindex]')
+

@@ -11,7 +11,7 @@ def test_rag_default_index_dir_uses_runtime_settings(monkeypatch):
     monkeypatch.setattr(
         rag_index,
         "get_runtime_settings",
-        lambda: SimpleNamespace(copilot_index_dir="data/from-runtime-settings"),
+        lambda: SimpleNamespace(minion_index_dir="data/from-runtime-settings"),
     )
 
     assert rag_index.default_index_dir() == "data/from-runtime-settings"
@@ -56,3 +56,4 @@ def test_email_service_send_receipt_uses_runtime_settings(monkeypatch):
     smtp_instance.starttls.assert_called_once()
     smtp_instance.login.assert_called_once_with("smtp-user", "smtp-pass")
     smtp_instance.send_message.assert_called_once()
+

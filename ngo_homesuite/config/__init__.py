@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .config_manager import (
 	AppConfig,
-	CopilotConfig,
+	MinionConfig,
 	ConfigValidationError,
 	DatabaseConfig,
 	Environment,
@@ -97,7 +97,7 @@ __all__ = [
 	"DatabaseConfig",
 	"SecretConfig",
 	"SecurityConfig",
-	"CopilotConfig",
+	"MinionConfig",
 	"ObservabilityConfig",
 	"FeatureFlagConfig",
 	"RuntimeSettings",
@@ -124,3 +124,4 @@ __all__ = [
 	"BACKUP_REMINDER_DAYS",
 	"DEFAULT_EXPORT_DIR",
 ]
+

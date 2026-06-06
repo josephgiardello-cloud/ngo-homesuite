@@ -1,4 +1,4 @@
-﻿# Dependency Update Policy
+# Dependency Update Policy
 
 ## Goals
 

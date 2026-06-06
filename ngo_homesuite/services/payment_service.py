@@ -3,13 +3,13 @@
 Responsibilities
 ----------------
 1. Create Stripe Checkout sessions for one-time donations.
-2. Handle ``checkout.session.completed`` webhook events — idempotently
+2. Handle ``checkout.session.completed`` webhook events â€” idempotently
    create a Donation record via DonationService.
 3. Record direct (non-Stripe) donations for cash/bank-transfer flows.
 
 Design notes
 ------------
-* No Flask app object is created here — this is a plain service module.
+* No Flask app object is created here â€” this is a plain service module.
 * Stripe is an *optional* dependency (in requirements-cloud.txt).  When
   ``stripe`` is not installed the module gracefully degrades: Checkout
   session creation raises ``StripeNotConfigured``; webhook handling falls
@@ -298,7 +298,7 @@ class PaymentService:
         ).first()
         if existing:
             logger.info(
-                "Duplicate checkout.session.completed — donation already exists",
+                "Duplicate checkout.session.completed â€” donation already exists",
                 extra={"reference_number": reference_number, "donation_id": existing.id},
             )
             return existing
@@ -358,7 +358,7 @@ class PaymentService:
             if donation is None:
                 raise WebhookProcessingError(
                     f"IntegrityError inserting donation with reference {reference_number!r} "
-                    "but no existing record found — data may be inconsistent."
+                    "but no existing record found â€” data may be inconsistent."
                 )
             logger.info(
                 "Race-condition idempotency: donation already inserted",
@@ -386,7 +386,7 @@ class PaymentService:
         """Mark a donation as refunded when Stripe fires ``charge.refunded``.
 
         Looks up the donation by ``payment_intent`` on the charge object and
-        transitions its status to ``refunded``.  Idempotent — returns the
+        transitions its status to ``refunded``.  Idempotent â€” returns the
         donation unchanged when it is already in a terminal state.
 
         Returns:

@@ -1,6 +1,6 @@
-# Wave Completion Summary — May 17, 2026
+# Wave Completion Summary â€” May 17, 2026
 
-**Status**: ALL ROADMAP ITEMS COMPLETE AND GREEN ✓
+**Status**: ALL ROADMAP ITEMS COMPLETE AND GREEN âœ“
 
 ## Executive Summary
 
@@ -179,12 +179,12 @@ M ngo_homesuite/web/test_sprint1_features.py               (+2 lines assertion)
 
 | Item | Status | Location | Tests | Notes |
 |------|--------|----------|-------|-------|
-| Fix test suite hang (pool leak) | ✅ DONE | Multiple | Passing | Connection pool + RLS optimization |
-| OAuth / SSO login | ✅ DONE | auth_routes.py | Passing | Google + GitHub + account linking |
-| WebAuthn/passkeys | ✅ DONE | auth_routes.py | Passing | FIDO2 + backup codes |
-| Email campaign bulk send | ✅ DONE | campaign_routes.py | Passing | Human-in-the-loop + AI draft + audit |
-| Custom fields schema + admin UI | ✅ DONE | admin_routes.py + settings.html | Passing | Donor/campaign field definitions |
-| Photo uploads (donor/campaign) | ✅ DONE | v2_routes.py + main_routes.py | Passing | Media upload/serve + URL in API |
+| Fix test suite hang (pool leak) | âœ… DONE | Multiple | Passing | Connection pool + RLS optimization |
+| OAuth / SSO login | âœ… DONE | auth_routes.py | Passing | Google + GitHub + account linking |
+| WebAuthn/passkeys | âœ… DONE | auth_routes.py | Passing | FIDO2 + backup codes |
+| Email campaign bulk send | âœ… DONE | campaign_routes.py | Passing | Human-in-the-loop + AI draft + audit |
+| Custom fields schema + admin UI | âœ… DONE | admin_routes.py + settings.html | Passing | Donor/campaign field definitions |
+| Photo uploads (donor/campaign) | âœ… DONE | v2_routes.py + main_routes.py | Passing | Media upload/serve + URL in API |
 
 ---
 

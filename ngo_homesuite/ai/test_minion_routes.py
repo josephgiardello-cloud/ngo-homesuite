@@ -17,13 +17,13 @@ class _FakeResponse:
     redactions: int
 
 
-class _FakeCopilot:
+class _FakeMinion:
     last_kwargs = None
 
     def answer(self, **kwargs):
-        _FakeCopilot.last_kwargs = kwargs
+        _FakeMinion.last_kwargs = kwargs
         return _FakeResponse(
-            answer="Copilot response",
+            answer="Minion response",
             sources=[{"source": "docs/sprint1_backlog.md", "text": "demo"}],
             actions=[],
             redactions=0,
@@ -33,11 +33,11 @@ class _FakeCopilot:
         return 42
 
 
-class _FakeCopilotPending:
+class _FakeMinionPending:
     last_kwargs = None
 
     def answer(self, **kwargs):
-        _FakeCopilotPending.last_kwargs = kwargs
+        _FakeMinionPending.last_kwargs = kwargs
         return _FakeResponse(
             answer="Approval required.",
             sources=[],
@@ -59,7 +59,7 @@ class _FakeCopilotPending:
 @pytest.fixture(scope="module")
 def app():
     class _TestCfg(TestingConfig):
-        COPILOT_ENABLED = True
+        MINION_ENABLED = True
         ROLES_REQUIRING_2FA = []
 
     return create_app(_TestCfg)
@@ -94,52 +94,52 @@ def _ensure_user(app, username: str, email: str, role: str, password: str):
             db.session.commit()
 
 
-def test_copilot_chat_endpoint_returns_payload(client, app, monkeypatch):
-    _ensure_user(app, "copilot_admin", "copilot_admin@test.local", "admin", "admin_pass_123")
-    _login(client, "copilot_admin", "admin_pass_123")
+def test_minion_chat_endpoint_returns_payload(client, app, monkeypatch):
+    _ensure_user(app, "minion_admin", "minion_admin@test.local", "admin", "admin_pass_123")
+    _login(client, "minion_admin", "admin_pass_123")
 
-    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteCopilot.from_app", lambda: _FakeCopilot())
+    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteMinion.from_app", lambda: _FakeMinion())
 
     rv = client.post(
-        "/ai/copilot/chat",
+        "/ai/minion/chat",
         json={"prompt": "How do I generate reports?", "context": {"active_page": "reports"}},
     )
     assert rv.status_code == 200
     data = rv.get_json()
-    assert data["response"] == "Copilot response"
+    assert data["response"] == "Minion response"
     assert isinstance(data["sources"], list)
-    assert data["mode"] == "copilot"
+    assert data["mode"] == "minion"
 
 
-def test_copilot_reindex_admin_only(client, app, monkeypatch):
-    _ensure_user(app, "copilot_viewer", "copilot_viewer@test.local", "viewer", "viewer_pass_123")
-    _login(client, "copilot_viewer", "viewer_pass_123")
-    rv = client.post("/ai/copilot/reindex", json={"user_summaries": ["summary"]})
+def test_minion_reindex_admin_only(client, app, monkeypatch):
+    _ensure_user(app, "minion_viewer", "minion_viewer@test.local", "viewer", "viewer_pass_123")
+    _login(client, "minion_viewer", "viewer_pass_123")
+    rv = client.post("/ai/minion/reindex", json={"user_summaries": ["summary"]})
     assert rv.status_code == 403
     client.post("/auth/logout")
 
-    _ensure_user(app, "copilot_admin2", "copilot_admin2@test.local", "admin", "admin2_pass_123")
-    _login(client, "copilot_admin2", "admin2_pass_123")
+    _ensure_user(app, "minion_admin2", "minion_admin2@test.local", "admin", "admin2_pass_123")
+    _login(client, "minion_admin2", "admin2_pass_123")
 
-    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteCopilot.from_app", lambda: _FakeCopilot())
+    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteMinion.from_app", lambda: _FakeMinion())
 
-    rv = client.post("/ai/copilot/reindex", json={"user_summaries": ["summary"]})
+    rv = client.post("/ai/minion/reindex", json={"user_summaries": ["summary"]})
     assert rv.status_code == 200
     data = rv.get_json()
     assert data["ok"] is True
     assert data["chunks_indexed"] == 42
 
 
-def test_copilot_chat_forwards_action_gating_inputs(client, app, monkeypatch):
-    _ensure_user(app, "copilot_staff", "copilot_staff@test.local", "staff", "staff_pass_123")
-    _login(client, "copilot_staff", "staff_pass_123")
+def test_minion_chat_forwards_action_gating_inputs(client, app, monkeypatch):
+    _ensure_user(app, "minion_staff", "minion_staff@test.local", "staff", "staff_pass_123")
+    _login(client, "minion_staff", "staff_pass_123")
 
-    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteCopilot.from_app", lambda: _FakeCopilot())
+    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteMinion.from_app", lambda: _FakeMinion())
 
     monkeypatch.setattr("ngo_homesuite.web.ai_routes._verify_approval_token", lambda **kwargs: True)
 
     rv = client.post(
-        "/ai/copilot/chat",
+        "/ai/minion/chat",
         json={
             "prompt": "Create a donor called Jane",
             "allow_actions": True,
@@ -149,26 +149,26 @@ def test_copilot_chat_forwards_action_gating_inputs(client, app, monkeypatch):
     )
     assert rv.status_code == 200
 
-    passed = _FakeCopilot.last_kwargs
+    passed = _FakeMinion.last_kwargs
     assert passed is not None
     runtime_ctx = passed["runtime_ctx"]
     assert runtime_ctx["approved_actions"] == ["create_donor"]
     assert runtime_ctx["tool_allowlist"] == ["create_donor", "search_donors"]
 
 
-def test_copilot_chat_route_allowlist_is_constrained_by_config(client, app, monkeypatch):
-    _ensure_user(app, "copilot_staff_cfg", "copilot_staff_cfg@test.local", "staff", "staff_pass_cfg_123")
-    _login(client, "copilot_staff_cfg", "staff_pass_cfg_123")
+def test_minion_chat_route_allowlist_is_constrained_by_config(client, app, monkeypatch):
+    _ensure_user(app, "minion_staff_cfg", "minion_staff_cfg@test.local", "staff", "staff_pass_cfg_123")
+    _login(client, "minion_staff_cfg", "staff_pass_cfg_123")
 
-    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteCopilot.from_app", lambda: _FakeCopilot())
+    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteMinion.from_app", lambda: _FakeMinion())
 
-    old_cfg = app.config.get("COPILOT_TOOL_ALLOWLIST")
-    app.config["COPILOT_TOOL_ALLOWLIST"] = "search_donors"
+    old_cfg = app.config.get("MINION_TOOL_ALLOWLIST")
+    app.config["MINION_TOOL_ALLOWLIST"] = "search_donors"
     try:
         monkeypatch.setattr("ngo_homesuite.web.ai_routes._verify_approval_token", lambda **kwargs: True)
 
         rv = client.post(
-            "/ai/copilot/chat",
+            "/ai/minion/chat",
             json={
                 "prompt": "Create a donor called Jane",
                 "allow_actions": True,
@@ -181,23 +181,23 @@ def test_copilot_chat_route_allowlist_is_constrained_by_config(client, app, monk
         )
         assert rv.status_code == 200
 
-        passed = _FakeCopilot.last_kwargs
+        passed = _FakeMinion.last_kwargs
         assert passed is not None
         runtime_ctx = passed["runtime_ctx"]
         assert runtime_ctx["tool_allowlist"] == ["search_donors"]
         assert runtime_ctx["approved_actions"] == ["search_donors"]
     finally:
-        app.config["COPILOT_TOOL_ALLOWLIST"] = old_cfg
+        app.config["MINION_TOOL_ALLOWLIST"] = old_cfg
 
 
-def test_copilot_chat_pending_action_includes_approval_token(client, app, monkeypatch):
-    _ensure_user(app, "copilot_admin_token", "copilot_admin_token@test.local", "admin", "admin_token_pass_123")
-    _login(client, "copilot_admin_token", "admin_token_pass_123")
+def test_minion_chat_pending_action_includes_approval_token(client, app, monkeypatch):
+    _ensure_user(app, "minion_admin_token", "minion_admin_token@test.local", "admin", "admin_token_pass_123")
+    _login(client, "minion_admin_token", "admin_token_pass_123")
 
-    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteCopilot.from_app", lambda: _FakeCopilotPending())
+    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteMinion.from_app", lambda: _FakeMinionPending())
 
     rv = client.post(
-        "/ai/copilot/chat",
+        "/ai/minion/chat",
         json={"prompt": "Create donor Jane", "allow_actions": True},
     )
     assert rv.status_code == 200
@@ -208,15 +208,15 @@ def test_copilot_chat_pending_action_includes_approval_token(client, app, monkey
     assert data["actions"][0]["approval_token"]
 
 
-def test_copilot_chat_rejects_approval_without_valid_token(client, app, monkeypatch):
-    _ensure_user(app, "copilot_admin_token2", "copilot_admin_token2@test.local", "admin", "admin_token2_pass_123")
-    _login(client, "copilot_admin_token2", "admin_token2_pass_123")
+def test_minion_chat_rejects_approval_without_valid_token(client, app, monkeypatch):
+    _ensure_user(app, "minion_admin_token2", "minion_admin_token2@test.local", "admin", "admin_token2_pass_123")
+    _login(client, "minion_admin_token2", "admin_token2_pass_123")
 
-    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteCopilot.from_app", lambda: _FakeCopilot())
+    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteMinion.from_app", lambda: _FakeMinion())
     monkeypatch.setattr("ngo_homesuite.web.ai_routes._verify_approval_token", lambda **kwargs: False)
 
     rv = client.post(
-        "/ai/copilot/chat",
+        "/ai/minion/chat",
         json={
             "prompt": "Create donor Jane",
             "allow_actions": True,
@@ -225,15 +225,15 @@ def test_copilot_chat_rejects_approval_without_valid_token(client, app, monkeypa
         },
     )
     assert rv.status_code == 200
-    passed = _FakeCopilot.last_kwargs
+    passed = _FakeMinion.last_kwargs
     assert passed is not None
     runtime_ctx = passed["runtime_ctx"]
     assert runtime_ctx["approved_actions"] == []
 
 
-def test_copilot_chat_logs_approval_token_issue_verify_and_replay_reject(client, app, monkeypatch):
-    _ensure_user(app, "copilot_admin_token3", "copilot_admin_token3@test.local", "admin", "admin_token3_pass_123")
-    _login(client, "copilot_admin_token3", "admin_token3_pass_123")
+def test_minion_chat_logs_approval_token_issue_verify_and_replay_reject(client, app, monkeypatch):
+    _ensure_user(app, "minion_admin_token3", "minion_admin_token3@test.local", "admin", "admin_token3_pass_123")
+    _login(client, "minion_admin_token3", "admin_token3_pass_123")
 
     captured: list[tuple[str, dict | None]] = []
 
@@ -241,19 +241,19 @@ def test_copilot_chat_logs_approval_token_issue_verify_and_replay_reject(client,
         captured.append((action, metadata))
 
     monkeypatch.setattr("ngo_homesuite.web.ai_routes.log_event", _capture_log_event)
-    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteCopilot.from_app", lambda: _FakeCopilotPending())
+    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteMinion.from_app", lambda: _FakeMinionPending())
 
     issue_rv = client.post(
-        "/ai/copilot/chat",
+        "/ai/minion/chat",
         json={"prompt": "Create donor Jane", "allow_actions": True},
     )
     assert issue_rv.status_code == 200
     issue_data = issue_rv.get_json()
     token = issue_data["actions"][0]["approval_token"]
 
-    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteCopilot.from_app", lambda: _FakeCopilot())
+    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteMinion.from_app", lambda: _FakeMinion())
     verify_rv = client.post(
-        "/ai/copilot/chat",
+        "/ai/minion/chat",
         json={
             "prompt": "Create donor Jane",
             "allow_actions": True,
@@ -262,12 +262,12 @@ def test_copilot_chat_logs_approval_token_issue_verify_and_replay_reject(client,
         },
     )
     assert verify_rv.status_code == 200
-    verify_passed = _FakeCopilot.last_kwargs
+    verify_passed = _FakeMinion.last_kwargs
     assert verify_passed is not None
     assert verify_passed["runtime_ctx"]["approved_actions"] == ["create_donor"]
 
     replay_rv = client.post(
-        "/ai/copilot/chat",
+        "/ai/minion/chat",
         json={
             "prompt": "Create donor Jane",
             "allow_actions": True,
@@ -276,27 +276,27 @@ def test_copilot_chat_logs_approval_token_issue_verify_and_replay_reject(client,
         },
     )
     assert replay_rv.status_code == 200
-    replay_passed = _FakeCopilot.last_kwargs
+    replay_passed = _FakeMinion.last_kwargs
     assert replay_passed is not None
     assert replay_passed["runtime_ctx"]["approved_actions"] == []
 
-    token_actions = [action for action, _ in captured if action.startswith("copilot_approval_token_")]
-    assert "copilot_approval_token_issued" in token_actions
-    assert "copilot_approval_token_verified" in token_actions
-    assert "copilot_approval_token_rejected" in token_actions
+    token_actions = [action for action, _ in captured if action.startswith("minion_approval_token_")]
+    assert "minion_approval_token_issued" in token_actions
+    assert "minion_approval_token_verified" in token_actions
+    assert "minion_approval_token_rejected" in token_actions
 
-    rejected_metadata = [metadata for action, metadata in captured if action == "copilot_approval_token_rejected"]
+    rejected_metadata = [metadata for action, metadata in captured if action == "minion_approval_token_rejected"]
     assert any((md or {}).get("reason") == "replay" for md in rejected_metadata)
 
 
-def test_copilot_chat_rejects_cross_tenant_payload(client, app, monkeypatch):
-    _ensure_user(app, "copilot_tenant_staff", "copilot_tenant_staff@test.local", "staff", "tenant_staff_pass_123")
-    _login(client, "copilot_tenant_staff", "tenant_staff_pass_123")
+def test_minion_chat_rejects_cross_tenant_payload(client, app, monkeypatch):
+    _ensure_user(app, "minion_tenant_staff", "minion_tenant_staff@test.local", "staff", "tenant_staff_pass_123")
+    _login(client, "minion_tenant_staff", "tenant_staff_pass_123")
 
-    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteCopilot.from_app", lambda: _FakeCopilot())
+    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteMinion.from_app", lambda: _FakeMinion())
 
     rv = client.post(
-        "/ai/copilot/chat",
+        "/ai/minion/chat",
         json={
             "prompt": "summarize donor trend",
             "tenant_id": "other-tenant",
@@ -307,45 +307,45 @@ def test_copilot_chat_rejects_cross_tenant_payload(client, app, monkeypatch):
     assert "tenant_id" in rv.get_json()["error"]
 
 
-def test_copilot_chat_rate_limited(client, app, monkeypatch):
-    _ensure_user(app, "copilot_rate_user", "copilot_rate_user@test.local", "staff", "rate_user_pass_123")
-    _login(client, "copilot_rate_user", "rate_user_pass_123")
+def test_minion_chat_rate_limited(client, app, monkeypatch):
+    _ensure_user(app, "minion_rate_user", "minion_rate_user@test.local", "staff", "rate_user_pass_123")
+    _login(client, "minion_rate_user", "rate_user_pass_123")
 
-    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteCopilot.from_app", lambda: _FakeCopilot())
+    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteMinion.from_app", lambda: _FakeMinion())
 
-    old_rate = app.config.get("COPILOT_RATE_LIMIT_PER_MIN")
+    old_rate = app.config.get("MINION_RATE_LIMIT_PER_MIN")
     old_enabled = app.config.get("RATELIMIT_ENABLED")
     try:
-        app.config["COPILOT_RATE_LIMIT_PER_MIN"] = 1
+        app.config["MINION_RATE_LIMIT_PER_MIN"] = 1
         app.config["RATELIMIT_ENABLED"] = True
 
-        rv1 = client.post("/ai/copilot/chat", json={"prompt": "First request"})
+        rv1 = client.post("/ai/minion/chat", json={"prompt": "First request"})
         assert rv1.status_code == 200
 
-        rv2 = client.post("/ai/copilot/chat", json={"prompt": "Second request"})
+        rv2 = client.post("/ai/minion/chat", json={"prompt": "Second request"})
         assert rv2.status_code == 429
         body = rv2.get_json()
         assert "rate limit" in body["error"].lower()
         assert int(body["retry_after_sec"]) >= 1
     finally:
-        app.config["COPILOT_RATE_LIMIT_PER_MIN"] = old_rate
+        app.config["MINION_RATE_LIMIT_PER_MIN"] = old_rate
         app.config["RATELIMIT_ENABLED"] = old_enabled
 
 
-def test_copilot_chat_reuses_session_conversation(client, app, monkeypatch):
-    _ensure_user(app, "copilot_session_user", "copilot_session_user@test.local", "staff", "session_user_pass_123")
-    _login(client, "copilot_session_user", "session_user_pass_123")
+def test_minion_chat_reuses_session_conversation(client, app, monkeypatch):
+    _ensure_user(app, "minion_session_user", "minion_session_user@test.local", "staff", "session_user_pass_123")
+    _login(client, "minion_session_user", "session_user_pass_123")
 
-    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteCopilot.from_app", lambda: _FakeCopilot())
+    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteMinion.from_app", lambda: _FakeMinion())
 
-    rv1 = client.post("/ai/copilot/chat", json={"prompt": "First helper question"})
-    rv2 = client.post("/ai/copilot/chat", json={"prompt": "Second helper question"})
+    rv1 = client.post("/ai/minion/chat", json={"prompt": "First helper question"})
+    rv2 = client.post("/ai/minion/chat", json={"prompt": "Second helper question"})
 
     assert rv1.status_code == 200
     assert rv2.status_code == 200
 
     with app.app_context():
-        user = User.query.filter_by(username="copilot_session_user").first()
+        user = User.query.filter_by(username="minion_session_user").first()
         assert user is not None
         conversations = AIConversation.query.filter_by(user_id=user.id).all()
         assert len(conversations) == 1
@@ -353,13 +353,13 @@ def test_copilot_chat_reuses_session_conversation(client, app, monkeypatch):
         assert len(messages) == 4
 
 
-def test_copilot_conversation_reset_rotates_session(client, app, monkeypatch):
-    _ensure_user(app, "copilot_reset_user", "copilot_reset_user@test.local", "staff", "reset_user_pass_123")
-    _login(client, "copilot_reset_user", "reset_user_pass_123")
+def test_minion_conversation_reset_rotates_session(client, app, monkeypatch):
+    _ensure_user(app, "minion_reset_user", "minion_reset_user@test.local", "staff", "reset_user_pass_123")
+    _login(client, "minion_reset_user", "reset_user_pass_123")
 
-    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteCopilot.from_app", lambda: _FakeCopilot())
+    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteMinion.from_app", lambda: _FakeMinion())
 
-    first_rv = client.post("/ai/copilot/chat", json={"prompt": "Start a conversation"})
+    first_rv = client.post("/ai/minion/chat", json={"prompt": "Start a conversation"})
     assert first_rv.status_code == 200
 
     with client.session_transaction() as sess:
@@ -376,12 +376,12 @@ def test_copilot_conversation_reset_rotates_session(client, app, monkeypatch):
 
 
 def test_current_conversation_endpoint_returns_session_messages(client, app, monkeypatch):
-    _ensure_user(app, "copilot_current_user", "copilot_current_user@test.local", "viewer", "current_user_pass_123")
-    _login(client, "copilot_current_user", "current_user_pass_123")
+    _ensure_user(app, "minion_current_user", "minion_current_user@test.local", "viewer", "current_user_pass_123")
+    _login(client, "minion_current_user", "current_user_pass_123")
 
-    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteCopilot.from_app", lambda: _FakeCopilot())
+    monkeypatch.setattr("ngo_homesuite.web.ai_routes.HomeSuiteMinion.from_app", lambda: _FakeMinion())
 
-    chat_rv = client.post("/ai/copilot/chat", json={"prompt": "Show my current AI thread"})
+    chat_rv = client.post("/ai/minion/chat", json={"prompt": "Show my current AI thread"})
     assert chat_rv.status_code == 200
 
     current_rv = client.get("/ai/conversation/current")
@@ -392,3 +392,4 @@ def test_current_conversation_endpoint_returns_session_messages(client, app, mon
     assert len(data["messages"]) == 2
     assert data["messages"][0]["role"] == "user"
     assert data["messages"][1]["role"] == "assistant"
+

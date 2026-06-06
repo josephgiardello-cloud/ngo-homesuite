@@ -14,7 +14,7 @@ from ngo_homesuite.services.reporting_service import ReportingService
 
 
 @dataclass
-class CopilotTool:
+class MinionTool:
     name: str
     description: str
     schema: dict[str, Any]
@@ -23,12 +23,12 @@ class CopilotTool:
     mutates_state: bool = False
 
 
-class CopilotToolRegistry:
+class MinionToolRegistry:
     def __init__(self) -> None:
         self.reporting_service = ReportingService()
         self.bank_reconciliation_service = BankReconciliationService()
         self._tools = {
-            "list_recent_donations": CopilotTool(
+            "list_recent_donations": MinionTool(
                 name="list_recent_donations",
                 description="List recent donations for the current organization.",
                 schema={
@@ -39,7 +39,7 @@ class CopilotToolRegistry:
                 },
                 handler=self._list_recent_donations,
             ),
-            "search_donors": CopilotTool(
+            "search_donors": MinionTool(
                 name="search_donors",
                 description="Search donors by name/email/phone.",
                 schema={
@@ -52,7 +52,7 @@ class CopilotToolRegistry:
                 },
                 handler=self._search_donors,
             ),
-            "donor_profile_insights": CopilotTool(
+            "donor_profile_insights": MinionTool(
                 name="donor_profile_insights",
                 description="Build a donor intelligence snapshot with RFM-based predictive scoring and next-step guidance.",
                 schema={
@@ -64,7 +64,7 @@ class CopilotToolRegistry:
                 },
                 handler=self._donor_profile_insights,
             ),
-            "summarize_donor": CopilotTool(
+            "summarize_donor": MinionTool(
                 name="summarize_donor",
                 description="Generate a natural-language donor summary with risk flags and next best action.",
                 schema={
@@ -76,7 +76,7 @@ class CopilotToolRegistry:
                 },
                 handler=self._summarize_donor,
             ),
-            "summarize_activity_timeline": CopilotTool(
+            "summarize_activity_timeline": MinionTool(
                 name="summarize_activity_timeline",
                 description="Summarize a unified activity feed and recommend next actions for staff.",
                 schema={
@@ -91,7 +91,7 @@ class CopilotToolRegistry:
                 },
                 handler=self._summarize_activity_timeline,
             ),
-            "find_similar_donors": CopilotTool(
+            "find_similar_donors": MinionTool(
                 name="find_similar_donors",
                 description="Find donors with similar giving behavior and profile signals to a reference donor.",
                 schema={
@@ -104,7 +104,7 @@ class CopilotToolRegistry:
                 },
                 handler=self._find_similar_donors,
             ),
-            "rank_donors_for_outreach": CopilotTool(
+            "rank_donors_for_outreach": MinionTool(
                 name="rank_donors_for_outreach",
                 description="Return next donors to call ranked by predicted value and risk.",
                 schema={
@@ -115,7 +115,7 @@ class CopilotToolRegistry:
                 },
                 handler=self._rank_donors_for_outreach,
             ),
-            "suggest_outreach_targets": CopilotTool(
+            "suggest_outreach_targets": MinionTool(
                 name="suggest_outreach_targets",
                 description="Suggest top donor outreach targets with concise rationale and next-step recommendations.",
                 schema={
@@ -126,7 +126,7 @@ class CopilotToolRegistry:
                 },
                 handler=self._suggest_outreach_targets,
             ),
-            "draft_personalized_appeal": CopilotTool(
+            "draft_personalized_appeal": MinionTool(
                 name="draft_personalized_appeal",
                 description="Draft a personalized donor outreach email grounded in giving history and risk signals.",
                 schema={
@@ -140,13 +140,13 @@ class CopilotToolRegistry:
                 },
                 handler=self._draft_personalized_appeal,
             ),
-            "organization_financial_summary": CopilotTool(
+            "organization_financial_summary": MinionTool(
                 name="organization_financial_summary",
                 description="Return a quick financial summary for the current organization.",
                 schema={"type": "object", "properties": {}},
                 handler=self._organization_financial_summary,
             ),
-            "generate_report": CopilotTool(
+            "generate_report": MinionTool(
                 name="generate_report",
                 description="Generate a report payload via the reporting service.",
                 schema={
@@ -159,7 +159,7 @@ class CopilotToolRegistry:
                 },
                 handler=self._generate_report,
             ),
-            "generate_grant_report_draft": CopilotTool(
+            "generate_grant_report_draft": MinionTool(
                 name="generate_grant_report_draft",
                 description="Generate a grant report draft payload and a short narrative summary.",
                 schema={
@@ -171,7 +171,7 @@ class CopilotToolRegistry:
                 },
                 handler=self._generate_grant_report_draft,
             ),
-            "create_donor": CopilotTool(
+            "create_donor": MinionTool(
                 name="create_donor",
                 description="Create a donor profile in the current organization.",
                 schema={
@@ -193,7 +193,7 @@ class CopilotToolRegistry:
                 requires_approval=True,
                 mutates_state=True,
             ),
-            "export_donors_snapshot": CopilotTool(
+            "export_donors_snapshot": MinionTool(
                 name="export_donors_snapshot",
                 description="Prepare a CSV snapshot payload of donors in the current organization.",
                 schema={
@@ -206,7 +206,7 @@ class CopilotToolRegistry:
                 requires_approval=True,
                 mutates_state=False,
             ),
-            "run_reconciliation": CopilotTool(
+            "run_reconciliation": MinionTool(
                 name="run_reconciliation",
                 description="Run a reconciliation workflow between a bank statement reference and ledger reference.",
                 schema={
@@ -221,7 +221,7 @@ class CopilotToolRegistry:
                 requires_approval=True,
                 mutates_state=True,
             ),
-            "execute_donation_followup_workflow": CopilotTool(
+            "execute_donation_followup_workflow": MinionTool(
                 name="execute_donation_followup_workflow",
                 description="Execute donation receipt and follow-up workflow for a donation.",
                 schema={
@@ -236,10 +236,10 @@ class CopilotToolRegistry:
                 mutates_state=True,
             ),
             # ---- Engagement Scoring & AI Donor Insights ----
-            "get_donor_engagement_score": CopilotTool(
+            "get_donor_engagement_score": MinionTool(
                 name="get_donor_engagement_score",
                 description=(
-                    "Return the persisted engagement score (0–100) for a donor, broken down into "
+                    "Return the persisted engagement score (0â€“100) for a donor, broken down into "
                     "recency / frequency / monetary / engagement dimensions with segment and "
                     "cultivation priority. Computes a fresh score if none exists."
                 ),
@@ -252,12 +252,12 @@ class CopilotToolRegistry:
                 },
                 handler=self._get_donor_engagement_score,
             ),
-            "get_ai_donor_recommendations": CopilotTool(
+            "get_ai_donor_recommendations": MinionTool(
                 name="get_ai_donor_recommendations",
                 description=(
                     "Generate AI-powered next-step recommendations for a specific donor using their "
                     "engagement score, RFM signals, and giving history. Returns suggested outreach "
-                    "channel, ask amount, message tone, and timing — all computed locally with Ollama."
+                    "channel, ask amount, message tone, and timing â€” all computed locally with Ollama."
                 ),
                 schema={
                     "type": "object",
@@ -268,7 +268,7 @@ class CopilotToolRegistry:
                 },
                 handler=self._get_ai_donor_recommendations,
             ),
-            "list_at_risk_donors": CopilotTool(
+            "list_at_risk_donors": MinionTool(
                 name="list_at_risk_donors",
                 description=(
                     "Return lapsed and at-risk donors ranked by engagement score descending "
@@ -282,7 +282,7 @@ class CopilotToolRegistry:
                 },
                 handler=self._list_at_risk_donors,
             ),
-            "evaluate_smart_group": CopilotTool(
+            "evaluate_smart_group": MinionTool(
                 name="evaluate_smart_group",
                 description=(
                     "Evaluate a saved Smart Group / Dynamic Audience and return current matching "
@@ -297,7 +297,7 @@ class CopilotToolRegistry:
                 },
                 handler=self._evaluate_smart_group,
             ),
-            "summarize_program_impact": CopilotTool(
+            "summarize_program_impact": MinionTool(
                 name="summarize_program_impact",
                 description=(
                     "Return a program impact summary across all cases, with outcome metric "
@@ -494,7 +494,7 @@ class CopilotToolRegistry:
         monetary_component = max(0.0, 27.0 - min(27.0, monetary_delta / 150.0))
         return round(min(100.0, recency_component + frequency_component + monetary_component + type_bonus), 1)
 
-    def list_tools(self) -> list[CopilotTool]:
+    def list_tools(self) -> list[MinionTool]:
         return list(self._tools.values())
 
     def get_ollama_tool_specs(self, allowlist: set[str] | None = None) -> list[dict[str, Any]]:
@@ -515,7 +515,7 @@ class CopilotToolRegistry:
             )
         return specs
 
-    def get_tool(self, name: str) -> CopilotTool | None:
+    def get_tool(self, name: str) -> MinionTool | None:
         return self._tools.get(name)
 
     def parse_tool_list(
@@ -910,7 +910,7 @@ class CopilotToolRegistry:
         if org_id is None:
             return {"error": "organization_id is required in runtime context"}
 
-        actor = runtime_ctx.get("actor") or "copilot"
+        actor = runtime_ctx.get("actor") or "minion"
         try:
             return self.reporting_service.generate_report(
                 report_type,
@@ -924,7 +924,7 @@ class CopilotToolRegistry:
     def _generate_grant_report_draft(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
         report_type = str(args.get("report_type", "grant_pipeline")).strip() or "grant_pipeline"
         params = args.get("params") if isinstance(args.get("params"), dict) else {}
-        actor = runtime_ctx.get("actor") or "copilot"
+        actor = runtime_ctx.get("actor") or "minion"
         org_id = self._org_filter(runtime_ctx)
         if org_id is None:
             return {"error": "organization_id is required in runtime context"}
@@ -1007,7 +1007,7 @@ class CopilotToolRegistry:
     def _run_reconciliation(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
         bank_statement_ref = str(args.get("bank_statement_ref", "")).strip()
         ledger_ref = str(args.get("ledger_ref", "")).strip()
-        actor = str(runtime_ctx.get("actor") or "copilot")
+        actor = str(runtime_ctx.get("actor") or "minion")
         if not bank_statement_ref or not ledger_ref:
             return {"error": "bank_statement_ref and ledger_ref are required"}
 
@@ -1030,7 +1030,7 @@ class CopilotToolRegistry:
 
     def _execute_donation_followup_workflow(self, args: dict[str, Any], runtime_ctx: dict[str, Any]) -> Any:
         donation_id = int(args.get("donation_id", 0) or 0)
-        actor = str(runtime_ctx.get("actor") or "copilot")
+        actor = str(runtime_ctx.get("actor") or "minion")
         org_id = self._org_filter(runtime_ctx)
         if donation_id <= 0:
             return {"error": "donation_id is required"}
@@ -1138,8 +1138,8 @@ class CopilotToolRegistry:
             # Graceful fallback to rule-based summary
             actions = self._recommended_actions(rfm, related)
             ai_text = (
-                f"[Offline / Ollama unavailable — rule-based fallback]\n\n"
-                + "\n".join(f"• {a}" for a in actions)
+                f"[Offline / Ollama unavailable â€” rule-based fallback]\n\n"
+                + "\n".join(f"â€¢ {a}" for a in actions)
             )
 
         return {
@@ -1216,3 +1216,4 @@ class CopilotToolRegistry:
             return impact_report(org_id, case_type=case_type)
         except Exception as exc:  # noqa: BLE001
             return {"error": str(exc)}
+

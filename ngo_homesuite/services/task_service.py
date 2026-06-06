@@ -1,4 +1,4 @@
-"""Task Management service — Moves Management for nonprofits.
+"""Task Management service â€” Moves Management for nonprofits.
 
 Supports task creation, assignment, completion, and automated task generation
 from donation/grant/workflow triggers.
@@ -204,13 +204,13 @@ def auto_tasks_for_major_donation(
         donation_id=donation_id,
         assigned_to_id=assigned_to_id,
         due_date=now + timedelta(days=2),
-        description="Major gift acknowledgement — send within 48 hours.",
+        description="Major gift acknowledgement â€” send within 48 hours.",
     ))
 
     # 90-day follow-up / next ask
     created.append(create_task(
         organization_id=organization_id,
-        title=f"90-day major donor follow-up — {donation.donor_name}",
+        title=f"90-day major donor follow-up â€” {donation.donor_name}",
         task_type="call",
         priority="medium",
         donor_id=donation.donor_id,

@@ -95,7 +95,7 @@ def ingest_grants():
                 organization_name=org.name
             )
             
-            flash(f'✓ Successfully ingested {len(result)} grants.', 'success')
+            flash(f'âœ“ Successfully ingested {len(result)} grants.', 'success')
             return jsonify({
                 'status': 'success',
                 'count': len(result),

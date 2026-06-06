@@ -11,7 +11,7 @@ Use this script to record a short product demo (3-5 minutes):
 5. Record a donation and show receipt generation.
 6. Open Reports and export compliance evidence.
 7. Open Workflows and run one workflow via UI.
-8. Open Copilot and show pending approval queue with action approval.
+8. Open Minion and show pending approval queue with action approval.
 
 Screenshot capture checklist for docs/screenshots:
 
@@ -24,3 +24,4 @@ Screenshot capture checklist for docs/screenshots:
 
 Suggested output filename:
 - ngo-homesuite-beta-demo.mp4
+

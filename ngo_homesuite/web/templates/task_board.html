@@ -517,7 +517,7 @@ function linkText(task) {
     if (task.grant_title) refs.push(`Grant: ${task.grant_title}`);
     if (task.project_id) refs.push(`Project #${task.project_id}`);
     if (task.assigned_to_name) refs.push(`Assignee: ${task.assigned_to_name}`);
-    return refs.join(' · ');
+    return refs.join(' Â· ');
 }
 
 function renderSummary(summary) {

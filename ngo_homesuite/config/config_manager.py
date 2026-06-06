@@ -2,14 +2,14 @@
 Centralized Configuration Manager for NGO HomeSuite.
 
 INDUSTRY STANDARDS APPLIED:
-✅ 12-factor app config (environment-based)
-✅ Configuration validation at startup
-✅ Type-safe configuration access
-✅ Secret masking in logs and errors
-✅ Environment-specific profiles (dev/test/staging/prod)
-✅ Feature flag support for gradual rollout
-✅ Configuration audit trail
-✅ Hot-reload support for non-critical settings
+âœ… 12-factor app config (environment-based)
+âœ… Configuration validation at startup
+âœ… Type-safe configuration access
+âœ… Secret masking in logs and errors
+âœ… Environment-specific profiles (dev/test/staging/prod)
+âœ… Feature flag support for gradual rollout
+âœ… Configuration audit trail
+âœ… Hot-reload support for non-critical settings
 """
 
 from __future__ import annotations
@@ -90,12 +90,12 @@ class SecretConfig:
             raise ConfigValidationError("SECRET_KEY required (Flask session encryption)")
         
         if len(self.secret_key) < 24:
-            raise ConfigValidationError("SECRET_KEY must be ≥32 characters (256+ bits)")
+            raise ConfigValidationError("SECRET_KEY must be â‰¥32 characters (256+ bits)")
 
 
 @dataclass
-class CopilotConfig:
-    """AI Copilot configuration."""
+class MinionConfig:
+    """AI Minion configuration."""
     enabled: bool = True
     model: str = "llama3.2"
     ollama_host: str = "http://localhost:11434"
@@ -111,11 +111,11 @@ class CopilotConfig:
     require_approval_token: bool = True
     
     def validate(self):
-        """Validate Copilot config."""
+        """Validate Minion config."""
         if self.timeout < 5:
-            raise ConfigValidationError("COPILOT_TIMEOUT must be ≥5 seconds")
+            raise ConfigValidationError("MINION_TIMEOUT must be â‰¥5 seconds")
         if self.health_check_interval < 10:
-            raise ConfigValidationError("COPILOT_HEALTH_CHECK_INTERVAL must be ≥10 seconds")
+            raise ConfigValidationError("MINION_HEALTH_CHECK_INTERVAL must be â‰¥10 seconds")
 
 
 @dataclass
@@ -147,7 +147,7 @@ class SecurityConfig:
         # Note: ENV validation deferred to application startup (when current_app available)
         # For now, only validate structural constraints
         if self.session_max_age < 60:
-            raise ConfigValidationError("SESSION_MAX_AGE must be ≥60 seconds")
+            raise ConfigValidationError("SESSION_MAX_AGE must be â‰¥60 seconds")
 
 
 @dataclass
@@ -183,10 +183,10 @@ class FeatureFlagConfig:
     enable_sqlcipher: bool = False
     enable_key_rotation: bool = False
     
-    # Copilot
-    enable_copilot_v2: bool = False
-    enable_copilot_web_search: bool = False
-    enable_copilot_voice: bool = False
+    # Minion
+    enable_minion_v2: bool = False
+    enable_minion_web_search: bool = False
+    enable_minion_voice: bool = False
     
     # UI
     enable_new_dashboard: bool = False
@@ -211,7 +211,7 @@ class AppConfig:
         # Load config sections
         self.database = self._load_database_config()
         self.secrets = self._load_secrets_config()
-        self.copilot = self._load_copilot_config()
+        self.minion = self._load_minion_config()
         self.security = self._load_security_config()
         self.observability = self._load_observability_config()
         self.feature_flags = self._load_feature_flags()
@@ -362,18 +362,18 @@ class AppConfig:
     def default_mail_sender(self) -> str:
         return os.environ.get('DEFAULT_MAIL_SENDER', 'noreply@ngohomesuite.com')
     
-    # Copilot/AI properties
+    # Minion/AI properties
     @property
     def apex_ai_enabled(self) -> bool:
-        return self.copilot.enabled
+        return self.minion.enabled
     
     @property
     def ollama_host(self) -> str:
-        return self.copilot.ollama_host
+        return self.minion.ollama_host
     
     @property
     def ollama_model(self) -> str:
-        return self.copilot.model
+        return self.minion.model
     
     @property
     def ollama_embed_model(self) -> str:
@@ -381,51 +381,51 @@ class AppConfig:
     
     @property
     def ollama_timeout_s(self) -> int:
-        return self.copilot.timeout
+        return self.minion.timeout
     
     @property
     def apex_tenant_id(self) -> str:
         return os.environ.get('APEX_TENANT_ID', 'default')
     
     @property
-    def copilot_enabled(self) -> bool:
-        return self.copilot.enabled
+    def minion_enabled(self) -> bool:
+        return self.minion.enabled
     
     @property
-    def copilot_index_dir(self) -> str:
-        return os.environ.get('COPILOT_INDEX_DIR', 'instance/copilot_index')
+    def minion_index_dir(self) -> str:
+        return os.environ.get('MINION_INDEX_DIR', 'instance/minion_index')
     
     @property
-    def copilot_rag_k(self) -> int:
-        return int(os.environ.get('COPILOT_RAG_K', '5'))
+    def minion_rag_k(self) -> int:
+        return int(os.environ.get('MINION_RAG_K', '5'))
     
     @property
-    def copilot_allow_web_tools(self) -> bool:
-        return os.environ.get('COPILOT_ALLOW_WEB_TOOLS', 'false').lower() in {'true', '1', 'yes'}
+    def minion_allow_web_tools(self) -> bool:
+        return os.environ.get('MINION_ALLOW_WEB_TOOLS', 'false').lower() in {'true', '1', 'yes'}
     
     @property
-    def copilot_tool_allowlist(self) -> List[str]:
-        return self.copilot.tool_allowlist or []
+    def minion_tool_allowlist(self) -> List[str]:
+        return self.minion.tool_allowlist or []
     
     @property
-    def copilot_require_approval_token(self) -> bool:
-        return self.copilot.require_approval_token
+    def minion_require_approval_token(self) -> bool:
+        return self.minion.require_approval_token
     
     @property
-    def copilot_approval_token_ttl_sec(self) -> int:
-        return int(os.environ.get('COPILOT_APPROVAL_TOKEN_TTL_SEC', '3600'))
+    def minion_approval_token_ttl_sec(self) -> int:
+        return int(os.environ.get('MINION_APPROVAL_TOKEN_TTL_SEC', '3600'))
     
     @property
-    def copilot_tool_timeout_sec(self) -> int:
-        return int(os.environ.get('COPILOT_TOOL_TIMEOUT_SEC', '30'))
+    def minion_tool_timeout_sec(self) -> int:
+        return int(os.environ.get('MINION_TOOL_TIMEOUT_SEC', '30'))
     
     @property
-    def copilot_conversation_max_messages(self) -> int:
-        return int(os.environ.get('COPILOT_CONVERSATION_MAX_MESSAGES', '100'))
+    def minion_conversation_max_messages(self) -> int:
+        return int(os.environ.get('MINION_CONVERSATION_MAX_MESSAGES', '100'))
     
     @property
-    def copilot_rate_limit_per_min(self) -> int:
-        return int(os.environ.get('COPILOT_RATE_LIMIT_PER_MIN', '60'))
+    def minion_rate_limit_per_min(self) -> int:
+        return int(os.environ.get('MINION_RATE_LIMIT_PER_MIN', '60'))
     
     @property
     def cors_allowed_origins(self) -> List[str]:
@@ -464,21 +464,21 @@ class AppConfig:
             audit_signing_key=self._get_env('AUDIT_SIGNING_KEY'),
         )
     
-    def _load_copilot_config(self) -> CopilotConfig:
-        """Load Copilot configuration."""
-        tool_allowlist = self._get_env('COPILOT_TOOL_ALLOWLIST', '')
+    def _load_minion_config(self) -> MinionConfig:
+        """Load Minion configuration."""
+        tool_allowlist = self._get_env('MINION_TOOL_ALLOWLIST', '')
         tools = [t.strip() for t in tool_allowlist.split(',') if t.strip()] if tool_allowlist else None
         
-        return CopilotConfig(
-            enabled=self._get_env_bool('COPILOT_ENABLED', True),
-            model=self._get_env('COPILOT_MODEL', 'llama3.2'),
+        return MinionConfig(
+            enabled=self._get_env_bool('MINION_ENABLED', True),
+            model=self._get_env('MINION_MODEL', 'llama3.2'),
             ollama_host=self._get_env('OLLAMA_HOST', 'http://localhost:11434'),
-            timeout=self._get_env_int('COPILOT_TIMEOUT', 30),
-            health_check_interval=self._get_env_int('COPILOT_HEALTH_CHECK_INTERVAL', 60),
-            circuit_breaker_threshold=self._get_env_int('COPILOT_CIRCUIT_BREAKER_THRESHOLD', 5),
-            circuit_breaker_timeout=self._get_env_int('COPILOT_CIRCUIT_BREAKER_TIMEOUT', 300),
+            timeout=self._get_env_int('MINION_TIMEOUT', 30),
+            health_check_interval=self._get_env_int('MINION_HEALTH_CHECK_INTERVAL', 60),
+            circuit_breaker_threshold=self._get_env_int('MINION_CIRCUIT_BREAKER_THRESHOLD', 5),
+            circuit_breaker_timeout=self._get_env_int('MINION_CIRCUIT_BREAKER_TIMEOUT', 300),
             tool_allowlist=tools,
-            require_approval_token=self._get_env_bool('COPILOT_REQUIRE_APPROVAL_TOKEN', True),
+            require_approval_token=self._get_env_bool('MINION_REQUIRE_APPROVAL_TOKEN', True),
         )
     
     def _load_security_config(self) -> SecurityConfig:
@@ -518,9 +518,9 @@ class AppConfig:
         return FeatureFlagConfig(
             enable_sqlcipher=self._get_env_bool('ENABLE_SQLCIPHER', False),
             enable_key_rotation=self._get_env_bool('ENABLE_KEY_ROTATION', False),
-            enable_copilot_v2=self._get_env_bool('ENABLE_COPILOT_V2', False),
-            enable_copilot_web_search=self._get_env_bool('ENABLE_COPILOT_WEB_SEARCH', False),
-            enable_copilot_voice=self._get_env_bool('ENABLE_COPILOT_VOICE', False),
+            enable_minion_v2=self._get_env_bool('ENABLE_MINION_V2', False),
+            enable_minion_web_search=self._get_env_bool('ENABLE_MINION_WEB_SEARCH', False),
+            enable_minion_voice=self._get_env_bool('ENABLE_MINION_VOICE', False),
             enable_new_dashboard=self._get_env_bool('ENABLE_NEW_DASHBOARD', False),
             enable_accessibility_mode=self._get_env_bool('ENABLE_ACCESSIBILITY_MODE', False),
             enable_chaos_engineering=self._get_env_bool('ENABLE_CHAOS_ENGINEERING', False),
@@ -531,7 +531,7 @@ class AppConfig:
         """Validate all configuration sections."""
         self.database.validate()
         self.secrets.validate()
-        self.copilot.validate()
+        self.minion.validate()
         self.security.validate()
         self.observability.validate()
     
@@ -541,7 +541,7 @@ class AppConfig:
             'environment': self.environment.value,
             'database': asdict(self.database),
             'secrets': asdict(self.secrets),
-            'copilot': asdict(self.copilot),
+            'minion': asdict(self.minion),
             'security': asdict(self.security),
             'observability': asdict(self.observability),
             'feature_flags': asdict(self.feature_flags),
@@ -606,3 +606,4 @@ def get_config() -> AppConfig:
     else:
         env = os.environ.get('FLASK_ENV', 'development')
         return AppConfig(Environment(env))
+

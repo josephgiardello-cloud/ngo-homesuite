@@ -74,14 +74,14 @@ def project_campaign(campaign_id: int, org_id: int) -> dict:
 
     Returns a dict with keys:
     - ``campaign_id`` (int)
-    - ``raised_to_date`` (float)   – total raised so far (from model cache)
+    - ``raised_to_date`` (float)   â€“ total raised so far (from model cache)
     - ``goal_amount`` (float)
-    - ``projected_raised`` (float) – estimated total by end_date
-    - ``confidence_low`` (float)   – lower 90% confidence bound
-    - ``confidence_high`` (float)  – upper 90% confidence bound
-    - ``days_to_goal`` (int | None) – calendar days until goal is hit at current rate
-    - ``on_pace`` (bool)           – True if projected_raised >= goal_amount
-    - ``method`` (str)             – "regression" | "average" | "insufficient_data"
+    - ``projected_raised`` (float) â€“ estimated total by end_date
+    - ``confidence_low`` (float)   â€“ lower 90% confidence bound
+    - ``confidence_high`` (float)  â€“ upper 90% confidence bound
+    - ``days_to_goal`` (int | None) â€“ calendar days until goal is hit at current rate
+    - ``on_pace`` (bool)           â€“ True if projected_raised >= goal_amount
+    - ``method`` (str)             â€“ "regression" | "average" | "insufficient_data"
     - ``days_elapsed`` (int)
     - ``days_remaining`` (int | None)
     """
@@ -135,7 +135,7 @@ def project_campaign(campaign_id: int, org_id: int) -> dict:
 
         slope, intercept = _linear_regression(xs, ys)
         residual = _residual_std(xs, ys, slope, intercept)
-        # 90% confidence ≈ ±1.645 std
+        # 90% confidence â‰ˆ Â±1.645 std
         z = 1.645
 
         if days_remaining is not None:
@@ -157,7 +157,7 @@ def project_campaign(campaign_id: int, org_id: int) -> dict:
         else:
             projected = raised + avg_daily * 30
 
-        # Wider confidence for sparse data: ±30 % of projected.
+        # Wider confidence for sparse data: Â±30 % of projected.
         confidence_band = projected * 0.30
         low = max(projected - confidence_band, raised)
         high = projected + confidence_band

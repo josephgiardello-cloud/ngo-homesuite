@@ -71,7 +71,7 @@ class FundService:
         """Return total donations in, total expenses out, and net balance for a fund.
 
         All amounts are in their stored currency (mixed-currency funds show the
-        raw sums — callers should aggregate by currency if FX matters).
+        raw sums â€” callers should aggregate by currency if FX matters).
         """
         self.get_fund(fund_id, org_id)  # raises FundNotFound if wrong org
 

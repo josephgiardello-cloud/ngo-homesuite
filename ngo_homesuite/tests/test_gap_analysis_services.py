@@ -470,15 +470,15 @@ class TestP2PFundraising:
 
 
 # ============================================================
-# Copilot Tools — Engagement Score integration
+# Minion Tools â€” Engagement Score integration
 # ============================================================
 
-class TestCopilotEngagementTools:
+class TestMinionEngagementTools:
     @pytest.fixture()
     def registry(self, app):
-        from ngo_homesuite.ai.copilot_tools import CopilotToolRegistry
+        from ngo_homesuite.ai.minion_tools import MinionToolRegistry
         with app.app_context():
-            yield CopilotToolRegistry()
+            yield MinionToolRegistry()
 
     def _ctx(self) -> dict:
         return {"organization_id": 1, "actor": "test"}
@@ -508,8 +508,9 @@ class TestCopilotEngagementTools:
     def test_evaluate_smart_group_tool(self, registry, app):
         with app.app_context():
             from ngo_homesuite.services.smart_groups_service import create_group
-            group = create_group(1, "Copilot Test Group", rules=[{"field": "score", "op": "gte", "value": 0}])
+            group = create_group(1, "Minion Test Group", rules=[{"field": "score", "op": "gte", "value": 0}])
             result = registry.execute("evaluate_smart_group", {"group_id": group.id}, self._ctx())
             db.session.rollback()
         assert "count" in result
         assert "members" in result
+

@@ -4,7 +4,7 @@ os.chdir(Path(__file__).resolve().parent)
 
 from ngo_homesuite.flask_config import TestingConfig
 class _TestCfg(TestingConfig):
-    COPILOT_ENABLED = True
+    MINION_ENABLED = True
     ENABLE_DEMO_SEED = True
 
 from ngo_homesuite.models.core import db, Donor, Organization
@@ -21,3 +21,4 @@ with app.app_context():
         print(f"Donor count for org {org.id}: {count}")
     else:
         print("Organization 'community-hope-initiative' NOT FOUND")
+

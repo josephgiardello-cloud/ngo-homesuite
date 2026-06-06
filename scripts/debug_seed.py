@@ -8,7 +8,7 @@ from ngo_homesuite.models.core import Donor, Organization
 
 
 class _TestCfg(TestingConfig):
-    COPILOT_ENABLED = True
+    MINION_ENABLED = True
 
 
 def main() -> None:
@@ -21,3 +21,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

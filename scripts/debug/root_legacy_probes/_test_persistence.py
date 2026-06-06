@@ -4,7 +4,7 @@ os.chdir(Path(__file__).resolve().parent)
 
 from ngo_homesuite.flask_config import TestingConfig
 class _TestCfg(TestingConfig):
-    COPILOT_ENABLED = True
+    MINION_ENABLED = True
 
 from ngo_homesuite.app_factory import create_app
 from ngo_homesuite.models.core import db, Donor
@@ -23,3 +23,4 @@ with app.app_context():
 app2 = create_app(_TestCfg)
 with app2.app_context():
     print(f"Donor count in new app instance: {Donor.query.count()}")
+

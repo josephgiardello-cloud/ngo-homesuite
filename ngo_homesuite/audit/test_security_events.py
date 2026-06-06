@@ -2,11 +2,11 @@
 Comprehensive tests for Security Audit Event Service.
 
 Validates:
-✅ Event recording with causality tracking
-✅ Tamper-evidence chain integrity
-✅ RLS enforcement in audit queries
-✅ Integration with Flask routes
-✅ Failure handling and recovery
+âœ… Event recording with causality tracking
+âœ… Tamper-evidence chain integrity
+âœ… RLS enforcement in audit queries
+âœ… Integration with Flask routes
+âœ… Failure handling and recovery
 """
 
 import pytest
@@ -349,7 +349,7 @@ class TestAuditEventIntegration:
         
         **Flow**:
         1. Create target user
-        2. Admin changes role viewer → staff
+        2. Admin changes role viewer â†’ staff
         3. Verify audit event recorded
         
         **Assertions**: Role change logged with before/after state.

@@ -2,11 +2,11 @@
 Secure Bootstrap Flow for NGO HomeSuite.
 
 Ensures safe first-admin initialization:
-✅ One-time setup token (time-limited, invalidated after use)
-✅ Prevents organization takeover by unauthorized users
-✅ Enforces minimum security requirements (strong password)
-✅ Logs all bootstrap attempts for audit
-✅ Blocks all further bootstrap attempts after first admin created
+âœ… One-time setup token (time-limited, invalidated after use)
+âœ… Prevents organization takeover by unauthorized users
+âœ… Enforces minimum security requirements (strong password)
+âœ… Logs all bootstrap attempts for audit
+âœ… Blocks all further bootstrap attempts after first admin created
 
 ATTACK VECTORS MITIGATED:
 - Race condition: Only first setup wins

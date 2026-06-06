@@ -6,7 +6,7 @@ from ngo_homesuite.flask_config import TestingConfig
 from ngo_homesuite.models.core import db, Donor, Organization, User
 
 class _TestCfg(TestingConfig):
-    COPILOT_ENABLED = True
+    MINION_ENABLED = True
     # Do NOT use in-memory, use the real DB from TestingConfig or default
 
 app = create_app(_TestCfg)
@@ -33,3 +33,4 @@ with app.app_context():
     print(f"Orgs: {Organization.query.count()}")
     print(f"Users: {User.query.count()}")
     print(f"Donors: {Donor.query.count()}")
+

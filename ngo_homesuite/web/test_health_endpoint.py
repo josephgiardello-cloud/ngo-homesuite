@@ -66,7 +66,7 @@ def test_health_migration_is_current(client):
     """migration_current is a bool; value depends on whether SQL migrations were run."""
     rv = client.get("/health")
     body = rv.get_json()
-    # Just assert it's a bool — test env uses create_all so migration_version may be None
+    # Just assert it's a bool â€” test env uses create_all so migration_version may be None
     assert isinstance(body["migration_current"], bool)
 
 
@@ -94,7 +94,7 @@ def test_health_echoes_caller_provided_request_id(client):
 
 
 # ---------------------------------------------------------------------------
-# /health/live  — liveness probe
+# /health/live  â€” liveness probe
 # ---------------------------------------------------------------------------
 
 def test_health_live_returns_200(client):
@@ -116,7 +116,7 @@ def test_health_live_is_public(client):
 
 
 # ---------------------------------------------------------------------------
-# /health/ready — readiness probe
+# /health/ready â€” readiness probe
 # ---------------------------------------------------------------------------
 
 def test_health_ready_returns_json(client):

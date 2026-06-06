@@ -22,7 +22,7 @@ from ngo_homesuite.models.core import (
 
 
 # ---------------------------------------------------------------------------
-# Fixtures – two isolated orgs with one staff user each
+# Fixtures â€“ two isolated orgs with one staff user each
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="module")
@@ -140,7 +140,7 @@ def test_membership_cross_tenant_tier_isolation(client, app):
         "/membership/members",
         json={"donor_id": 1, "tier_id": tier_b_id},
     )
-    # 404 is the acceptable response — tier not found in this org
+    # 404 is the acceptable response â€” tier not found in this org
     assert enroll_rv.status_code in (404, 400)
     _logout(client)
 
@@ -294,7 +294,7 @@ def test_viewer_cannot_dispatch_reminders(client, app):
     org = _make_org(app, "CT Viewer Reminder Org", "ct-viewer-reminder-org")
     _make_user(app, "ct_viewer_v4", "ct_viewer_v4@test.local", "viewer", "CTPass123!", org)
 
-    # Need a case_id (use 99999 — will 404 before RBAC check)
+    # Need a case_id (use 99999 â€” will 404 before RBAC check)
     _login(client, "ct_viewer_v4", "CTPass123!")
     rv = client.post("/programs/cases/99999/followups/dispatch-reminders", json={})
     assert rv.status_code == 403
@@ -318,7 +318,7 @@ def test_viewer_cannot_dispatch_reminders(client, app):
 ])
 def test_unauthenticated_redirected_to_login(client, method, path):
     rv = client.open(path, method=method, follow_redirects=False)
-    # Must get 302 → /auth/login or 401, never a 200
+    # Must get 302 â†’ /auth/login or 401, never a 200
     assert rv.status_code in (302, 401), f"{method} {path} returned {rv.status_code}"
     if rv.status_code == 302:
         assert "/auth/login" in (rv.headers.get("Location") or "")

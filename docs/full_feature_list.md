@@ -74,7 +74,7 @@ This is the current product feature inventory for NGO HomeSuite.
 - Financial guardrails intelligence endpoint (`/api/v2/intelligence/financial-guardrails`)
 - Donor journey automation run and event history endpoints
 - Activity and insight feeds for operational monitoring
-- AI Copilot service routes with role-aware/tool-aware controls
+- AI Minion service routes with role-aware/tool-aware controls
 
 ## Forms, Integrations, and External Connectivity
 
@@ -102,3 +102,4 @@ This is the current product feature inventory for NGO HomeSuite.
 Current release-gate note:
 
 - Strict release-evidence validation is blocked only by pending external pentest sign-off (`external_pentest_signoff`).
+

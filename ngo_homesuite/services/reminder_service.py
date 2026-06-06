@@ -1,4 +1,4 @@
-"""Reminder Service — dispatches task reminders via email/SMS.
+"""Reminder Service â€” dispatches task reminders via email/SMS.
 
 Supports scheduling reminders at configurable intervals before/after due dates.
 Tracks all reminder history for audit and retry logic.

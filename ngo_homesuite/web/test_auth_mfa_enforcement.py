@@ -118,7 +118,7 @@ class TestMfaEnforcement:
         """Auth blueprint routes must be accessible even when admin hasn't enrolled in MFA."""
         _login(client, 'test_admin_nomfa', 'Admin1234!')
         resp = client.get('/auth/mfa/setup')
-        # Should NOT redirect to itself (no redirect loop) — allow 200 or redirect elsewhere.
+        # Should NOT redirect to itself (no redirect loop) â€” allow 200 or redirect elsewhere.
         if resp.status_code in (301, 302):
             loc = resp.headers.get('Location', '')
             assert loc.rstrip('/') != '/auth/mfa/setup'

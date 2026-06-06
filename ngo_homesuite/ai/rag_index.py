@@ -46,7 +46,7 @@ class LocalRAGIndex:
 
         embeddings = OllamaEmbeddings(model=self.embed_model)
         self._chroma_collection = Chroma(
-            collection_name="ngo_homesuite_copilot",
+            collection_name="ngo_homesuite_minion",
             persist_directory=str(self.index_dir / "chroma"),
             embedding_function=embeddings,
         )
@@ -166,4 +166,5 @@ class LocalRAGIndex:
 
 def default_index_dir() -> str:
     settings = get_runtime_settings()
-    return settings.copilot_index_dir
+    return settings.minion_index_dir
+

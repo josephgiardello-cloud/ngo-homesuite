@@ -1,10 +1,10 @@
 version: "3.9"
 
 # Profiles:
-#   default          — app + PostgreSQL
-#   cache            — add Redis for server-side session storage
-#   edge             — add Caddy TLS termination
-#   edge             — app + PostgreSQL + Caddy
+#   default          â€” app + PostgreSQL
+#   cache            â€” add Redis for server-side session storage
+#   edge             â€” add Caddy TLS termination
+#   edge             â€” app + PostgreSQL + Caddy
 
 services:
   # ---------------------------------------------------------------------------

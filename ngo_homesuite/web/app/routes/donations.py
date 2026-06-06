@@ -1,4 +1,4 @@
-"""Donation blueprint — direct (non-Stripe) donation recording.
+"""Donation blueprint â€” direct (non-Stripe) donation recording.
 
 For online Stripe-based donations see ngo_homesuite/web/integrations_routes.py
 (POST /integrations/webhooks/stripe).

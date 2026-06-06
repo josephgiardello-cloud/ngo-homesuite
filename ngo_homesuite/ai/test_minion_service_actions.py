@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ngo_homesuite.ai.copilot_service import HomeSuiteCopilot
+from ngo_homesuite.ai.minion_service import HomeSuiteMinion
 
 
 @dataclass
@@ -96,8 +96,8 @@ class _StubClientApproved:
         }
 
 
-def _make_copilot(client):
-    cp = HomeSuiteCopilot.__new__(HomeSuiteCopilot)
+def _make_minion(client):
+    cp = HomeSuiteMinion.__new__(HomeSuiteMinion)
     cp.client = client
     cp.model = "test-model"
     cp.rag_k = 3
@@ -107,7 +107,7 @@ def _make_copilot(client):
 
 
 def test_pending_approval_action_is_not_executed_without_explicit_approval():
-    cp = _make_copilot(_StubClientPending())
+    cp = _make_minion(_StubClientPending())
 
     res = cp.answer(
         prompt="Create donor Jane Donor",
@@ -127,7 +127,7 @@ def test_pending_approval_action_is_not_executed_without_explicit_approval():
 
 
 def test_missing_approved_actions_does_not_grant_implicit_approval():
-    cp = _make_copilot(_StubClientPending())
+    cp = _make_minion(_StubClientPending())
 
     res = cp.answer(
         prompt="Create donor Jane Donor",
@@ -145,7 +145,7 @@ def test_missing_approved_actions_does_not_grant_implicit_approval():
 
 
 def test_approved_action_executes_and_returns_executed_status():
-    cp = _make_copilot(_StubClientApproved())
+    cp = _make_minion(_StubClientApproved())
 
     res = cp.answer(
         prompt="Create donor Jane Donor",
@@ -162,3 +162,4 @@ def test_approved_action_executes_and_returns_executed_status():
 
     assert any(a.get("status") == "executed" and a.get("tool") == "create_donor" for a in res.actions)
     assert "Created donor" in res.answer
+

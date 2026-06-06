@@ -84,7 +84,7 @@ class Config:
     # JSON config
     JSON_SORT_KEYS = False
 
-    # Ollama AI (local, in-repo — no external server required)
+    # Ollama AI (local, in-repo â€” no external server required)
     APEX_AI_ENABLED = _RUNTIME_SETTINGS.apex_ai_enabled
     OLLAMA_HOST = _RUNTIME_SETTINGS.ollama_host
     OLLAMA_MODEL = _RUNTIME_SETTINGS.ollama_model
@@ -92,17 +92,17 @@ class Config:
     OLLAMA_TIMEOUT_S = _RUNTIME_SETTINGS.ollama_timeout_s
     APEX_TENANT_ID = _RUNTIME_SETTINGS.apex_tenant_id
 
-    # HomeSuite Copilot (local-first)
-    COPILOT_ENABLED = _RUNTIME_SETTINGS.copilot_enabled
-    COPILOT_INDEX_DIR = _RUNTIME_SETTINGS.copilot_index_dir
-    COPILOT_RAG_K = _RUNTIME_SETTINGS.copilot_rag_k
-    COPILOT_ALLOW_WEB_TOOLS = _RUNTIME_SETTINGS.copilot_allow_web_tools
-    COPILOT_TOOL_ALLOWLIST = ",".join(_RUNTIME_SETTINGS.copilot_tool_allowlist)
-    COPILOT_REQUIRE_APPROVAL_TOKEN = _RUNTIME_SETTINGS.copilot_require_approval_token
-    COPILOT_APPROVAL_TOKEN_TTL_SEC = _RUNTIME_SETTINGS.copilot_approval_token_ttl_sec
-    COPILOT_TOOL_TIMEOUT_SEC = _RUNTIME_SETTINGS.copilot_tool_timeout_sec
-    COPILOT_CONVERSATION_MAX_MESSAGES = _RUNTIME_SETTINGS.copilot_conversation_max_messages
-    COPILOT_RATE_LIMIT_PER_MIN = _RUNTIME_SETTINGS.copilot_rate_limit_per_min
+    # HomeSuite Minion (local-first)
+    MINION_ENABLED = _RUNTIME_SETTINGS.minion_enabled
+    MINION_INDEX_DIR = _RUNTIME_SETTINGS.minion_index_dir
+    MINION_RAG_K = _RUNTIME_SETTINGS.minion_rag_k
+    MINION_ALLOW_WEB_TOOLS = _RUNTIME_SETTINGS.minion_allow_web_tools
+    MINION_TOOL_ALLOWLIST = ",".join(_RUNTIME_SETTINGS.minion_tool_allowlist)
+    MINION_REQUIRE_APPROVAL_TOKEN = _RUNTIME_SETTINGS.minion_require_approval_token
+    MINION_APPROVAL_TOKEN_TTL_SEC = _RUNTIME_SETTINGS.minion_approval_token_ttl_sec
+    MINION_TOOL_TIMEOUT_SEC = _RUNTIME_SETTINGS.minion_tool_timeout_sec
+    MINION_CONVERSATION_MAX_MESSAGES = _RUNTIME_SETTINGS.minion_conversation_max_messages
+    MINION_RATE_LIMIT_PER_MIN = _RUNTIME_SETTINGS.minion_rate_limit_per_min
     CORS_ALLOWED_ORIGINS = _RUNTIME_SETTINGS.cors_allowed_origins
     ENABLE_DEMO_SEED = _RUNTIME_SETTINGS.enable_demo_seed
     DEMO_ADMIN_PASSWORD = _RUNTIME_SETTINGS.demo_admin_password
@@ -201,3 +201,4 @@ def get_config():
     env = _RUNTIME_SETTINGS.flask_env
     selected = config.get(env, DevelopmentConfig)
     return selected
+

@@ -1,13 +1,13 @@
 """
-Comprehensive tests for Copilot Health Probes and Circuit Breaker.
+Comprehensive tests for Minion Health Probes and Circuit Breaker.
 
 Validates:
-✅ Circuit breaker state transitions
-✅ Failure threshold enforcement
-✅ Automatic recovery attempts
-✅ Health probe functionality
-✅ Graceful degradation with fallback
-✅ Metrics collection and reporting
+âœ… Circuit breaker state transitions
+âœ… Failure threshold enforcement
+âœ… Automatic recovery attempts
+âœ… Health probe functionality
+âœ… Graceful degradation with fallback
+âœ… Metrics collection and reporting
 """
 
 import pytest
@@ -18,8 +18,8 @@ from ngo_homesuite.ai.health_probes import (
     CircuitBreaker,
     CircuitBreakerState,
     CircuitBreakerOpen,
-    CopilotHealthProbe,
-    CopilotRequestGate,
+    MinionHealthProbe,
+    MinionRequestGate,
 )
 
 
@@ -283,16 +283,16 @@ class TestCircuitBreakerMetrics:
         assert abs(metrics['failure_rate'] - 0.4) < 0.01
 
 
-class TestCopilotHealthProbe:
-    """Test Copilot health check probe."""
+class TestMinionHealthProbe:
+    """Test Minion health check probe."""
 
     def test_health_probe_healthy_status(self):
         """
-        **Scenario**: Copilot service is healthy.
+        **Scenario**: Minion service is healthy.
         
         **Assertions**: Probe returns healthy=True.
         """
-        probe = CopilotHealthProbe()
+        probe = MinionHealthProbe()
         
         with patch('requests.get') as mock_get:
             mock_response = Mock()
@@ -308,11 +308,11 @@ class TestCopilotHealthProbe:
 
     def test_health_probe_unhealthy_no_models(self):
         """
-        **Scenario**: Copilot service has no models available.
+        **Scenario**: Minion service has no models available.
         
         **Assertions**: Probe returns healthy=False.
         """
-        probe = CopilotHealthProbe()
+        probe = MinionHealthProbe()
         
         with patch('requests.get') as mock_get:
             mock_response = Mock()
@@ -327,11 +327,11 @@ class TestCopilotHealthProbe:
 
     def test_health_probe_unavailable_service(self):
         """
-        **Scenario**: Copilot service is unreachable.
+        **Scenario**: Minion service is unreachable.
         
         **Assertions**: Probe returns healthy=False with error.
         """
-        probe = CopilotHealthProbe()
+        probe = MinionHealthProbe()
         
         with patch('requests.get') as mock_get:
             mock_get.side_effect = ConnectionError("Connection refused")
@@ -352,7 +352,7 @@ class TestCopilotHealthProbe:
         
         **Assertions**: Circuit breaker prevents repeated failures.
         """
-        probe = CopilotHealthProbe()
+        probe = MinionHealthProbe()
         
         with patch('requests.get') as mock_get:
             mock_get.side_effect = ConnectionError()
@@ -367,7 +367,7 @@ class TestCopilotHealthProbe:
             assert result['circuit_state'] == 'open'
 
 
-class TestCopilotRequestGate:
+class TestMinionRequestGate:
     """Test request gating with fallback."""
 
     def test_gate_allows_when_healthy(self):
@@ -376,8 +376,8 @@ class TestCopilotRequestGate:
         
         **Assertions**: should_allow_request returns True.
         """
-        probe = CopilotHealthProbe()
-        gate = CopilotRequestGate(probe)
+        probe = MinionHealthProbe()
+        gate = MinionRequestGate(probe)
         
         with patch.object(probe, 'is_healthy', return_value=True):
             assert gate.should_allow_request() is True
@@ -388,8 +388,8 @@ class TestCopilotRequestGate:
         
         **Assertions**: should_allow_request returns False.
         """
-        probe = CopilotHealthProbe()
-        gate = CopilotRequestGate(probe)
+        probe = MinionHealthProbe()
+        gate = MinionRequestGate(probe)
         
         with patch.object(probe, 'is_healthy', return_value=False):
             assert gate.should_allow_request() is False
@@ -400,8 +400,8 @@ class TestCopilotRequestGate:
         
         **Assertions**: Fallback message is user-friendly.
         """
-        probe = CopilotHealthProbe()
-        gate = CopilotRequestGate(probe)
+        probe = MinionHealthProbe()
+        gate = MinionRequestGate(probe)
         
         fallback = gate.get_fallback_response("test query")
         
@@ -418,7 +418,7 @@ class TestHealthProbeMetrics:
         
         **Assertions**: Metrics include timestamp and result.
         """
-        probe = CopilotHealthProbe()
+        probe = MinionHealthProbe()
         
         with patch('requests.get') as mock_get:
             mock_response = Mock()
@@ -439,7 +439,7 @@ class TestHealthProbeMetrics:
         
         **Assertions**: Counter increments on failures.
         """
-        probe = CopilotHealthProbe()
+        probe = MinionHealthProbe()
         
         with patch('requests.get') as mock_get:
             mock_get.side_effect = ConnectionError()
@@ -450,3 +450,4 @@ class TestHealthProbeMetrics:
             
             metrics = probe.get_metrics()
             assert metrics['consecutive_failures'] == 2
+

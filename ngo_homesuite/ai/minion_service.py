@@ -9,14 +9,14 @@ from typing import Any
 from flask import current_app
 import ollama
 
-from ngo_homesuite.ai.copilot_tools import CopilotToolRegistry
+from ngo_homesuite.ai.minion_tools import MinionToolRegistry
 from ngo_homesuite.ai.pii_redact import redact_pii
 from ngo_homesuite.ai.rag_index import LocalRAGIndex
 from ngo_homesuite.prompts import NGO_APEX_POLICY_SYSTEM_PROMPT
 
 
-COPILOT_SYSTEM_PROMPT = (
-    "You are HomeSuite Copilot, an expert assistant for this exact nonprofit management system. "
+MINION_SYSTEM_PROMPT = (
+    "You are HomeSuite Minion, an expert assistant for this exact nonprofit management system. "
     "You help users run workflows, troubleshoot, and answer product questions accurately. "
     "When tool outputs or retrieved sources are available, prefer them over assumptions. "
     "Never reveal secrets or unredacted PII."
@@ -26,7 +26,7 @@ COPILOT_SYSTEM_PROMPT = (
 def _sanitize_model_output(answer: str) -> str:
     text = str(answer or "")
     lower_text = text.lower()
-    prompt_prefix = COPILOT_SYSTEM_PROMPT.strip().lower()[:80]
+    prompt_prefix = MINION_SYSTEM_PROMPT.strip().lower()[:80]
     policy_prefix = NGO_APEX_POLICY_SYSTEM_PROMPT.strip().lower()[:120]
 
     if prompt_prefix and prompt_prefix in lower_text:
@@ -37,14 +37,14 @@ def _sanitize_model_output(answer: str) -> str:
 
 
 @dataclass
-class CopilotResponse:
+class MinionResponse:
     answer: str
     sources: list[dict[str, Any]]
     actions: list[dict[str, Any]]
     redactions: int
 
 
-class HomeSuiteCopilot:
+class HomeSuiteMinion:
     def __init__(
         self,
         host: str,
@@ -59,19 +59,19 @@ class HomeSuiteCopilot:
         self.rag_k = max(1, int(rag_k))
         self.project_root = project_root
         self.index = LocalRAGIndex(index_dir=index_dir, embed_model=embed_model)
-        self.tools = CopilotToolRegistry()
+        self.tools = MinionToolRegistry()
 
     @classmethod
-    def from_app(cls) -> "HomeSuiteCopilot":
+    def from_app(cls) -> "HomeSuiteMinion":
         app = current_app
         project_root = str(Path(app.root_path).parent)
         return cls(
             host=app.config.get("OLLAMA_HOST", "http://localhost:11434"),
             model=app.config.get("OLLAMA_MODEL", "llama3.2"),
             embed_model=app.config.get("OLLAMA_EMBED_MODEL", "nomic-embed-text"),
-            index_dir=app.config.get("COPILOT_INDEX_DIR", "data/copilot_index"),
+            index_dir=app.config.get("MINION_INDEX_DIR", "data/minion_index"),
             project_root=project_root,
-            rag_k=app.config.get("COPILOT_RAG_K", 6),
+            rag_k=app.config.get("MINION_RAG_K", 6),
         )
 
     def reindex(self, user_summary_texts: list[str] | None = None) -> int:
@@ -116,7 +116,7 @@ class HomeSuiteCopilot:
         return [
             {
                 "role": "system",
-                "content": f"{COPILOT_SYSTEM_PROMPT}\n\n{NGO_APEX_POLICY_SYSTEM_PROMPT}",
+                "content": f"{MINION_SYSTEM_PROMPT}\n\n{NGO_APEX_POLICY_SYSTEM_PROMPT}",
             },
             {"role": "user", "content": user_payload},
         ]
@@ -160,7 +160,7 @@ class HomeSuiteCopilot:
         top_sources = [str(src.get("source", "")) for src in sources[:3] if src.get("source")]
         source_hint = ", ".join(top_sources) if top_sources else "no indexed sources"
         return (
-            "Copilot is currently running in offline fallback mode because the local Ollama service is unavailable. "
+            "Minion is currently running in offline fallback mode because the local Ollama service is unavailable. "
             f"Reason: {reason}.\n\n"
             f"Request received: {prompt[:300]}{'...' if len(prompt) > 300 else ''}\n"
             f"Available knowledge sources: {source_hint}.\n"
@@ -175,7 +175,7 @@ class HomeSuiteCopilot:
         runtime_ctx: dict[str, Any],
         allow_actions: bool,
         use_web: bool,
-    ) -> CopilotResponse:
+    ) -> MinionResponse:
         redacted_prompt, redactions = redact_pii(prompt)
         sources = self.index.retrieve(redacted_prompt, k=self.rag_k)
         messages = self._messages_with_retrieval(redacted_prompt, context=context, sources=sources)
@@ -196,7 +196,7 @@ class HomeSuiteCopilot:
             try:
                 first = self.client.chat(model=self.model, messages=messages, tools=tool_specs)
             except Exception as exc:
-                return CopilotResponse(
+                return MinionResponse(
                     answer=self._fallback_answer(redacted_prompt, context, sources, str(exc)),
                     sources=sources,
                     actions=actions,
@@ -311,9 +311,10 @@ class HomeSuiteCopilot:
             except Exception:
                 answer += "\n\n[Web tool check enabled, but external search is currently unavailable.]"
 
-        return CopilotResponse(
+        return MinionResponse(
             answer=_sanitize_model_output(answer).strip(),
             sources=sources,
             actions=actions,
             redactions=redactions,
         )
+

@@ -13,7 +13,7 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import delete, select
 
 from ngo_homesuite.ai.apex_client import OllamaClient, OllamaClientError
-from ngo_homesuite.ai.copilot_service import HomeSuiteCopilot
+from ngo_homesuite.ai.minion_service import HomeSuiteMinion
 from ngo_homesuite.ai.pii_redact import redact_pii
 from ngo_homesuite.db.audit_log import log_event
 from ngo_homesuite.models.core import db, AIConversation, AIMessage
@@ -25,7 +25,7 @@ ai_bp = Blueprint("ai", __name__, url_prefix="/ai")
 
 _USED_APPROVAL_TOKENS: dict[str, float] = {}
 _APPROVAL_TOKEN_TTL_SEC = 300
-_COPILOT_RATE_BUCKETS: dict[str, list[float]] = {}
+_MINION_RATE_BUCKETS: dict[str, list[float]] = {}
 _SESSION_KEY = "ngo_ai_session_id"
 
 
@@ -59,7 +59,7 @@ def _parse_approved_actions(raw: Any) -> list[dict[str, str]]:
 
 
 def _approval_serializer() -> URLSafeTimedSerializer:
-    return URLSafeTimedSerializer(secret_key=str(current_app.secret_key), salt="ngohs-copilot-approval-v1")
+    return URLSafeTimedSerializer(secret_key=str(current_app.secret_key), salt="ngohs-minion-approval-v1")
 
 
 def _approval_fingerprint(prompt: str, tool: str, user_id: Any, organization_id: Any) -> str:
@@ -79,23 +79,23 @@ def _prune_used_approval_tokens(now_ts: float, ttl_sec: int) -> None:
         _USED_APPROVAL_TOKENS.pop(tok, None)
 
 
-def _copilot_rate_limit_status(rate_per_min: int) -> tuple[bool, int]:
+def _minion_rate_limit_status(rate_per_min: int) -> tuple[bool, int]:
     if rate_per_min <= 0:
         return False, 0
 
     user_id = str(getattr(current_user, "id", "anon"))
     now_ts = time.time()
     window_start = now_ts - 60.0
-    recent = [ts for ts in _COPILOT_RATE_BUCKETS.get(user_id, []) if ts >= window_start]
+    recent = [ts for ts in _MINION_RATE_BUCKETS.get(user_id, []) if ts >= window_start]
 
     if len(recent) >= rate_per_min:
         oldest_relevant = min(recent)
         retry_after = max(1, int((oldest_relevant + 60.0) - now_ts))
-        _COPILOT_RATE_BUCKETS[user_id] = recent
+        _MINION_RATE_BUCKETS[user_id] = recent
         return True, retry_after
 
     recent.append(now_ts)
-    _COPILOT_RATE_BUCKETS[user_id] = recent
+    _MINION_RATE_BUCKETS[user_id] = recent
     return False, 0
 
 
@@ -129,7 +129,7 @@ def _audit_approval_event(event_name: str, prompt: str, tool: str, reason: str |
         log_event(
             _audit_db_path(),
             actor=str(getattr(current_user, "username", "unknown")),
-            action=f"copilot_approval_token_{event_name}",
+            action=f"minion_approval_token_{event_name}",
             entity="ai",
             metadata=metadata,
         )
@@ -158,7 +158,7 @@ def _verify_approval_token(token: str, prompt: str, tool: str, user_id: Any, org
         _audit_approval_event("rejected", prompt=prompt, tool=str(tool), reason="replay")
         return False
 
-    ttl = int(current_app.config.get("COPILOT_APPROVAL_TOKEN_TTL_SEC", _APPROVAL_TOKEN_TTL_SEC))
+    ttl = int(current_app.config.get("MINION_APPROVAL_TOKEN_TTL_SEC", _APPROVAL_TOKEN_TTL_SEC))
     serializer = _approval_serializer()
     try:
         data = serializer.loads(token, max_age=ttl)
@@ -274,7 +274,7 @@ def _persist_exchange(session_id: str, model: str, tenant_id: str,
             role="assistant",
             content=assistant_reply,
         ))
-        max_messages = int(current_app.config.get("COPILOT_CONVERSATION_MAX_MESSAGES", 200))
+        max_messages = int(current_app.config.get("MINION_CONVERSATION_MAX_MESSAGES", 200))
         if max_messages > 0:
             message_ids = list(
                 db.session.scalars(
@@ -361,7 +361,7 @@ def _audit_interaction(user_prompt: str, model: str, tenant_id: str) -> None:
         log_event(
             _audit_db_path(),
             actor=str(getattr(current_user, "username", "unknown")),
-            action="copilot_query",
+            action="minion_query",
             entity="ai",
             metadata={
                 "user_id": getattr(current_user, "id", None),
@@ -564,12 +564,12 @@ def stream_chat() -> Response:
     return response
 
 
-@ai_bp.route("/copilot/chat", methods=["POST"])
+@ai_bp.route("/minion/chat", methods=["POST"])
 @login_required
 @roles_required("admin", "staff", "viewer")
-def copilot_chat() -> Response:
-    if not current_app.config.get("COPILOT_ENABLED", True):
-        return jsonify({"error": "HomeSuite Copilot is disabled."}), 503
+def minion_chat() -> Response:
+    if not current_app.config.get("MINION_ENABLED", True):
+        return jsonify({"error": "HomeSuite Minion is disabled."}), 503
 
     payload: Dict[str, Any] = request.get_json(silent=True) or {}
     prompt = str(payload.get("prompt", "")).strip()
@@ -577,13 +577,13 @@ def copilot_chat() -> Response:
         return jsonify({"error": "Prompt is required."}), 400
 
     if bool(current_app.config.get("RATELIMIT_ENABLED", True)):
-        limited, retry_after = _copilot_rate_limit_status(
-            int(current_app.config.get("COPILOT_RATE_LIMIT_PER_MIN", 30))
+        limited, retry_after = _minion_rate_limit_status(
+            int(current_app.config.get("MINION_RATE_LIMIT_PER_MIN", 30))
         )
         if limited:
             response = jsonify(
                 {
-                    "error": "Copilot rate limit exceeded. Please retry shortly.",
+                    "error": "Minion rate limit exceeded. Please retry shortly.",
                     "retry_after_sec": retry_after,
                 }
             )
@@ -606,7 +606,7 @@ def copilot_chat() -> Response:
     approved_action_items = _parse_approved_actions(payload.get("approved_actions"))
     route_allowlist_in_payload = "tool_allowlist" in payload
     route_allowlist = _parse_tool_list(payload.get("tool_allowlist"))
-    config_allowlist = _parse_tool_list(current_app.config.get("COPILOT_TOOL_ALLOWLIST", ""))
+    config_allowlist = _parse_tool_list(current_app.config.get("MINION_TOOL_ALLOWLIST", ""))
 
     if route_allowlist_in_payload:
         if config_allowlist:
@@ -621,7 +621,7 @@ def copilot_chat() -> Response:
         allowed_now = set(tool_allowlist)
         approved_action_items = [item for item in approved_action_items if item["tool"] in allowed_now]
 
-    require_token = bool(current_app.config.get("COPILOT_REQUIRE_APPROVAL_TOKEN", True))
+    require_token = bool(current_app.config.get("MINION_REQUIRE_APPROVAL_TOKEN", True))
     approved_actions: list[str] = []
     for item in approved_action_items:
         tool = item["tool"]
@@ -640,18 +640,18 @@ def copilot_chat() -> Response:
 
     _audit_interaction(prompt, model, tenant_id)
 
-    copilot = HomeSuiteCopilot.from_app()
-    response = copilot.answer(
+    minion = HomeSuiteMinion.from_app()
+    response = minion.answer(
         prompt=prompt,
         context=context,
         runtime_ctx={
-            "actor": getattr(current_user, "username", "copilot"),
+            "actor": getattr(current_user, "username", "minion"),
             "organization_id": getattr(current_user, "organization_id", None),
             "user_id": getattr(current_user, "id", None),
             "approved_actions": approved_actions,
             "tool_allowlist": tool_allowlist,
-            "allow_web_tools": bool(current_app.config.get("COPILOT_ALLOW_WEB_TOOLS", False)),
-            "tool_timeout_sec": float(current_app.config.get("COPILOT_TOOL_TIMEOUT_SEC", 8.0)),
+            "allow_web_tools": bool(current_app.config.get("MINION_ALLOW_WEB_TOOLS", False)),
+            "tool_timeout_sec": float(current_app.config.get("MINION_TOOL_TIMEOUT_SEC", 8.0)),
         },
         allow_actions=allow_actions,
         use_web=use_web,
@@ -675,30 +675,30 @@ def copilot_chat() -> Response:
             "sources": response.sources,
             "actions": response.actions,
             "redactions": response.redactions,
-            "mode": "copilot",
+            "mode": "minion",
         }
     )
 
 
-@ai_bp.route("/copilot/reindex", methods=["POST"])
+@ai_bp.route("/minion/reindex", methods=["POST"])
 @login_required
 @roles_required("admin")
-def copilot_reindex() -> Response:
-    if not current_app.config.get("COPILOT_ENABLED", True):
-        return jsonify({"error": "HomeSuite Copilot is disabled."}), 503
+def minion_reindex() -> Response:
+    if not current_app.config.get("MINION_ENABLED", True):
+        return jsonify({"error": "HomeSuite Minion is disabled."}), 503
 
     payload: Dict[str, Any] = request.get_json(silent=True) or {}
     user_summaries = payload.get("user_summaries") if isinstance(payload.get("user_summaries"), list) else []
     user_summaries = [str(s) for s in user_summaries if isinstance(s, str)]
 
-    copilot = HomeSuiteCopilot.from_app()
-    total_chunks = copilot.reindex(user_summary_texts=user_summaries)
+    minion = HomeSuiteMinion.from_app()
+    total_chunks = minion.reindex(user_summary_texts=user_summaries)
 
     try:
         log_event(
             _audit_db_path(),
             actor=str(getattr(current_user, "username", "unknown")),
-            action="copilot_reindex",
+            action="minion_reindex",
             entity="ai",
             metadata={
                 "chunks": total_chunks,
@@ -709,3 +709,4 @@ def copilot_reindex() -> Response:
         current_app.logger.warning("Could not append audit event for reindex: %s", exc)
 
     return jsonify({"ok": True, "chunks_indexed": total_chunks})
+

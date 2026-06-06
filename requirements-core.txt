@@ -11,6 +11,7 @@ Flask-Session==0.8.0
 APScheduler==3.11.2
 Pydantic==2.13.4
 PyYAML==6.0.3
+defusedxml==0.7.1
 
 # Database
 SQLAlchemy==2.0.36

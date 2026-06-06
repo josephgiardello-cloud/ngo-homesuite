@@ -39,10 +39,10 @@ def start_periodic_integrity_checks(interval_seconds=3600):
         t = threading.Thread(target=periodic_task, daemon=True)
         _periodic_check_state['thread'] = t
         t.start()
-# --- Efficient 3σ Drift Detection for Large Tables ---
+# --- Efficient 3Ïƒ Drift Detection for Large Tables ---
 def detect_3sigma_drift(conn, table_name, value_column, window_size=1000, pk_col=None):
     """
-    Detects 3σ outliers in a value column using a memory-efficient streaming algorithm (Welford's).
+    Detects 3Ïƒ outliers in a value column using a memory-efficient streaming algorithm (Welford's).
     Only the latest value is checked for drift against the previous window_size values.
     Args:
         conn: sqlite3.Connection
@@ -141,7 +141,7 @@ Inefficient pagination for large tables:
 
 Error handling nuances:
 - Some print statements may expose info in logs; sensitive data should not be printed (even partial hashes or KMS errors).
-- Fallback HMAC with salt is risky and only safe in testing—currently allowed if INTEGRITY_HMAC_KEY_FALLBACK_OK=1.
+- Fallback HMAC with salt is risky and only safe in testingâ€”currently allowed if INTEGRITY_HMAC_KEY_FALLBACK_OK=1.
 
 Seal anchoring:
 - AWS S3 anchoring depends on bucket Object Lock configuration.
@@ -155,9 +155,9 @@ Azure Key Vault HMAC edge cases:
 - Assumes HSM-backed key for HMAC; some SDK versions may behave differently (sign_data vs sign).
 - Raises RuntimeError for non-HSM keys, which may be overly strict for some environments.
 
-3σ Drift detection limitations:
+3Ïƒ Drift detection limitations:
 - Only detects single outliers; sustained trends may go unnoticed.
-- Uses statistics.mean and statistics.stdev—not incremental, so very large windows could be slow.
+- Uses statistics.mean and statistics.stdevâ€”not incremental, so very large windows could be slow.
 
 Redundant imports / minor code issues:
 - Multiple repeated imports (sqlite3, hashlib, datetime, os, importlib).
@@ -798,7 +798,7 @@ def verify_baseline_log(log_path=None):
 #
 # Notes:
 # - Table name is allowlisted for SQL injection safety.
-# - Only the latest datapoint is checked for 3σ drift.
+# - Only the latest datapoint is checked for 3Ïƒ drift.
 # - Baseline is DB-backed with HMAC for authenticity, and file-based for backup/legacy.
 # - For HA/multi-node, use DB-backed baseline and atomic update.
 # - For large tables, chunked/Merkle hashing is used for scalability.

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ngo-homesuite"
 version = "0.2.1"
-description = "Multi-tenant NGO operations platform with workflow runtime, audit trails, and AI copilot support"
+description = "Multi-tenant NGO operations platform with workflow runtime, audit trails, and AI minion support"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -92,3 +92,4 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["ngo_homesuite*"]
+

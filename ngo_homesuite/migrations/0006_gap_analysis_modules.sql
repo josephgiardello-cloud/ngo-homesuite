@@ -1,4 +1,4 @@
-﻿-- Migration 0006: Gap Analysis Feature Modules
+-- Migration 0006: Gap Analysis Feature Modules
 -- Adds tables for: Grants, Memberships, Stewardship Journeys,
 --                  Tasks, Program Cases, Engagement Scores,
 --                  Smart Groups, and P2P Fundraising

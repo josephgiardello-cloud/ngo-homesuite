@@ -1,4 +1,4 @@
-﻿import logging
+import logging
 import re
 import warnings
 from datetime import datetime

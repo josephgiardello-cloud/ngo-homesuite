@@ -14,13 +14,13 @@ Rule schema (stored as JSON in SmartGroup.rules_json):
     ]
 
 Supported fields:
-    segment              — engagement segment (champion, loyal, at_risk, lapsed, new, promising)
-    score                — engagement score 0–100
-    donor_type           — individual / corporate / foundation / anonymous
-    membership_status    — active / lapsed / cancelled / none
-    last_gift_days_ago   — integer
-    total_giving         — float (lifetime)
-    gift_count           — integer (lifetime)
+    segment              â€” engagement segment (champion, loyal, at_risk, lapsed, new, promising)
+    score                â€” engagement score 0â€“100
+    donor_type           â€” individual / corporate / foundation / anonymous
+    membership_status    â€” active / lapsed / cancelled / none
+    last_gift_days_ago   â€” integer
+    total_giving         â€” float (lifetime)
+    gift_count           â€” integer (lifetime)
 
 Supported ops: eq, neq, gt, gte, lt, lte, in, not_in
 """

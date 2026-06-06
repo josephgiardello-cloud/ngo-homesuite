@@ -148,7 +148,7 @@
 
   function aiTip(reasons) {
     if (!reasons || !reasons.length) return '';
-    return `<div class="ai-tip">🤖 <strong>Why this matched:</strong> ${reasons.map(r => escHtml(r)).join(' · ')}</div>`;
+    return `<div class="ai-tip">ðŸ¤– <strong>Why this matched:</strong> ${reasons.map(r => escHtml(r)).join(' Â· ')}</div>`;
   }
 
   function renderAlerts(alerts) {
@@ -165,7 +165,7 @@
     // Stats
     const counts = { new: 0, reviewed: 0, actioned: 0, dismissed: 0 };
     alerts.forEach(a => { counts[a.status] = (counts[a.status] || 0) + 1; });
-    const labels = { new: '🔔 New', reviewed: '👁 Reviewed', actioned: '✅ Actioned', dismissed: '🚫 Dismissed' };
+    const labels = { new: 'ðŸ”” New', reviewed: 'ðŸ‘ Reviewed', actioned: 'âœ… Actioned', dismissed: 'ðŸš« Dismissed' };
     statsRow.innerHTML = Object.entries(counts)
       .filter(([, v]) => v > 0)
       .map(([k, v]) => `<span class="stat-pill">${labels[k] || k}: <strong>${v}</strong></span>`)
@@ -177,9 +177,9 @@
       const reasons = details.match_reasons || [];
       const expandId = 'expand-' + alert.id;
       const notesId = 'notes-' + alert.id;
-      const funderLine = details.funder_name ? ` · ${escHtml(details.funder_name)}` : '';
+      const funderLine = details.funder_name ? ` Â· ${escHtml(details.funder_name)}` : '';
       const urlPart = details.external_url
-        ? `<a href="${escHtml(details.external_url)}" target="_blank" rel="noopener noreferrer" style="font-size:0.84rem;">View on Grants.gov ↗</a>`
+        ? `<a href="${escHtml(details.external_url)}" target="_blank" rel="noopener noreferrer" style="font-size:0.84rem;">View on Grants.gov â†—</a>`
         : '';
 
       const card = document.createElement('div');
@@ -214,7 +214,7 @@
           ${details.acknowledge_notes ? `<div class="detail-section"><strong>Your Notes</strong><p style="font-size:0.88rem; margin:0;">${escHtml(details.acknowledge_notes)}</p></div>` : ''}
           <div class="detail-section" style="margin-top:0.75rem;">
             <strong>Add / update notes</strong>
-            <textarea id="${notesId}" class="notes-input" rows="2" placeholder="Optional notes for your team…"></textarea>
+            <textarea id="${notesId}" class="notes-input" rows="2" placeholder="Optional notes for your teamâ€¦"></textarea>
           </div>
         </div>`;
       alertGrid.appendChild(card);

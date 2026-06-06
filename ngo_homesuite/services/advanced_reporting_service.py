@@ -3,7 +3,7 @@
 Covers:
 - LYBUNT (Last Year But Unfortunately Not This year) donor segments
 - SYBUNT (Some Year But Unfortunately Not This year) donor segments
-- 360° supporter timeline — all touchpoints for a single donor
+- 360Â° supporter timeline â€” all touchpoints for a single donor
 - Pipeline/funnel snapshots for grants and memberships
 - Scheduled report CRUD and next-run orchestration
 """
@@ -143,7 +143,7 @@ def get_sybunt_donors(organization_id: int, reference_year: Optional[int] = None
 
 
 # ---------------------------------------------------------------------------
-# 360° Supporter Timeline
+# 360Â° Supporter Timeline
 # ---------------------------------------------------------------------------
 
 def get_supporter_timeline(organization_id: int, donor_id: int) -> Dict[str, Any]:
@@ -185,7 +185,7 @@ def get_supporter_timeline(organization_id: int, donor_id: int) -> Dict[str, Any
             {
                 "type": "membership",
                 "date": str(m.start_date),
-                "summary": f"Membership [{m.status}] — tier {m.tier_id}",
+                "summary": f"Membership [{m.status}] â€” tier {m.tier_id}",
                 "detail": {
                     "tier_id": m.tier_id,
                     "start_date": str(m.start_date),

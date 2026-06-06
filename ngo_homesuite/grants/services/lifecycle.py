@@ -1,4 +1,4 @@
-"""Grant management service — full lifecycle from prospect to reporting."""
+"""Grant management service â€” full lifecycle from prospect to reporting."""
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone

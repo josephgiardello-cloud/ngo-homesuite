@@ -58,12 +58,12 @@ def test_api_docs_and_openapi_endpoints_return_content(client, app):
     assert spec_rv.status_code == 200
     spec_text = spec_rv.get_data(as_text=True)
     assert "openapi: 3.0.3" in spec_text
-    assert "/ai/copilot/chat" in spec_text
+    assert "/ai/minion/chat" in spec_text
     assert "/api/swagger" in spec_text
-    assert "operationId: postCopilotChat" in spec_text
+    assert "operationId: postMinionChat" in spec_text
     assert "operationId: getComplianceEvidence" in spec_text
-    assert "CopilotChatRequest:" in spec_text
-    assert "CopilotChatResponse:" in spec_text
+    assert "MinionChatRequest:" in spec_text
+    assert "MinionChatResponse:" in spec_text
     assert "ErrorResponse:" in spec_text
 
     spec_obj = yaml.safe_load(spec_text)
@@ -82,3 +82,4 @@ def test_api_docs_and_openapi_endpoints_return_content(client, app):
             operation_ids.append(operation_id)
 
     assert len(operation_ids) == len(set(operation_ids)), "operationId values must be unique"
+

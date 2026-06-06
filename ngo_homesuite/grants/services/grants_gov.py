@@ -20,10 +20,25 @@ from ngo_homesuite.db.utils import audit
 from ngo_homesuite.grants.models import GrantOpportunity, GrantSearchAlert, GrantSearchProfile
 from ngo_homesuite.models.core import db
 
+try:
+    from defusedxml import ElementTree as SafeET
+
+    _XML_PARSE = SafeET.fromstring
+    _XML_PARSE_ERROR = SafeET.ParseError
+    _USING_DEFUSEDXML = True
+except ImportError:
+    _XML_PARSE = ET.fromstring
+    _XML_PARSE_ERROR = ET.ParseError
+    _USING_DEFUSEDXML = False
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_XML_EXTRACT_URL = "https://www.grants.gov/xml-extract"
 _DEFAULT_CACHE_TTL_SECONDS = 900
+_MAX_XML_PAYLOAD_BYTES = 25 * 1024 * 1024
+_MAX_ZIP_ENTRY_BYTES = 50 * 1024 * 1024
+_MAX_TOTAL_ZIP_XML_BYTES = 100 * 1024 * 1024
+_GRANTS_FEED_CACHE_MAX_KEYS = 8
 _GRANTS_FEED_CACHE_LOCK = Lock()
 _GRANTS_FEED_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 
@@ -282,6 +297,49 @@ def _normalize_grants_gov_record(node: ET.Element) -> dict[str, Any]:
     }
 
 
+def _read_xml_from_zip_bytes(body: bytes, *, context: str) -> str:
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        xml_infos = [info for info in archive.infolist() if str(info.filename).lower().endswith(".xml")]
+        if not xml_infos:
+            raise ValueError(f"No XML file found in {context}")
+
+        total_xml_bytes = sum(int(info.file_size or 0) for info in xml_infos)
+        if total_xml_bytes > _MAX_TOTAL_ZIP_XML_BYTES:
+            raise ValueError(f"ZIP XML payload too large in {context}")
+
+        chosen = sorted(xml_infos, key=lambda info: str(info.filename).lower())[0]
+        if int(chosen.file_size or 0) > _MAX_ZIP_ENTRY_BYTES:
+            raise ValueError(f"XML file too large in {context}")
+
+        return archive.read(chosen).decode("utf-8", errors="ignore")
+
+
+def _looks_like_unsafe_xml(payload: str) -> bool:
+    # Fallback defense if defusedxml is not available at runtime.
+    if _USING_DEFUSEDXML:
+        return False
+    lowered = str(payload or "").lower()
+    return "<!doctype" in lowered or "<!entity" in lowered
+
+
+def _parse_xml_payload(payload: str) -> ET.Element:
+    encoded_len = len(str(payload or "").encode("utf-8", errors="ignore"))
+    if encoded_len > _MAX_XML_PAYLOAD_BYTES:
+        raise ValueError("XML payload exceeds maximum allowed size")
+    if _looks_like_unsafe_xml(payload):
+        raise ValueError("XML payload contains disallowed DTD/entity declarations")
+    return _XML_PARSE(payload)
+
+
+def _commit_or_rollback(*, operation: str) -> None:
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        logger.exception("grants_gov_db_commit_failed", extra={"operation": operation})
+        raise
+
+
 def _fetch_xml_text(url: str) -> str:
     request = Request(url, headers={"User-Agent": "NGOHomeSuite/1.0 Grants Connector"})
     with urlopen(request, timeout=30) as response:
@@ -290,12 +348,7 @@ def _fetch_xml_text(url: str) -> str:
 
     # Direct ZIP payload support for GrantsDBExtract*.zip links.
     if body.startswith(b"PK") or "zip" in content_type:
-        with zipfile.ZipFile(io.BytesIO(body)) as archive:
-            xml_names = [name for name in archive.namelist() if str(name).lower().endswith(".xml")]
-            if not xml_names:
-                raise ValueError("No XML file found inside Grants.gov ZIP extract")
-            chosen = sorted(xml_names)[0]
-            return archive.read(chosen).decode("utf-8", errors="ignore")
+        return _read_xml_from_zip_bytes(body, context="Grants.gov ZIP extract")
 
     text = body.decode("utf-8", errors="ignore")
 
@@ -307,12 +360,7 @@ def _fetch_xml_text(url: str) -> str:
             nested_request = Request(latest_zip, headers={"User-Agent": "NGOHomeSuite/1.0 Grants Connector"})
             with urlopen(nested_request, timeout=30) as nested_response:
                 nested_body = nested_response.read()
-            with zipfile.ZipFile(io.BytesIO(nested_body)) as archive:
-                xml_names = [name for name in archive.namelist() if str(name).lower().endswith(".xml")]
-                if not xml_names:
-                    raise ValueError("No XML file found in discovered Grants.gov ZIP extract")
-                chosen = sorted(xml_names)[0]
-                return archive.read(chosen).decode("utf-8", errors="ignore")
+            return _read_xml_from_zip_bytes(nested_body, context="discovered Grants.gov ZIP extract")
 
     # If the provided URL was a relative landing path, still allow callers to pass explicit XML URLs.
     if text.lower().startswith("http") and text.lower().endswith(".zip"):
@@ -320,12 +368,7 @@ def _fetch_xml_text(url: str) -> str:
         nested_request = Request(absolute, headers={"User-Agent": "NGOHomeSuite/1.0 Grants Connector"})
         with urlopen(nested_request, timeout=30) as nested_response:
             nested_body = nested_response.read()
-        with zipfile.ZipFile(io.BytesIO(nested_body)) as archive:
-            xml_names = [name for name in archive.namelist() if str(name).lower().endswith(".xml")]
-            if not xml_names:
-                raise ValueError("No XML file found in linked ZIP extract")
-            chosen = sorted(xml_names)[0]
-            return archive.read(chosen).decode("utf-8", errors="ignore")
+        return _read_xml_from_zip_bytes(nested_body, context="linked ZIP extract")
 
     return text
 
@@ -362,6 +405,7 @@ def _read_cached_opportunities(cache_key: str, ttl_seconds: int) -> list[dict[st
         if not opportunities:
             _GRANTS_FEED_CACHE.pop(cache_key, None)
             return None
+        logger.debug("grants_gov_cache_hit", extra={"cache_key": cache_key, "count": len(opportunities)})
         return opportunities
 
 
@@ -369,6 +413,9 @@ def _write_cached_opportunities(cache_key: str, opportunities: list[dict[str, An
     if ttl_seconds <= 0:
         return
     with _GRANTS_FEED_CACHE_LOCK:
+        if len(_GRANTS_FEED_CACHE) >= _GRANTS_FEED_CACHE_MAX_KEYS and cache_key not in _GRANTS_FEED_CACHE:
+            oldest_key = min(_GRANTS_FEED_CACHE.items(), key=lambda item: item[1][0])[0]
+            _GRANTS_FEED_CACHE.pop(oldest_key, None)
         _GRANTS_FEED_CACHE[cache_key] = (monotonic(), opportunities)
 
 
@@ -462,17 +509,17 @@ def fetch_grants_gov_opportunities(*, xml_text: Optional[str] = None) -> list[di
         payload = _fetch_xml_text(xml_url)
 
     try:
-        root = ET.fromstring(payload)
-    except ET.ParseError:
+        root = _parse_xml_payload(payload)
+    except (_XML_PARSE_ERROR, ValueError) as exc:
         sanitized = _sanitize_xml_payload(payload)
         if sanitized != payload:
             try:
-                root = ET.fromstring(sanitized)
-            except ET.ParseError:
-                logger.warning("grants_gov_xml_parse_failed_after_sanitize")
+                root = _parse_xml_payload(sanitized)
+            except (_XML_PARSE_ERROR, ValueError) as sanitize_exc:
+                logger.warning("grants_gov_xml_parse_failed_after_sanitize: %s", sanitize_exc)
                 return []
         else:
-            logger.warning("grants_gov_xml_parse_failed")
+            logger.warning("grants_gov_xml_parse_failed: %s", exc)
             return []
     nodes = _extract_record_nodes(root)
     opportunities = [_normalize_grants_gov_record(node) for node in nodes]
@@ -499,6 +546,7 @@ def search_grants_gov_opportunities(
     applicant_tokens = _tokenize(str(applicant_profile or ""))
     opportunities = fetch_grants_gov_opportunities(xml_text=xml_text)
     if not opportunities and has_app_context() and bool(current_app.config.get("GRANTS_GOV_USE_DEMO_FALLBACK", False)):
+        logger.info("grants_gov_demo_fallback_enabled", extra={"organization_id": int(organization_id)})
         opportunities = _demo_grants_gov_opportunities()
     today = date.today()
     filtered_opportunities: list[dict[str, Any]] = []
@@ -708,8 +756,12 @@ def sync_grants_gov_results(organization_id: int, results: list[dict[str, Any]])
             }
             opportunity.notes = _build_notes_for_sync(record)
         synced.append(opportunity)
-    db.session.commit()
+    _commit_or_rollback(operation="sync_grants_gov_results")
     if synced:
+        logger.info(
+            "grants_gov_sync_completed",
+            extra={"organization_id": int(organization_id), "synced_count": len(synced)},
+        )
         audit(
             "grant.external.sync",
             entity_type="grant_opportunity",
@@ -747,7 +799,7 @@ def create_search_profile(
         alert_channel=str(alert_channel or "in_app").strip() or "in_app",
     )
     db.session.add(profile)
-    db.session.commit()
+    _commit_or_rollback(operation="create_search_profile")
     return profile
 
 
@@ -822,7 +874,7 @@ def run_search_profile(profile_id: int, organization_id: int, *, xml_text: Optio
 
     profile.last_checked_at = datetime.now(timezone.utc).replace(tzinfo=None)
     profile.last_result_count = len(results)
-    db.session.commit()
+    _commit_or_rollback(operation="run_search_profile")
     audit(
         "grant.search_profile.run",
         entity_type="grant_search_profile",
@@ -880,7 +932,10 @@ def run_active_saved_search_alerts(*, xml_text: Optional[str] = None) -> dict[st
             profile_runs += 1
             created_alerts += int(result.get("created_alerts", 0))
         except Exception as exc:
-            logger.warning("grant search profile run failed: %s", exc)
+            logger.exception(
+                "grant search profile run failed",
+                extra={"profile_id": int(profile.id), "organization_id": int(profile.organization_id)},
+            )
     return {"profiles_run": profile_runs, "created_alerts": created_alerts}
 
 
@@ -918,7 +973,7 @@ def acknowledge_search_alert(
         details["acknowledge_notes"] = str(notes).strip()
         alert.details_json = details
 
-    db.session.commit()
+    _commit_or_rollback(operation="acknowledge_search_alert")
     audit(
         "grant.search_alert.acknowledge",
         entity_type="grant_search_alert",

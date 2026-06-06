@@ -52,7 +52,7 @@ def start_grant_search_scheduler(app: Flask) -> None:
     from apscheduler.schedulers.background import BackgroundScheduler
 
     interval_minutes = int(app.config.get("GRANT_SEARCH_SCHEDULER_INTERVAL_MINUTES", 60) or 60)
-    interval_minutes = max(5, min(1440, interval_minutes))  # clamp 5 min – 24 h
+    interval_minutes = max(5, min(1440, interval_minutes))  # clamp 5 min â€“ 24 h
 
     scheduler = BackgroundScheduler(timezone="UTC")
     scheduler.add_job(

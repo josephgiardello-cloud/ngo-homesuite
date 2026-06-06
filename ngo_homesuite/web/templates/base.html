@@ -429,7 +429,7 @@
         }
 
         .sidebar-group-toggle::after {
-            content: "▾";
+            content: "â–¾";
             font-size: 0.76rem;
             color: #587899;
             transition: transform 0.15s ease;
@@ -1701,7 +1701,7 @@
                 link.href = item.href;
                 const icon = document.createElement('span');
                 icon.className = 'sidebar-icon';
-                icon.textContent = item.icon || iconForHref(item.href) || '•';
+                icon.textContent = item.icon || iconForHref(item.href) || 'â€¢';
                 const label = document.createElement('span');
                 label.textContent = item.label;
                 link.appendChild(icon);
@@ -1746,7 +1746,7 @@
                     }
                     const isFav = uiProfile.favorites.some(function(item) { return item.href === href; });
                     favBtn.classList.toggle('is-favorite', isFav);
-                    favBtn.textContent = isFav ? '★' : '☆';
+                    favBtn.textContent = isFav ? 'â˜…' : 'â˜†';
                     favBtn.setAttribute('aria-label', isFav ? 'Remove from favorites' : 'Add to favorites');
                 });
             }
@@ -1831,7 +1831,7 @@
                     button.className = 'nav-palette-item' + (index === paletteActiveIndex ? ' is-active' : '');
                     const icon = document.createElement('span');
                     icon.className = 'sidebar-icon';
-                    icon.textContent = item.icon || '→';
+                    icon.textContent = item.icon || 'â†’';
                     const label = document.createElement('span');
                     label.textContent = item.label;
                     const key = document.createElement('span');
@@ -1927,7 +1927,7 @@
                     const favButton = document.createElement('button');
                     favButton.type = 'button';
                     favButton.className = 'sidebar-fav-toggle';
-                    favButton.textContent = '☆';
+                    favButton.textContent = 'â˜†';
                     favButton.addEventListener('click', function(event) {
                         event.preventDefault();
                         event.stopPropagation();
@@ -2322,7 +2322,7 @@
                         { page: window.location.pathname },
                         window.ngoAiContext || {}
                     );
-                    const response = await fetch('{{ url_for("ai.copilot_chat") }}', {
+                    const response = await fetch('{{ url_for("ai.minion_chat") }}', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json'
@@ -2337,7 +2337,7 @@
                     });
 
                     if (!response.ok) {
-                        throw new Error('Copilot is unavailable right now.');
+                        throw new Error('Minion is unavailable right now.');
                     }
 
                     const data = await response.json();
@@ -2349,7 +2349,7 @@
                         return;
                     }
 
-                    const reply = (data && data.response) ? String(data.response) : 'No response content was returned by Copilot.';
+                    const reply = (data && data.response) ? String(data.response) : 'No response content was returned by Minion.';
                     assistantEl.innerHTML = renderMarkdown(reply);
 
                     if (Array.isArray(data.sources) && data.sources.length > 0) {
@@ -2517,4 +2517,5 @@
     </script>
 </body>
 </html>
+
 

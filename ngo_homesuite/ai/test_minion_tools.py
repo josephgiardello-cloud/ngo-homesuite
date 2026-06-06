@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ngo_homesuite.ai.copilot_tools import CopilotToolRegistry
+from ngo_homesuite.ai.minion_tools import MinionToolRegistry
 from ngo_homesuite.app_factory import create_app
 from ngo_homesuite.flask_config import TestingConfig
 from ngo_homesuite.models.core import Donation, DonationReceipt, Donor, Organization, db
@@ -13,7 +13,7 @@ from ngo_homesuite.models.core import Donation, DonationReceipt, Donor, Organiza
 @pytest.fixture(scope="module")
 def app():
     class _TestCfg(TestingConfig):
-        COPILOT_ENABLED = True
+        MINION_ENABLED = True
 
     return create_app(_TestCfg)
 
@@ -21,13 +21,13 @@ def app():
 @pytest.fixture()
 def registry(app):
     with app.app_context():
-        yield CopilotToolRegistry()
+        yield MinionToolRegistry()
 
 
 def _runtime_ctx() -> dict[str, int | str]:
     return {
         "organization_id": 1,
-        "actor": "test-copilot",
+        "actor": "test-minion",
     }
 
 
@@ -146,8 +146,8 @@ def test_optional_relationship_counts_adds_org_filter_when_column_exists(registr
         captured.append((str(statement), dict(params)))
         return _ScalarResult()
 
-    monkeypatch.setattr("ngo_homesuite.ai.copilot_tools.inspect", lambda _engine: _FakeInspector())
-    monkeypatch.setattr("ngo_homesuite.ai.copilot_tools.db.session.execute", _fake_execute)
+    monkeypatch.setattr("ngo_homesuite.ai.minion_tools.inspect", lambda _engine: _FakeInspector())
+    monkeypatch.setattr("ngo_homesuite.ai.minion_tools.db.session.execute", _fake_execute)
 
     metrics = registry._optional_donor_relationship_counts(11, 42)
 
@@ -161,7 +161,7 @@ def test_generate_report_requires_organization_context(registry):
     payload = registry.execute(
         "generate_report",
         {"report_type": "donor_summary", "params": {}},
-        {"actor": "test-copilot"},
+        {"actor": "test-minion"},
     )
     assert payload["error"] == "organization_id is required in runtime context"
 
@@ -172,7 +172,7 @@ def test_list_at_risk_donors_keeps_donor_hydration_tenant_scoped(registry, app, 
         assert org_a is not None
         org_a_id = int(org_a.id)
 
-        org_b = Organization(name="Copilot Org B", slug="copilot-org-b", is_active=True)
+        org_b = Organization(name="Minion Org B", slug="minion-org-b", is_active=True)
         db.session.add(org_b)
         db.session.flush()
         org_b_id = int(org_b.id)
@@ -192,7 +192,7 @@ def test_list_at_risk_donors_keeps_donor_hydration_tenant_scoped(registry, app, 
 
     monkeypatch.setattr("ngo_homesuite.services.engagement_scoring_service.high_priority_lapsed", _fake_high_priority_lapsed)
 
-    payload = registry.execute("list_at_risk_donors", {"limit": 5}, {"organization_id": org_a_id, "actor": "test-copilot"})
+    payload = registry.execute("list_at_risk_donors", {"limit": 5}, {"organization_id": org_a_id, "actor": "test-minion"})
 
     assert payload["count"] == 1
     donor_row = payload["donors"][0]
@@ -233,3 +233,4 @@ def test_run_reconciliation_reports_balanced_for_structured_result(registry, mon
     assert payload["ok"] is True
     assert payload["status"] == "balanced"
     assert payload["result"]["matched_count"] == 2
+

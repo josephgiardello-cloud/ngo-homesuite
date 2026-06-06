@@ -1516,6 +1516,8 @@
         const densityStorageKey = 'ngo-dash-density';
         const focusStorageKey = 'ngo-dash-focus-v1';
         const savedViewsKey = 'ngo-dash-saved-views-v1';
+        const MAX_SAVED_VIEWS = 10;
+        const allowedRoles = new Set(['admin', 'staff', 'viewer', 'volunteer']);
         const periodHint = document.getElementById('dashPeriodHint');
         const densityLabel = document.getElementById('dashDensityLabel');
         const periodButtons = Array.from(document.querySelectorAll('[data-period-btn]'));
@@ -1529,22 +1531,37 @@
         const deleteViewButton = document.getElementById('dashDeleteView');
         const viewStatus = document.getElementById('dashViewStatus');
 
-        const currentPeriod = '{{ selected_period }}';
-        const currentStart = '{{ selected_start_date or '' }}';
-        const currentEnd = '{{ selected_end_date or '' }}';
+        const currentPeriod = {{ selected_period|tojson }};
+        const currentStart = {{ (selected_start_date or '')|tojson }};
+        const currentEnd = {{ (selected_end_date or '')|tojson }};
+        const serverRole = {{ (dashboard_role or 'staff')|tojson }};
+        const globalRole = (typeof window.ngoAiUserRole === 'string' ? window.ngoAiUserRole : '').trim();
+        const resolvedRole = String(globalRole || serverRole || 'staff').toLowerCase();
+        const userRole = allowedRoles.has(resolvedRole) ? resolvedRole : 'staff';
+        let statusTimeout;
 
         function setViewStatus(message) {
             if (!viewStatus) {
                 return;
             }
+            if (statusTimeout) {
+                clearTimeout(statusTimeout);
+            }
             viewStatus.textContent = message || '';
+            if (message) {
+                statusTimeout = setTimeout(function () {
+                    if (viewStatus) {
+                        viewStatus.textContent = '';
+                    }
+                }, 3000);
+            }
         }
 
         function roleDefaultFocusState() {
-            const role = String(window.ngoAiUserRole || '').toLowerCase();
             const base = {
                 alerts: true,
                 trends: true,
+                goal_progress: true,
                 kpis: true,
                 categories: true,
                 advanced: true,
@@ -1552,7 +1569,7 @@
                 recent: true,
                 operations: true,
             };
-            if (role === 'volunteer') {
+            if (userRole === 'volunteer') {
                 return Object.assign({}, base, {
                     alerts: false,
                     categories: false,
@@ -1560,12 +1577,12 @@
                     monthly: false,
                 });
             }
-            if (role === 'staff') {
+            if (userRole === 'staff') {
                 return Object.assign({}, base, {
                     categories: false,
                 });
             }
-            if (role === 'viewer') {
+            if (userRole === 'viewer') {
                 return Object.assign({}, base, {
                     operations: false,
                 });
@@ -1604,7 +1621,7 @@
                     return;
                 }
                 if (key === 'goal_progress') {
-                    section.hidden = !state.trends;
+                    section.hidden = !(state.trends && state.goal_progress !== false);
                     return;
                 }
                 section.hidden = !state[key];
@@ -1636,7 +1653,8 @@
 
         function setSavedViews(views) {
             try {
-                localStorage.setItem(savedViewsKey, JSON.stringify(views));
+                const limited = Array.isArray(views) ? views.slice(0, MAX_SAVED_VIEWS) : [];
+                localStorage.setItem(savedViewsKey, JSON.stringify(limited));
             } catch (_err) {
                 // Ignore storage restrictions.
             }
@@ -1698,7 +1716,14 @@
                 nextUrl.searchParams.delete('start_date');
                 nextUrl.searchParams.delete('end_date');
             }
-            window.location.assign(nextUrl.toString());
+            try {
+                if (nextUrl.origin !== window.location.origin) {
+                    throw new Error('cross-origin navigation blocked');
+                }
+                window.location.assign(nextUrl.toString());
+            } catch (_err) {
+                setViewStatus('Unable to apply saved view.');
+            }
         }
 
         function presetState(name) {
@@ -1707,6 +1732,7 @@
                 return {
                     alerts: true,
                     trends: true,
+                    goal_progress: true,
                     kpis: true,
                     categories: true,
                     advanced: true,
@@ -1765,7 +1791,17 @@
 
         periodButtons.forEach(function (btn) {
             btn.addEventListener('click', function () {
+                if (shell.getAttribute('data-navigating') === 'true') {
+                    return;
+                }
+                shell.setAttribute('data-navigating', 'true');
+                periodButtons.forEach(function (item) {
+                    item.disabled = true;
+                });
                 const label = btn.getAttribute('data-period-btn') || '30d';
+                if (periodHint) {
+                    periodHint.textContent = 'Loading ' + label.toUpperCase() + ' focus...';
+                }
                 const nextUrl = new URL(window.location.href);
                 nextUrl.searchParams.set('period', label);
                 window.location.assign(nextUrl.toString());
@@ -1809,14 +1845,15 @@
                 const saved = getSavedViews().filter(function (item) {
                     return item.name !== name;
                 });
-                saved.push({ name: name, payload: buildCurrentViewPayload() });
-                saved.sort(function (a, b) {
-                    return a.name.localeCompare(b.name);
-                });
+                saved.unshift({ name: name, payload: buildCurrentViewPayload() });
                 setSavedViews(saved);
                 refreshSavedViewsOptions();
                 savedViewsSelect.value = name;
-                setViewStatus('Saved view: ' + name + '.');
+                if (saved.length > MAX_SAVED_VIEWS) {
+                    setViewStatus('Saved view: ' + name + '. Kept latest ' + MAX_SAVED_VIEWS + ' views.');
+                } else {
+                    setViewStatus('Saved view: ' + name + '.');
+                }
             });
         }
 

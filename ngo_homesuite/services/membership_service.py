@@ -1,4 +1,4 @@
-"""Membership management service — tiers, records, auto-renewal tracking."""
+"""Membership management service â€” tiers, records, auto-renewal tracking."""
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone

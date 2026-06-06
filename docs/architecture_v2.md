@@ -39,11 +39,11 @@ flowchart LR
 	Client[Web/API Client] --> Auth[Auth + RBAC]
 	Auth --> V1[API v1 / Web Routes]
 	V1 --> WF[Workflow Engine]
-	V1 --> CP[Copilot Service]
+	V1 --> CP[Minion Service]
 	WF --> ES[Event Store]
 	WF --> TR[Trace Store]
 	CP --> OLL[Ollama Local Runtime]
-	CP --> TOOLS[Copilot Tools]
+	CP --> TOOLS[Minion Tools]
 	TOOLS --> DB[(Primary DB)]
 	WF --> DB
 	ES --> DB
@@ -69,3 +69,4 @@ Next implementation phases should focus on:
 Roadmap tracker: `docs/phase2_roadmap.md`
 
 Architecture decisions are tracked in ADRs: `docs/adr/README.md`
+

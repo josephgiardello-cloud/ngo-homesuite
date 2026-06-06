@@ -2,7 +2,7 @@
 
 **Objective:** Close remaining product gaps vs. CiviCRM across security, grants operations, and donor engagement.
 
-**Timeline:** 5 sprints (May–June 2026)  
+**Timeline:** 5 sprints (Mayâ€“June 2026)  
 **Baseline:** 668 passing tests, 12 skipped (main @ 9011c9c)
 
 ## Reality Check Snapshot (Verified 2026-05-18)
@@ -47,23 +47,23 @@ Primary implementation touchpoints:
 
 ---
 
-## Milestone A: Security + Compliance (Sprint 1 – 2 weeks)
+## Milestone A: Security + Compliance (Sprint 1 â€“ 2 weeks)
 
-### 🔴 TICKET A-1: TOTP 2FA Enrollment & Verification  
+### ðŸ”´ TICKET A-1: TOTP 2FA Enrollment & Verification  
 **Priority:** P0 (blocker for admin/staff trust)  
 **Estimate:** 8 points  
 **Acceptance Criteria:**
 - [ ] Admin/Staff can enroll TOTP via authenticator app (QR code + manual entry).
 - [ ] Backup codes generated & displayed once on enrollment.
 - [ ] Backup codes stored encrypted in database with hash index.
-- [ ] TOTP verification on login (6-digit input, 30-second window, drift tolerance ±1).
+- [ ] TOTP verification on login (6-digit input, 30-second window, drift tolerance Â±1).
 - [ ] Audit log: "2FA_ENROLLED", "2FA_VERIFIED", "2FA_BACKUP_CODE_USED".
 
 **Technical Approach:**
 - Add `pyotp` dependency.
 - Model: `User.totp_secret` (encrypted), `User.totp_backup_codes` (hashed list).
-- Route: `POST /auth/totp/enroll` → generate secret → return QR + manual entry.
-- Route: `POST /auth/totp/verify-setup` → validate TOTP token → store secret.
+- Route: `POST /auth/totp/enroll` â†’ generate secret â†’ return QR + manual entry.
+- Route: `POST /auth/totp/verify-setup` â†’ validate TOTP token â†’ store secret.
 - Middleware: check `user.totp_enabled` on login, prompt for OTP if enabled.
 
 **Files to Create/Modify:**
@@ -75,7 +75,7 @@ Primary implementation touchpoints:
 
 ---
 
-### 🟡 TICKET A-2: 2FA Enforcement Policy by Role  
+### ðŸŸ¡ TICKET A-2: 2FA Enforcement Policy by Role  
 **Priority:** P0  
 **Estimate:** 5 points  
 **Acceptance Criteria:**
@@ -97,7 +97,7 @@ Primary implementation touchpoints:
 
 ---
 
-### 🟢 TICKET A-3: 2FA Recovery & "Step-Up" Auth for Sensitive Actions  
+### ðŸŸ¢ TICKET A-3: 2FA Recovery & "Step-Up" Auth for Sensitive Actions  
 **Priority:** P1  
 **Estimate:** 5 points  
 **Acceptance Criteria:**
@@ -109,7 +109,7 @@ Primary implementation touchpoints:
 **Technical Approach:**
 - Add `g.step_up_verified_at` timestamp (short-lived).
 - Decorator: `@require_step_up_auth` on sensitive routes.
-- Route: `POST /auth/step-up-otp` → validate + set timestamp.
+- Route: `POST /auth/step-up-otp` â†’ validate + set timestamp.
 
 **Files to Create/Modify:**
 - `ngo_homesuite/auth/decorators.py` (add @require_step_up_auth)
@@ -119,9 +119,9 @@ Primary implementation touchpoints:
 
 ---
 
-## Milestone B: Grants Budget Accounting (Sprint 2–3 – 3 weeks)
+## Milestone B: Grants Budget Accounting (Sprint 2â€“3 â€“ 3 weeks)
 
-### 🔴 TICKET B-1: Grant Budget Line Item Model & Schema  
+### ðŸ”´ TICKET B-1: Grant Budget Line Item Model & Schema  
 **Priority:** P0  
 **Estimate:** 8 points  
 **Acceptance Criteria:**
@@ -129,7 +129,7 @@ Primary implementation touchpoints:
 - [ ] Budget status: PLANNED, APPROVED, LOCKED.
 - [ ] Categories: Personnel, Travel, Equipment, Indirect, Other.
 - [ ] Soft-delete support (archive old budgets).
-- [ ] Schema migration with backfill (all existing grants → empty budget).
+- [ ] Schema migration with backfill (all existing grants â†’ empty budget).
 - [ ] Indexes: (grant_id, budget_status), (grant_id, category).
 
 **Technical Approach:**
@@ -144,19 +144,19 @@ Primary implementation touchpoints:
 
 ---
 
-### 🟡 TICKET B-2: Budget Commitment & Expense Tracking  
+### ðŸŸ¡ TICKET B-2: Budget Commitment & Expense Tracking  
 **Priority:** P0  
 **Estimate:** 13 points  
 **Acceptance Criteria:**
 - [ ] New model: `BudgetTransaction(budget_line_id, type, amount, date, description, receipt_id, status)`.
 - [ ] Transaction types: COMMITMENT, EXPENSE, ACCRUAL, REVERSAL.
 - [ ] Transaction status: PENDING, APPROVED, REJECTED, RECONCILED.
-- [ ] Automatic validation: sum of transactions ≤ awarded_amount (warning on exceed).
+- [ ] Automatic validation: sum of transactions â‰¤ awarded_amount (warning on exceed).
 - [ ] Soft-delete support.
 - [ ] Indexes: (budget_line_id, type), (budget_line_id, status), (date).
 
 **Technical Approach:**
-- SQLAlchemy model + relationship chain: Grant → BudgetLine → BudgetTransaction.
+- SQLAlchemy model + relationship chain: Grant â†’ BudgetLine â†’ BudgetTransaction.
 - Trigger/validator on save: compute remaining balance.
 
 **Files to Create/Modify:**
@@ -165,7 +165,7 @@ Primary implementation touchpoints:
 
 ---
 
-### 🟡 TICKET B-3: Budget Variance Report & Dashboard  
+### ðŸŸ¡ TICKET B-3: Budget Variance Report & Dashboard  
 **Priority:** P1  
 **Estimate:** 13 points  
 **Acceptance Criteria:**
@@ -189,19 +189,19 @@ Primary implementation touchpoints:
 
 ---
 
-### 🟢 TICKET B-4: Reconciliation & Audit Trail for Budget Transactions  
+### ðŸŸ¢ TICKET B-4: Reconciliation & Audit Trail for Budget Transactions  
 **Priority:** P2  
 **Estimate:** 8 points  
 **Acceptance Criteria:**
 - [ ] Reconciliation workflow: mark transaction as RECONCILED (locks from edit).
-- [ ] Bulk reconciliation: select date range → mark all as reconciled.
+- [ ] Bulk reconciliation: select date range â†’ mark all as reconciled.
 - [ ] Audit log: "BUDGET_TRANSACTION_CREATED", "BUDGET_TRANSACTION_RECONCILED", "BUDGET_TRANSACTION_REJECTED".
 - [ ] Cannot delete reconciled transactions (soft-delete only).
 - [ ] Report: reconciliation status by date.
 
 **Technical Approach:**
 - Add `reconciled_at`, `reconciled_by_user_id` fields to BudgetTransaction.
-- Pre-update hook: check RECONCILED status → reject non-superuser edits.
+- Pre-update hook: check RECONCILED status â†’ reject non-superuser edits.
 
 **Files to Modify:**
 - `ngo_homesuite/models/core.py` (add reconciliation fields)
@@ -209,9 +209,9 @@ Primary implementation touchpoints:
 
 ---
 
-## Milestone C: Bulk Donor Email Engine (Sprint 3–4 – 3 weeks)
+## Milestone C: Bulk Donor Email Engine (Sprint 3â€“4 â€“ 3 weeks)
 
-### 🔴 TICKET C-1: Donor Segmentation & Query Builder  
+### ðŸ”´ TICKET C-1: Donor Segmentation & Query Builder  
 **Priority:** P0  
 **Estimate:** 13 points  
 **Acceptance Criteria:**
@@ -235,7 +235,7 @@ Primary implementation touchpoints:
 
 ---
 
-### 🟡 TICKET C-2: Email Campaign Composer & Queue  
+### ðŸŸ¡ TICKET C-2: Email Campaign Composer & Queue  
 **Priority:** P0  
 **Estimate:** 13 points  
 **Acceptance Criteria:**
@@ -260,14 +260,14 @@ Primary implementation touchpoints:
 
 ---
 
-### 🟡 TICKET C-3: Campaign Send, Retry & Failure Handling  
+### ðŸŸ¡ TICKET C-3: Campaign Send, Retry & Failure Handling  
 **Priority:** P0  
 **Estimate:** 13 points  
 **Acceptance Criteria:**
 - [ ] Background job: process EmailCampaignQueue (batched by 50/hour to avoid rate limits).
 - [ ] Retry logic: failed sends retry up to 3 times (exponential backoff: 5m, 15m, 1h).
-- [ ] Bounce handling: hard bounce → add to suppression list, soft bounce → retry.
-- [ ] Status tracking: QUEUED → SENDING → DELIVERED / BOUNCED / FAILED.
+- [ ] Bounce handling: hard bounce â†’ add to suppression list, soft bounce â†’ retry.
+- [ ] Status tracking: QUEUED â†’ SENDING â†’ DELIVERED / BOUNCED / FAILED.
 - [ ] Audit log: "EMAIL_CAMPAIGN_SENT", "EMAIL_CAMPAIGN_BOUNCE", "EMAIL_CAMPAIGN_FAILED".
 - [ ] Summary: sent count, bounce count, failure count, retry count.
 
@@ -283,12 +283,12 @@ Primary implementation touchpoints:
 
 ---
 
-### 🟢 TICKET C-4: Unsubscribe, Opt-Out & Suppression List  
+### ðŸŸ¢ TICKET C-4: Unsubscribe, Opt-Out & Suppression List  
 **Priority:** P0  
 **Estimate:** 8 points  
 **Acceptance Criteria:**
 - [ ] Unsubscribe link in email footer (one-click, no login required).
-- [ ] Unsubscribe endpoint: `GET /email/unsubscribe/<token>` → marks donor as opt-out.
+- [ ] Unsubscribe endpoint: `GET /email/unsubscribe/<token>` â†’ marks donor as opt-out.
 - [ ] Suppression list: query before campaign send, skip opted-out donors.
 - [ ] Audit log: "DONOR_UNSUBSCRIBED_EMAIL", "DONOR_OPT_OUT_ADDED".
 - [ ] Admin can manually add/remove from suppression list.
@@ -306,7 +306,7 @@ Primary implementation touchpoints:
 
 ---
 
-### 🟢 TICKET C-5: Email Delivery & Engagement Metrics  
+### ðŸŸ¢ TICKET C-5: Email Delivery & Engagement Metrics  
 **Priority:** P1  
 **Estimate:** 8 points  
 **Acceptance Criteria:**
@@ -328,9 +328,9 @@ Primary implementation touchpoints:
 
 ---
 
-## Milestone D: Reporting Expansion (Sprint 4 – 2 weeks)
+## Milestone D: Reporting Expansion (Sprint 4 â€“ 2 weeks)
 
-### 🟡 TICKET D-1: Advanced Donor Insights Dashboard  
+### ðŸŸ¡ TICKET D-1: Advanced Donor Insights Dashboard  
 **Priority:** P1  
 **Estimate:** 13 points  
 **Acceptance Criteria:**
@@ -352,13 +352,13 @@ Primary implementation touchpoints:
 
 ---
 
-### 🟡 TICKET D-2: Grant Pipeline & Forecast Report  
+### ðŸŸ¡ TICKET D-2: Grant Pipeline & Forecast Report  
 **Priority:** P1  
 **Estimate:** 10 points  
 **Acceptance Criteria:**
 - [ ] Pipeline: grants by stage (application, pending review, awarded, closed).
 - [ ] Total by stage, likelihood of award (if applicable).
-- [ ] Forecast: projected revenue if all pending → awarded.
+- [ ] Forecast: projected revenue if all pending â†’ awarded.
 - [ ] Timeline: grant maturity (days since application, days to decision).
 - [ ] Export to CSV.
 
@@ -371,19 +371,19 @@ Primary implementation touchpoints:
 
 ---
 
-## Milestone E: Competitive Polish (Sprint 5 – 2 weeks)
+## Milestone E: Competitive Polish (Sprint 5 â€“ 2 weeks)
 
-### 🟡 TICKET E-1: Campaign Projection Engine  
+### ðŸŸ¡ TICKET E-1: Campaign Projection Engine  
 **Priority:** P2  
 **Estimate:** 10 points  
 **Acceptance Criteria:**
 - [ ] Input: goal ($ or # donors), historical avg donation, assumed conversion rate.
-- [ ] Output: projected raised, confidence interval (±10%), days to goal.
+- [ ] Output: projected raised, confidence interval (Â±10%), days to goal.
 - [ ] Chart: cumulative raised over time (if on pace).
-- [ ] Scenario: "what if conversion increases 20%?" → new projection.
+- [ ] Scenario: "what if conversion increases 20%?" â†’ new projection.
 
 **Technical Approach:**
-- Regression model: fit historical donation trend → extrapolate.
+- Regression model: fit historical donation trend â†’ extrapolate.
 - Fallback: use simple linear projection if insufficient history.
 
 **Files to Create/Modify:**
@@ -392,7 +392,7 @@ Primary implementation touchpoints:
 
 ---
 
-### 🟢 TICKET E-2: Event Discount Code Management  
+### ðŸŸ¢ TICKET E-2: Event Discount Code Management  
 **Priority:** P2  
 **Estimate:** 8 points  
 **Acceptance Criteria:**
@@ -419,7 +419,7 @@ Each ticket includes:
 - Unit tests (model, service logic)
 - Integration tests (API endpoints)
 - E2E tests (happy path + error cases)
-- **Test coverage target:** ≥85% for new code
+- **Test coverage target:** â‰¥85% for new code
 
 Regression suite:
 - Run full suite after each milestone.
@@ -444,7 +444,7 @@ Regression suite:
 - **Security:** 100% of admins enrolled in 2FA within 2 weeks of release.
 - **Operations:** 50%+ of grants with budget lines created within 4 weeks.
 - **Engagement:** 1st email campaign sent within 3 weeks; 20%+ open rate on pilot.
-- **Test health:** maintain ≥85% coverage; zero regression failures.
+- **Test health:** maintain â‰¥85% coverage; zero regression failures.
 
 ---
 
@@ -452,7 +452,7 @@ Regression suite:
 
 Each milestone has a rollback branch (e.g., `rollback/milestone-A`) tagged at the point of release. If critical issue occurs:
 1. Identify failed feature (2FA, budgets, email).
-2. Checkout rollback branch → hotfix → retest.
+2. Checkout rollback branch â†’ hotfix â†’ retest.
 3. Merge rollback to main if regression too severe.
 4. Schedule postmortem + root cause analysis.
 

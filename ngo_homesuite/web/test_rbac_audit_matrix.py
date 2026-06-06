@@ -5,12 +5,12 @@ Validates that all sensitive routes have proper role-based access control,
 tenant isolation, and secure bootstrap flows. Runs as part of CI/CD.
 
 INDUSTRY STANDARDS APPLIED:
-✅ Exhaustive route coverage audit
-✅ Role-permission matrix validation
-✅ Cross-tenant isolation enforcement
-✅ Bootstrap flow security (first-admin setup)
-✅ Sensitive operation auditing
-✅ Fallback and error case coverage
+âœ… Exhaustive route coverage audit
+âœ… Role-permission matrix validation
+âœ… Cross-tenant isolation enforcement
+âœ… Bootstrap flow security (first-admin setup)
+âœ… Sensitive operation auditing
+âœ… Fallback and error case coverage
 """
 
 import pytest
@@ -127,7 +127,7 @@ RBAC_AUDIT_MATRIX: list[RouteAuditRule] = [
     RouteAuditRule("/api/v2/reports", "POST", {"admin", "staff"}, True, True, True),
 
     # ===== AI ROUTES =====
-    RouteAuditRule("/ai/copilot/chat", "POST", {"admin", "staff", "viewer"}, True, True, True),  # Logged for content review
+    RouteAuditRule("/ai/minion/chat", "POST", {"admin", "staff", "viewer"}, True, True, True),  # Logged for content review
 ]
 
 
@@ -495,3 +495,4 @@ class TestSecureBootstrapFlow:
         )
         
         assert resp.status_code in [400, 409]  # Bad request or conflict
+

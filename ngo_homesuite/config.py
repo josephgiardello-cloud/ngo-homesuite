@@ -83,16 +83,16 @@ class RuntimeSettings(BaseModel):
     ollama_timeout_s: float = Field(default=120.0)
     apex_tenant_id: str = Field(default="ngo-default")
 
-    copilot_enabled: bool = Field(default=True)
-    copilot_index_dir: str = Field(default="data/copilot_index")
-    copilot_rag_k: int = Field(default=6)
-    copilot_allow_web_tools: bool = Field(default=False)
-    copilot_tool_allowlist: list[str] = Field(default_factory=list)
-    copilot_require_approval_token: bool = Field(default=True)
-    copilot_approval_token_ttl_sec: int = Field(default=300)
-    copilot_tool_timeout_sec: float = Field(default=8.0)
-    copilot_conversation_max_messages: int = Field(default=200)
-    copilot_rate_limit_per_min: int = Field(default=30)
+    minion_enabled: bool = Field(default=True)
+    minion_index_dir: str = Field(default="data/minion_index")
+    minion_rag_k: int = Field(default=6)
+    minion_allow_web_tools: bool = Field(default=False)
+    minion_tool_allowlist: list[str] = Field(default_factory=list)
+    minion_require_approval_token: bool = Field(default=True)
+    minion_approval_token_ttl_sec: int = Field(default=300)
+    minion_tool_timeout_sec: float = Field(default=8.0)
+    minion_conversation_max_messages: int = Field(default=200)
+    minion_rate_limit_per_min: int = Field(default=30)
 
     cors_allowed_origins: list[str] = Field(default_factory=list)
 
@@ -156,7 +156,7 @@ class RuntimeSettings(BaseModel):
             raise ValueError("mail_port must be between 1 and 65535")
         return value
 
-    @field_validator("ollama_timeout_s", "copilot_tool_timeout_sec", "migration_timeout_sec")
+    @field_validator("ollama_timeout_s", "minion_tool_timeout_sec", "migration_timeout_sec")
     @classmethod
     def _validate_positive_float(cls, value: float) -> float:
         if value <= 0:
@@ -164,10 +164,10 @@ class RuntimeSettings(BaseModel):
         return value
 
     @field_validator(
-        "copilot_rag_k",
-        "copilot_approval_token_ttl_sec",
-        "copilot_conversation_max_messages",
-        "copilot_rate_limit_per_min",
+        "minion_rag_k",
+        "minion_approval_token_ttl_sec",
+        "minion_conversation_max_messages",
+        "minion_rate_limit_per_min",
     )
     @classmethod
     def _validate_positive_int(cls, value: int) -> int:
@@ -404,16 +404,16 @@ def load_runtime_settings() -> RuntimeSettings:
         "ollama_embed_model": os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text"),
         "ollama_timeout_s": float(os.environ.get("OLLAMA_TIMEOUT_S") or os.environ.get("APEX_TIMEOUT_S") or "120"),
         "apex_tenant_id": os.environ.get("APEX_TENANT_ID", "ngo-default"),
-        "copilot_enabled": _parse_bool(os.environ.get("COPILOT_ENABLED"), True),
-        "copilot_index_dir": os.environ.get("COPILOT_INDEX_DIR", "data/copilot_index"),
-        "copilot_rag_k": int(os.environ.get("COPILOT_RAG_K", "6")),
-        "copilot_allow_web_tools": _parse_bool(os.environ.get("COPILOT_ALLOW_WEB_TOOLS"), False),
-        "copilot_tool_allowlist": _split_csv(os.environ.get("COPILOT_TOOL_ALLOWLIST")),
-        "copilot_require_approval_token": _parse_bool(os.environ.get("COPILOT_REQUIRE_APPROVAL_TOKEN"), True),
-        "copilot_approval_token_ttl_sec": int(os.environ.get("COPILOT_APPROVAL_TOKEN_TTL_SEC", "300")),
-        "copilot_tool_timeout_sec": float(os.environ.get("COPILOT_TOOL_TIMEOUT_SEC", "8")),
-        "copilot_conversation_max_messages": int(os.environ.get("COPILOT_CONVERSATION_MAX_MESSAGES", "200")),
-        "copilot_rate_limit_per_min": int(os.environ.get("COPILOT_RATE_LIMIT_PER_MIN", "30")),
+        "minion_enabled": _parse_bool(os.environ.get("MINION_ENABLED"), True),
+        "minion_index_dir": os.environ.get("MINION_INDEX_DIR", "data/minion_index"),
+        "minion_rag_k": int(os.environ.get("MINION_RAG_K", "6")),
+        "minion_allow_web_tools": _parse_bool(os.environ.get("MINION_ALLOW_WEB_TOOLS"), False),
+        "minion_tool_allowlist": _split_csv(os.environ.get("MINION_TOOL_ALLOWLIST")),
+        "minion_require_approval_token": _parse_bool(os.environ.get("MINION_REQUIRE_APPROVAL_TOKEN"), True),
+        "minion_approval_token_ttl_sec": int(os.environ.get("MINION_APPROVAL_TOKEN_TTL_SEC", "300")),
+        "minion_tool_timeout_sec": float(os.environ.get("MINION_TOOL_TIMEOUT_SEC", "8")),
+        "minion_conversation_max_messages": int(os.environ.get("MINION_CONVERSATION_MAX_MESSAGES", "200")),
+        "minion_rate_limit_per_min": int(os.environ.get("MINION_RATE_LIMIT_PER_MIN", "30")),
         "cors_allowed_origins": _split_csv(os.environ.get("CORS_ALLOWED_ORIGINS")),
         "migration_timeout_sec": float(os.environ.get("NGO_HOMESUITE_MIGRATION_TIMEOUT_SEC", "30")),
         "backup_before_migrate": _parse_bool(os.environ.get("NGO_HOMESUITE_BACKUP_BEFORE_MIGRATE"), True),
@@ -556,3 +556,4 @@ LOGIN_BACKOFF_BASE_SECONDS = 0.5
 MAX_EMAIL_LENGTH = 254
 PHONE_MIN_DIGITS = 7
 PHONE_MAX_DIGITS = 15
+

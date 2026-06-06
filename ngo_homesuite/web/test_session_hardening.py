@@ -2,11 +2,11 @@
 Comprehensive tests for Session Hardening and Content Security Policy.
 
 Validates:
-✅ CSP nonce generation and uniqueness per request
-✅ CSP headers correctly formatted in responses
-✅ Session cookie security flags
-✅ CSRF token management and rotation
-✅ Security header presence and correctness
+âœ… CSP nonce generation and uniqueness per request
+âœ… CSP headers correctly formatted in responses
+âœ… Session cookie security flags
+âœ… CSRF token management and rotation
+âœ… Security header presence and correctness
 """
 
 import pytest

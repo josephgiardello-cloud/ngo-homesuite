@@ -2,14 +2,14 @@
 Session Hardening and Content Security Policy (CSP) with Nonce Strategy.
 
 INDUSTRY STANDARDS APPLIED:
-✅ HttpOnly + Secure + SameSite=Strict cookies
-✅ Per-request CSP nonces for inline scripts
-✅ Strict CSP policy (no 'unsafe-inline')
-✅ Subresource integrity (SRI) for CDNs
-✅ X-Frame-Options, X-Content-Type-Options headers
-✅ Referrer-Policy for privacy
-✅ Session regeneration on privilege escalation
-✅ CSRF token rotation per request
+âœ… HttpOnly + Secure + SameSite=Strict cookies
+âœ… Per-request CSP nonces for inline scripts
+âœ… Strict CSP policy (no 'unsafe-inline')
+âœ… Subresource integrity (SRI) for CDNs
+âœ… X-Frame-Options, X-Content-Type-Options headers
+âœ… Referrer-Policy for privacy
+âœ… Session regeneration on privilege escalation
+âœ… CSRF token rotation per request
 """
 
 from __future__ import annotations

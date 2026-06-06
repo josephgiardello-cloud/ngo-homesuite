@@ -1,4 +1,4 @@
-﻿import sqlite3
+import sqlite3
 conn = sqlite3.connect('data/homesuite.db')
 cols = [r[1] for r in conn.execute('PRAGMA table_info(donations)').fetchall()]
 print('HAS_campaign_id=', 'campaign_id' in cols)

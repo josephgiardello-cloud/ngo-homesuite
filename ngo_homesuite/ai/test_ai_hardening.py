@@ -10,7 +10,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 from ngo_homesuite.ai.pii_redact import redact_pii
-from ngo_homesuite.ai.copilot_service import _sanitize_model_output, COPILOT_SYSTEM_PROMPT
+from ngo_homesuite.ai.minion_service import _sanitize_model_output, MINION_SYSTEM_PROMPT
 
 
 class TestPiiRedaction:
@@ -176,7 +176,7 @@ class TestRbacGates:
     def test_health_accessible_to_any_authenticated(self, client, viewer_user):
         _login(client, "test_viewer", "viewer_pass_123")
         rv = client.get("/ai/health")
-        # 200 OK — health is login_required only, not role-gated
+        # 200 OK â€” health is login_required only, not role-gated
         assert rv.status_code == 200
 
     def test_admin_can_access_chat_endpoint(self, client, app, admin_user, monkeypatch):
@@ -186,7 +186,7 @@ class TestRbacGates:
         with patch("ngo_homesuite.web.ai_routes._client") as mock_client:
             mock_client.return_value.query.return_value = "Test answer"
             rv = client.post("/ai/chat", json={"prompt": "What is 2+2?"})
-        # APEX_AI_ENABLED is True, admin, prompt provided → should get a 200
+        # APEX_AI_ENABLED is True, admin, prompt provided â†’ should get a 200
         assert rv.status_code == 200
         data = rv.get_json()
         assert "response" in data
@@ -351,7 +351,7 @@ class TestApexFallbackAndRateLimit:
         _login(client, "test_admin", "admin_pass_123")
 
         with app.app_context():
-            before = SecurityAuditEvent.query.filter_by(action="copilot_query", resource_type="ai").count()
+            before = SecurityAuditEvent.query.filter_by(action="minion_query", resource_type="ai").count()
 
         with patch("ngo_homesuite.web.ai_routes._client") as mock_client:
             mock_client.return_value.query.return_value = "Test answer"
@@ -360,11 +360,11 @@ class TestApexFallbackAndRateLimit:
         assert rv.status_code == 200
 
         with app.app_context():
-            after = SecurityAuditEvent.query.filter_by(action="copilot_query", resource_type="ai").count()
+            after = SecurityAuditEvent.query.filter_by(action="minion_query", resource_type="ai").count()
             assert after == before + 1
             event = (
                 SecurityAuditEvent.query
-                .filter_by(action="copilot_query", resource_type="ai")
+                .filter_by(action="minion_query", resource_type="ai")
                 .order_by(SecurityAuditEvent.id.desc())
                 .first()
             )
@@ -372,9 +372,9 @@ class TestApexFallbackAndRateLimit:
             assert (event.payload or {}).get("bridge_source") == "ngo_homesuite.db.audit_log"
 
 
-class TestCopilotPromptLeakageGuard:
-    def test_sanitize_blocks_copilot_system_prompt_echo(self):
-        leaked = f"Leaked text: {COPILOT_SYSTEM_PROMPT}"
+class TestMinionPromptLeakageGuard:
+    def test_sanitize_blocks_minion_system_prompt_echo(self):
+        leaked = f"Leaked text: {MINION_SYSTEM_PROMPT}"
         sanitized = _sanitize_model_output(leaked)
         assert "cannot reveal internal system prompts" in sanitized.lower()
 
@@ -382,3 +382,4 @@ class TestCopilotPromptLeakageGuard:
         normal = "Here is your donor summary for this month."
         sanitized = _sanitize_model_output(normal)
         assert sanitized == normal
+

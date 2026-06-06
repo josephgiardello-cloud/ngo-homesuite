@@ -689,24 +689,24 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           description: Campaign not found
-  /ai/copilot/chat:
+  /ai/minion/chat:
     post:
-      operationId: postCopilotChat
-      summary: Query HomeSuite Copilot
+      operationId: postMinionChat
+      summary: Query HomeSuite Minion
       tags: [AI]
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CopilotChatRequest'
+              $ref: '#/components/schemas/MinionChatRequest'
       responses:
         '200':
-          description: Copilot response envelope
+          description: Minion response envelope
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CopilotChatResponse'
+                $ref: '#/components/schemas/MinionChatResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -737,7 +737,7 @@ components:
           type: object
           additionalProperties: true
       required: [schema, sha256]
-    CopilotActionApprovalItem:
+    MinionActionApprovalItem:
       type: object
       properties:
         tool:
@@ -745,7 +745,7 @@ components:
         token:
           type: string
       required: [tool]
-    CopilotChatRequest:
+    MinionChatRequest:
       type: object
       properties:
         prompt:
@@ -760,7 +760,7 @@ components:
           items:
             oneOf:
               - type: string
-              - $ref: '#/components/schemas/CopilotActionApprovalItem'
+              - $ref: '#/components/schemas/MinionActionApprovalItem'
       required: [prompt]
     SourceSnippet:
       type: object
@@ -887,7 +887,7 @@ components:
         instance:
           $ref: '#/components/schemas/V1WorkflowInstance'
       required: [ok, instance]
-    CopilotChatResponse:
+    MinionChatResponse:
       type: object
       properties:
         response:
@@ -1108,3 +1108,4 @@ components:
       name: session
 security:
   - sessionCookieAuth: []
+

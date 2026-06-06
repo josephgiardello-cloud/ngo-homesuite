@@ -71,7 +71,7 @@
         <div style="font-weight:600; margin-bottom:0.5rem;">Organization info</div>
         <table style="width:100%; border-collapse:collapse; font-size:0.9rem;">
             <tr><td class="text-muted" style="padding:0.35rem 0.75rem 0.35rem 0; width:140px;">Slug</td><td>{{ org.slug }}</td></tr>
-            <tr><td class="text-muted" style="padding:0.35rem 0.75rem 0.35rem 0;">Created</td><td>{{ org.created_at.strftime('%B %d, %Y') if org.created_at else '—' }}</td></tr>
+            <tr><td class="text-muted" style="padding:0.35rem 0.75rem 0.35rem 0;">Created</td><td>{{ org.created_at.strftime('%B %d, %Y') if org.created_at else 'â€”' }}</td></tr>
             <tr><td class="text-muted" style="padding:0.35rem 0.75rem 0.35rem 0;">Status</td>
                 <td><span style="color:{{ 'var(--success-text)' if org.is_active else 'var(--danger)' }}">{{ 'Active' if org.is_active else 'Inactive' }}</span></td>
             </tr>

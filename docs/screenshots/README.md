@@ -11,4 +11,5 @@ Recommended captures:
 - workflows-runner.png
 
 Optional captures:
-- copilot-approval-queue.png
+- minion-approval-queue.png
+

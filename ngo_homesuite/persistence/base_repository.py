@@ -13,7 +13,7 @@ class BaseRepository:
     """All repositories must inherit from this to enforce WriteGate invariants.
 
     INVARIANT: Any mutation (create, save, update, delete) must happen inside WriteGate.
-    This is NOT optional—it's a hard guard.
+    This is NOT optionalâ€”it's a hard guard.
     """
 
     _write_methods = {"save", "create", "update", "delete", "delete_all", "append", "append_batch"}

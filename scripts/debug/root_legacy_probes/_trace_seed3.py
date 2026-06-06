@@ -47,7 +47,7 @@ db.session.commit = traced_commit
 
 from ngo_homesuite.flask_config import TestingConfig
 class _TestCfg(TestingConfig):
-    COPILOT_ENABLED = True
+    MINION_ENABLED = True
 
 from ngo_homesuite.app_factory import create_app
 app = create_app(_TestCfg)
@@ -55,3 +55,4 @@ app = create_app(_TestCfg)
 from ngo_homesuite.models.core import Donor
 with app.app_context():
     print(f"[FINAL] Donor count = {Donor.query.count()}")
+

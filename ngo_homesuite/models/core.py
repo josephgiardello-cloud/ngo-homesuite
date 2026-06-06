@@ -1233,7 +1233,7 @@ class ProgramCaseFollowUp(db.Model):
 # ---------------------------------------------------------------------------
 
 class DonorEngagementScore(db.Model):
-    """Computed engagement health score for a donor (0–100), broken down by dimension."""
+    """Computed engagement health score for a donor (0â€“100), broken down by dimension."""
 
     __tablename__ = 'donor_engagement_scores'
 
@@ -1241,13 +1241,13 @@ class DonorEngagementScore(db.Model):
     organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
     donor_id = db.Column(db.Integer, db.ForeignKey('donors.id'), nullable=False, index=True)
 
-    score = db.Column(db.Float, nullable=False, default=0.0)   # 0–100 composite
+    score = db.Column(db.Float, nullable=False, default=0.0)   # 0â€“100 composite
 
     # Dimension breakdown
-    recency_score = db.Column(db.Float, default=0.0)    # 0–25
-    frequency_score = db.Column(db.Float, default=0.0)  # 0–25
-    monetary_score = db.Column(db.Float, default=0.0)   # 0–25
-    engagement_score = db.Column(db.Float, default=0.0) # 0–25 (membership, events, tasks)
+    recency_score = db.Column(db.Float, default=0.0)    # 0â€“25
+    frequency_score = db.Column(db.Float, default=0.0)  # 0â€“25
+    monetary_score = db.Column(db.Float, default=0.0)   # 0â€“25
+    engagement_score = db.Column(db.Float, default=0.0) # 0â€“25 (membership, events, tasks)
 
     # Human-readable explanation
     explanation = db.Column(db.Text, nullable=True)

@@ -19,10 +19,10 @@ This roadmap tracks hardening and productionization after the V2 baseline.
 
 ## 4. RBAC and Tenant Isolation
 - Complete route-by-route RBAC audit checklist.
-- Add tenant boundary tests for all workflow and copilot endpoints.
+- Add tenant boundary tests for all workflow and minion endpoints.
 - Add secure first-admin bootstrap flow (one-time setup token pattern).
 
-## 5. Copilot Reliability
+## 5. Minion Reliability
 - Add model health probes with circuit-breaker behavior.
 - Add retry/backoff profile for transient Ollama errors.
 - Add retention policy tests for conversation cleanup behavior.
@@ -39,7 +39,7 @@ This roadmap tracks hardening and productionization after the V2 baseline.
 
 ## 8. UI Consistency
 - Standardize shared template blocks/components.
-- Add mobile regression snapshots for donor/workflow/copilot pages.
+- Add mobile regression snapshots for donor/workflow/minion pages.
 - Ensure CSRF protection coverage on all mutable form routes.
 
 ## 9. Error UX
@@ -50,3 +50,4 @@ This roadmap tracks hardening and productionization after the V2 baseline.
 - Keep command snippets aligned to `python -m ngo_homesuite.main`.
 - Keep architecture diagrams current with deployed route topology.
 - Add local dev setup script + pre-commit bootstrap helper.
+
