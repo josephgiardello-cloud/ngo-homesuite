@@ -33,7 +33,7 @@ portalocker==3.2.0
 # Web server and utilities
 gunicorn==22.0.0
 requests==2.34.2
-chardet==5.2.0
+chardet==7.4.3
 stripe>=8.0.0
 prometheus-client==0.25.0
 python-dateutil==2.9.0.post0
