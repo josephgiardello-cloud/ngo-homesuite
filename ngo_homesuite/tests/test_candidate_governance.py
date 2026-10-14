@@ -102,8 +102,3 @@ def test_ci_images_use_valid_exec_form_pytest_commands(name):
     assert arguments[0] == "pytest"
     assert "ngo_homesuite/" in arguments
     assert "tests/" in arguments
-
-
-def test_full_history_secret_scan_includes_merge_resolution_diffs():
-    action = (ROOT / ".github" / "actions" / "full-history-secret-scan" / "action.yml").read_text()
-    assert '--log-opts="--all --full-history --diff-merges=first-parent"' in action

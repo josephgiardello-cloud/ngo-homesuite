@@ -101,8 +101,11 @@ def test_candidate_engine_proofs_are_sha_bound_and_require_real_encryption() -> 
     assert "REQUIRE_POSTGRES_TENANT_PROOF=1" in commands
     assert "TENANT_TEST_SQLCIPHER=1" in commands
     assert "tools/write_candidate_evidence.py" in commands
+    assert job["env"]["CANDIDATE_COMMIT_SHA"] == "${{ github.event.pull_request.head.sha || github.sha }}"
+    checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
+    assert checkout["with"]["ref"] == "${{ env.CANDIDATE_COMMIT_SHA }}"
     upload = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact@"))
-    assert "${{ github.sha }}" in upload["with"]["name"]
+    assert "${{ env.CANDIDATE_COMMIT_SHA }}" in upload["with"]["name"]
     assert upload["with"]["if-no-files-found"] == "error"
 
 
@@ -113,4 +116,4 @@ def test_secret_lanes_scan_full_history_not_only_candidate_range() -> None:
         assert checkout["with"]["fetch-depth"] == "0"
         assert any(step.get("uses") == "./.github/actions/full-history-secret-scan" for step in steps)
     action = yaml.safe_load((ROOT / ".github" / "actions" / "full-history-secret-scan" / "action.yml").read_text())
-    assert '--log-opts="--all"' in action["runs"]["steps"][0]["run"]
+    assert '--log-opts="--all --full-history --diff-merges=first-parent"' in action["runs"]["steps"][0]["run"]
