@@ -240,11 +240,15 @@
             <div class="card" style="margin:0;background:rgba(255,255,255,0.86);">
                 <div class="card-text">Lifetime Giving</div>
                 <div class="card-value">{{ '%.2f'|format(donation_total) }}</div>
+                {% if current_user.has_role('admin', 'staff') %}
                 <p class="muted-note" style="margin-top:0.6rem;">Use the quick-add panel below to record a new gift without leaving the donor profile.</p>
+                {% endif %}
                 <div class="actions-row" style="margin-top:0.85rem;">
+                    {% if current_user.has_role('admin', 'staff') %}
                     <a href="#quick-donation" class="btn btn-primary">Record Donation</a>
                     <a href="#quick-stewardship-task" class="btn btn-secondary">Create Task</a>
                     <a href="{{ url_for('main.donor_edit', donor_id=donor.id) }}" class="btn btn-secondary">Edit Donor</a>
+                    {% endif %}
                     <a href="{{ url_for('main.donations_list', donor_id=donor.id) }}" class="btn btn-secondary">Filter Donations</a>
                 </div>
             </div>
@@ -314,6 +318,7 @@
             </div>
         </div>
 
+        {% if current_user.has_role('admin', 'staff') %}
         <div class="card" id="quick-donation">
             <h3>Quick Donation Entry</h3>
             <p class="muted-note">Collect method-specific details here. Full card numbers and CVV are intentionally not captured; use processor tokens or the last 4 digits only.</p>
@@ -429,6 +434,7 @@
                 </div>
             </form>
         </div>
+        {% endif %}
     </div>
 
     <div class="detail-grid">
@@ -575,6 +581,7 @@
                 <a class="btn btn-secondary" href="{{ url_for('main.task_board') }}">Open Task Board</a>
             </div>
 
+            {% if current_user.has_role('admin', 'staff') %}
             <form id="quick-stewardship-task" method="post" style="margin-top:0.9rem; padding-top:0.8rem; border-top:1px dashed rgba(20, 118, 212, 0.22);">
                 {{ quick_task_form.hidden_tag() }}
                 <h4 style="margin:0 0 0.6rem 0;">Quick Stewardship Task</h4>
@@ -609,6 +616,7 @@
                     {{ quick_task_form.submit(class_='btn btn-primary') }}
                 </div>
             </form>
+            {% endif %}
         </div>
 
         <div class="card" data-feature-section="communication_history">

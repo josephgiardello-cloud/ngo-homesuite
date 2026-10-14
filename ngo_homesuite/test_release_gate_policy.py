@@ -59,6 +59,7 @@ def test_release_candidates_enforce_existing_dependency_and_reliability_checks()
         "ngo_homesuite/tests/test_workflow_reliability_failure_injection.py",
         "ngo_homesuite/persistence/test_workflow_repository_concurrency.py",
         "ngo_homesuite/tests/test_donation_fund_concurrency.py",
+        "ngo_homesuite/tests/test_financial_failure_correctness.py",
     ):
         assert required in commands
     assert any(
@@ -75,3 +76,10 @@ def test_cross_platform_test_job_uses_bash_for_heredocs() -> None:
 
 def test_release_workflow_has_read_only_default_permissions() -> None:
     assert _workflow("release.yml")["permissions"] == {"contents": "read"}
+
+
+def test_tenant_gates_include_unassigned_users_and_viewer_write_regressions() -> None:
+    for workflow, job in (("tests.yml", "tenant-boundary-gate"), ("release.yml", "release-verify")):
+        assert "ngo_homesuite/web/test_unassigned_tenant_boundaries.py" in _run_text(
+            _workflow(workflow)["jobs"][job]
+        )

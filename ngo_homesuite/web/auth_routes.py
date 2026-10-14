@@ -527,7 +527,7 @@ def register():
         db.session.add(user)
         db.session.commit()
         
-        flash('Account created successfully! You can now log in.', 'success')
+        flash('Account created successfully! You can now log in. Ask your organization administrator to assign tenant access.', 'success')
         return redirect(url_for('auth.login'))
     
     return render_template('auth/register.html', form=form)

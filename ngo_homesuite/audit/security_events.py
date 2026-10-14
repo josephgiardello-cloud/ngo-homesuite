@@ -26,7 +26,7 @@ from uuid import uuid4
 import hashlib
 import json
 
-from flask import current_app, g, request
+from flask import current_app, g, has_request_context, request
 from flask_login import current_user
 from sqlalchemy import Column, String, DateTime, Text, Integer, Index, desc
 from sqlalchemy.dialects.sqlite import JSON
@@ -77,6 +77,8 @@ class SecurityEventType(StrEnum):
     GRANT_DISBURSED = "workflow.grant_disbursed"
     FUND_TRANSFERRED = "workflow.fund_transferred"
     DONOR_IMPORTED = "workflow.donor_imported"
+    DONATION_CREATED = "workflow.donation_created"
+    DONATION_UPDATED = "workflow.donation_updated"
     CAMPAIGN_LAUNCHED = "workflow.campaign_launched"
     
     # Compliance events
@@ -167,6 +169,9 @@ class SecurityAuditService:
         resource_org_id: Optional[int] = None,
         reason: Optional[str] = None,
         payload: Optional[dict[str, Any]] = None,
+        *,
+        commit: bool = True,
+        actor_id: Optional[int] = None,
     ) -> SecurityAuditEvent:
         """
         Record a security event with causality and tamper evidence.
@@ -195,17 +200,37 @@ class SecurityAuditService:
             actor_username = None
             actor_org_id = None
             
-            if current_user and current_user.is_authenticated:
+            if has_request_context() and current_user and current_user.is_authenticated:
                 actor_user_id = current_user.id
                 actor_username = current_user.username
                 actor_org_id = getattr(current_user, "organization_id", None)
+            elif actor_id is not None:
+                from ngo_homesuite.models.core import User
+
+                actor = db.session.get(User, actor_id)
+                if actor is None or actor.organization_id != resource_org_id:
+                    raise ValueError("Audit actor does not belong to the resource organization")
+                actor_user_id = actor.id
+                actor_username = actor.username
+                actor_org_id = actor.organization_id
+
+            if not commit and actor_user_id is not None and (
+                actor_org_id is None or actor_org_id != resource_org_id
+            ):
+                raise ValueError("Financial audit actor does not belong to the resource organization")
             
             # Get request context
-            actor_ip_address = request.remote_addr if request else None
+            actor_ip_address = request.remote_addr if has_request_context() else None
             request_id = getattr(g, "request_id", None) or str(uuid4())
             
             # Get previous event hash for chain
             chain_org_id = resource_org_id or actor_org_id
+            if chain_org_id is not None:
+                from ngo_homesuite.models.core import Organization
+
+                db.session.execute(
+                    db.select(Organization.id).where(Organization.id == chain_org_id).with_for_update()
+                )
             previous_event = (
                 SecurityAuditEvent.query
                 .filter_by(resource_org_id=chain_org_id)
@@ -239,7 +264,10 @@ class SecurityAuditService:
             
             # Persist
             db.session.add(event)
-            db.session.commit()
+            if commit:
+                db.session.commit()
+            else:
+                db.session.flush()
             
             # Log to application logger if available
             if current_app:
@@ -251,8 +279,7 @@ class SecurityAuditService:
             
             return event
         except Exception as e:
-            # Audit failures must not crash the application
-            # Log to stderr and continue
+            # Callers must roll back business state if its audit cannot be persisted.
             import sys
             print(f"ERROR: Failed to record security audit event: {e}", file=sys.stderr)
             raise

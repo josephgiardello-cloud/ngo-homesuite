@@ -383,8 +383,10 @@ def create_app(config=None):
         g.request_id = request_id
         g.request_start_perf = time.perf_counter()
         g.organization_id = None
+        g.tenant_membership_required = False
         if current_user.is_authenticated:
             g.organization_id = getattr(current_user, 'organization_id', None)
+            g.tenant_membership_required = True
         set_request_id(request_id)
 
     @app.teardown_request

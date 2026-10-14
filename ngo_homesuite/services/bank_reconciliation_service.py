@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import Counter
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any
 
@@ -49,7 +48,10 @@ class BankReconciliationService:
     @staticmethod
     def _to_amount(value: Any) -> Decimal:
         try:
-            return Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            amount = Decimal(str(value))
+            if not amount.is_finite() or amount != amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP):
+                raise ValueError("Amount must be finite with at most two decimals")
+            return amount.quantize(Decimal("0.01"))
         except (InvalidOperation, TypeError, ValueError) as exc:
             raise ValueError(f"Invalid reconciliation amount: {value!r}") from exc
 
@@ -61,7 +63,9 @@ class BankReconciliationService:
         for idx, raw in enumerate(values):
             if isinstance(raw, dict):
                 amount_raw = raw.get("amount")
-                tx_id = str(raw.get("tx_id", "")).strip() or None
+                raw_tx_id = raw.get("tx_id")
+                tx_id = str(raw_tx_id).strip() if raw_tx_id is not None else None
+                tx_id = tx_id or None
                 source = raw.get("source")
             else:
                 amount_raw = raw
@@ -111,26 +115,30 @@ class BankReconciliationService:
         bank_entries: list[dict[str, Any]],
         ledger_entries: list[dict[str, Any]],
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
-        ledger_amounts = Counter(entry["amount"] for entry in ledger_entries)
+        remaining_ledger = list(ledger_entries)
+        disputed_ids = (
+            {entry["tx_id"] for entry in bank_entries if entry["tx_id"]}
+            & {entry["tx_id"] for entry in ledger_entries if entry["tx_id"]}
+        )
         matched: list[dict[str, Any]] = []
         unmatched_bank: list[dict[str, Any]] = []
 
-        for bank_entry in bank_entries:
-            amount = bank_entry["amount"]
-            if ledger_amounts[amount] > 0:
-                ledger_amounts[amount] -= 1
+        # Identified bank entries have fewer eligible partners; match them first.
+        for bank_entry in sorted(bank_entries, key=lambda entry: not bool(entry["tx_id"])):
+            if bank_entry["tx_id"] in disputed_ids:
+                unmatched_bank.append(bank_entry)
+                continue
+            hit = next((index for index, entry in enumerate(remaining_ledger)
+                        if entry["amount"] == bank_entry["amount"]
+                        and entry["tx_id"] not in disputed_ids
+                        and not (entry["tx_id"] and bank_entry["tx_id"])), None)
+            if hit is not None:
+                remaining_ledger.pop(hit)
                 matched.append(bank_entry)
             else:
                 unmatched_bank.append(bank_entry)
 
-        unmatched_ledger: list[dict[str, Any]] = []
-        for ledger_entry in ledger_entries:
-            amount = ledger_entry["amount"]
-            if ledger_amounts[amount] > 0:
-                unmatched_ledger.append(ledger_entry)
-                ledger_amounts[amount] -= 1
-
-        return matched, unmatched_bank, unmatched_ledger
+        return matched, unmatched_bank, remaining_ledger
 
     @staticmethod
     def _sum_amounts(entries: list[dict[str, Any]]) -> float:

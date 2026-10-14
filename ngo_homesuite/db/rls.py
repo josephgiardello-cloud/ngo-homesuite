@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Iterable, Optional
 
 from flask import g, has_app_context
-from sqlalchemy import event
+from sqlalchemy import event, false
 from sqlalchemy.orm import Session, with_loader_criteria
 
 from ngo_homesuite.models.core import (
@@ -43,9 +43,9 @@ _LISTENERS_REGISTERED = False
 def _resolve_org_id() -> Optional[int]:
     """Resolve tenant org id from request context.
 
-    Priority:
-    1) ``g.organization_id`` when explicitly set by middleware/tests.
-    2) authenticated ``current_user.organization_id``.
+    ``g.organization_id`` is set from the authenticated user by request
+    middleware, or explicitly by trusted background jobs/tests. Missing
+    membership in an authenticated request must not become system access.
     """
     if not has_app_context():
         return None
@@ -67,6 +67,14 @@ def _iter_tenant_objects(session: Session) -> Iterable[object]:
                 yield obj
 
 
+def _missing_tenant_membership() -> bool:
+    return (
+        has_app_context()
+        and bool(getattr(g, "tenant_membership_required", False))
+        and _resolve_org_id() is None
+    )
+
+
 def register_rls_listeners(app) -> None:
     """Register SQLAlchemy listeners for tenant read/write isolation once."""
     global _LISTENERS_REGISTERED
@@ -82,6 +90,11 @@ def register_rls_listeners(app) -> None:
 
         org_id = _resolve_org_id()
         if org_id is None:
+            if _missing_tenant_membership():
+                stmt = execute_state.statement
+                for model in _ORG_SCOPED_MODELS:
+                    stmt = stmt.options(with_loader_criteria(model, false(), include_aliases=True))
+                execute_state.statement = stmt
             return
 
         stmt = execute_state.statement
@@ -100,6 +113,10 @@ def register_rls_listeners(app) -> None:
         del flush_context, instances
         org_id = _resolve_org_id()
         if org_id is None:
+            if _missing_tenant_membership():
+                for obj in _iter_tenant_objects(session):
+                    if getattr(obj, "organization_id", None) is not None:
+                        raise PermissionError("Authenticated user has no tenant organization assignment")
             return
 
         for obj in _iter_tenant_objects(session):

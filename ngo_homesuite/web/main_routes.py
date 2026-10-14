@@ -675,11 +675,11 @@ class BeneficiaryIntakeForm(FlaskForm):
     submit = SubmitField('Save Beneficiary')
 
 
-def _current_org() -> TypingOptional[Organization]:
-    """Pick assigned org first, then fallback to first active org for seeded demo users."""
-    if current_user.organization:
-        return current_user.organization
-    return get_first_active_organization()
+def _current_org() -> Organization:
+    """Require explicit tenant membership for authenticated staff pages."""
+    if not current_user.is_authenticated or current_user.organization is None:
+        abort(403)
+    return current_user.organization
 
 
 def _build_csv_bytes(headers, rows):
@@ -2652,6 +2652,9 @@ def donors_list():
 def donor_detail(donor_id: int):
     from ngo_homesuite.services.activity_timeline_service import ActivityTimelineService
 
+    if request.method == 'POST' and not current_user.has_role('admin', 'staff'):
+        abort(403)
+
     org = _current_org()
     donor_summary = ReportingService().donor_profile_summary(org.id, donor_id, recent_limit=10)
     donor = donor_summary['donor']
@@ -2718,6 +2721,7 @@ def donor_detail(donor_id: int):
                     purpose=(quick_donation_form.purpose.data or '').strip() or None,
                     notes=_build_quick_donation_notes(quick_donation_form),
                     status='received',
+                    actor_id=current_user.id,
                 )
                 donation_service.update_status(donation.id, org.id, 'processed', actor_id=getattr(current_user, 'id', None))
                 if donor.email:
@@ -4961,4 +4965,3 @@ def beneficiary_detail(beneficiary_id: int):
         active_page='beneficiaries',
         ai_context=ai_context,
     )
-

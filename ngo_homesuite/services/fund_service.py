@@ -79,6 +79,7 @@ class FundService:
             select(func.coalesce(func.sum(Donation.amount), 0.0)).where(
                 Donation.fund_id == fund_id,
                 Donation.organization_id == org_id,
+                Donation.status.in_(("received", "processed", "receipted")),
             )
         ) or 0.0
         total_out = db.session.scalar(
