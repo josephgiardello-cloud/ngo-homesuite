@@ -1,6 +1,7 @@
 """Flask configuration for NGO HomeSuite."""
 
 import os
+import json
 from datetime import timedelta
 
 from sqlalchemy.pool import StaticPool
@@ -9,6 +10,8 @@ from ngo_homesuite.config import get_runtime_settings
 
 
 _RUNTIME_SETTINGS = get_runtime_settings()
+if os.environ.get("TENANT_SQL_GUARD_ENABLED", "0") not in ("0", "1"):
+    raise ValueError("TENANT_SQL_GUARD_ENABLED must be 0 or 1")
 
 
 class Config:
@@ -16,12 +19,15 @@ class Config:
     
     # Flask
     SECRET_KEY = _RUNTIME_SETTINGS.secret_key
+    FLASK_ENV = _RUNTIME_SETTINGS.flask_env
     DEBUG = False
     TESTING = False
     
     # Database
     SQLALCHEMY_DATABASE_URI = _RUNTIME_SETTINGS.database_url
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+    TENANT_SQL_GUARD_ENABLED = os.environ.get("TENANT_SQL_GUARD_ENABLED", "0") == "1"
+    TENANT_WORKER_ORGANIZATION_IDS = json.loads(os.environ.get("TENANT_WORKER_ORGANIZATION_IDS", "[]"))
     SQLALCHEMY_ENGINE_OPTIONS = {
         'pool_pre_ping': _RUNTIME_SETTINGS.db_pool_pre_ping,
         'pool_recycle': _RUNTIME_SETTINGS.db_pool_recycle_sec,
@@ -201,4 +207,3 @@ def get_config():
     env = _RUNTIME_SETTINGS.flask_env
     selected = config.get(env, DevelopmentConfig)
     return selected
-

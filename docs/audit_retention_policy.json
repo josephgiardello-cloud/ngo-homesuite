@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "status": "pending_approval",
+  "organization_id": null,
+  "security_owner": null,
+  "compliance_approver": null,
+  "approval_record": null,
+  "retention_days": {
+    "financial_audit": null,
+    "security_audit": null,
+    "legacy_sensitive_snapshots": null,
+    "exports_and_backups": null
+  },
+  "read_roles": ["tenant_admin", "explicitly_authorized_compliance_operator"],
+  "legal_hold_overrides_expiry": true,
+  "automatic_historical_deletion": false,
+  "historical_rewrite_allowed": false,
+  "archive_and_deletion_runbook": null,
+  "backup_expiry_and_restore_runbook": null,
+  "audit_chain_boundary_preservation_runbook": null,
+  "access_review_interval_days": null
+}

@@ -19,6 +19,8 @@ import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from importlib import import_module
+from types import ModuleType
 
 from typing import Any, Callable, Iterator, Mapping, TypeAlias, TypeVar, cast
 
@@ -42,6 +44,39 @@ from ..config import (
 class FatalDBError(Exception):
     """Custom exception for fatal database errors."""
     pass
+
+
+_DB_ERROR_TYPES: tuple[type[Exception], ...] = (sqlite3.DatabaseError,)
+
+
+def _load_sqlcipher_driver() -> ModuleType:
+    """Prefer the maintained Python 3.13 driver; preserve explicit legacy installations."""
+    global _DB_ERROR_TYPES
+    for module_name in ("sqlcipher3", "pysqlcipher3"):
+        try:
+            driver = import_module(module_name).dbapi2
+        except ModuleNotFoundError as exc:
+            if exc.name not in (module_name, module_name.split(".")[0]):
+                raise FatalDBError("SQLCipher driver dependency is missing") from exc
+            continue
+        except ImportError as exc:
+            raise FatalDBError("SQLCipher driver could not be loaded") from exc
+        error_type = driver.DatabaseError
+        if error_type not in _DB_ERROR_TYPES:
+            _DB_ERROR_TYPES = (*_DB_ERROR_TYPES, error_type)
+        return driver
+    logger.error("SQLCipher requested but no supported driver is installed",
+                 extra={"event_id": "db.sqlcipher.missing_driver"})
+    raise FatalDBError(
+        "SQLCipher driver is not installed. Refusing unencrypted fallback. "
+        "Install sqlcipher3-binary on supported Linux systems or an explicit pysqlcipher3 installation."
+    )
+
+
+def _verify_sqlcipher_driver(conn: DBConnection) -> None:
+    row = conn.execute("PRAGMA cipher_version").fetchone()
+    if not row or not row[0]:
+        raise FatalDBError("Selected database driver does not demonstrate SQLCipher support")
 
 # --- Secure permissions helper ---
 def _set_secure_permissions(path: Path, is_dir: bool = False) -> None:
@@ -551,7 +586,7 @@ def _utc_now_compact() -> str:
 
 
 def _is_db_corruption_error(exc: BaseException) -> bool:
-    if not isinstance(exc, (sqlite3.DatabaseError, sqlite3.OperationalError)):
+    if not isinstance(exc, _DB_ERROR_TYPES):
         return False
     msg = str(exc).lower()
     needles = (
@@ -839,20 +874,14 @@ def _sqlcipher_apply_key(conn: DBConnection, key: str) -> None:
         )
 
     # Strengthen passphrase protection.
-    conn.execute("PRAGMA kdf_iter = ?", (kdf_iter,))
+    safe_key = _escape_sqlite_single_quotes(key)
+    conn.execute(f"PRAGMA key = '{safe_key}'")
+    conn.execute(f"PRAGMA kdf_iter = {kdf_iter}")
     with _log_state_lock:
         if _logged_kdf_iter != kdf_iter:
             logger.info("SQLCipher kdf_iter=%s", kdf_iter)
             _logged_kdf_iter = kdf_iter
 
-    try:
-        conn.execute("PRAGMA key = ?", (key,))
-        return
-    except (TypeError, sqlite3.Error):
-        pass
-
-    safe_key = _escape_sqlite_single_quotes(key)
-    conn.execute(f"PRAGMA key = '{safe_key}'")
 
 
 def _sqlcipher_apply_rekey(conn: DBConnection, key: str) -> None:
@@ -943,31 +972,16 @@ def connect_db_at(path: str) -> DBConnection:
     key = os.environ.get(DB_ENCRYPTION_KEY_ENV)
     dual_window = get_global_dual_key_window()
     if key:
+        sqlcipher = _load_sqlcipher_driver()
+        conn = None
+        open_errors: tuple[type[Exception], ...] = (ValueError, OSError, FatalDBError, *_DB_ERROR_TYPES)
         try:
-            from pysqlcipher3 import dbapi2 as sqlcipher  # type: ignore
-        except ModuleNotFoundError:
-            logger.error(
-                "SQLCipher requested (%s is set) but pysqlcipher3 is not installed",
-                DB_ENCRYPTION_KEY_ENV,
-                extra={
-                    "event_id": "db.sqlcipher.missing_driver",
-                    "extra_fields": {"env": DB_ENCRYPTION_KEY_ENV}
-                },
-                exc_info=True
-            )
-            raise FatalDBError(
-                f"{DB_ENCRYPTION_KEY_ENV} is set but SQLCipher driver isn't installed. "
-                "Refusing to open an unencrypted database. Install SQLCipher support (e.g., pysqlcipher3) "
-                "or unset the environment variable."
-            )
-        try:
-            sqlcipher_any = cast(Any, sqlcipher)
-            conn = cast(DBConnection, sqlcipher_any.connect(path))
+            conn = sqlcipher.connect(path)
+            _verify_sqlcipher_driver(conn)
             with _log_state_lock:
                 if _logged_db_driver is not True:
-                    logger.info("Using SQLCipher database driver", extra={"event_id": "db.sqlcipher.driver", "extra_fields": {"driver": "pysqlcipher3"}})
+                    logger.info("Using SQLCipher database driver", extra={"event_id": "db.sqlcipher.driver", "extra_fields": {"driver": sqlcipher.__name__}})
                     _logged_db_driver = True
-            _sqlcipher_apply_security_pragmas(conn)
             _install_attach_hardening(conn)
 
             # --- Dual-key window integration (enforced globally) ---
@@ -976,18 +990,16 @@ def connect_db_at(path: str) -> DBConnection:
             else:
                 _sqlcipher_apply_key(conn, key)
 
+            conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
+            _sqlcipher_apply_security_pragmas(conn)
             _check_and_handle_schema_migration(conn, db_path=path)
             return conn
-        except (ValueError, sqlite3.Error, OSError) as e:
-            logger.exception(
-                "Failed to open encrypted database",
-                extra={
-                    "event_id": "db.sqlcipher.open_failed",
-                    "extra_fields": {"db_path": path, "error": str(e)}
-                },
-                exc_info=True
-            )
-            raise FatalDBError(f"Failed to open encrypted DB: {e}")
+        except open_errors as exc:
+            if conn is not None:
+                conn.close()
+            logger.error("Failed to open encrypted database",
+                         extra={"event_id": "db.sqlcipher.open_failed", "extra_fields": {"db_path": path}})
+            raise FatalDBError("Failed to open encrypted DB; verify driver, key, format and schema policy") from exc
         # No fallback: if SQLCipher is required but fails, always fatal.
 
     # Ensure parent directory exists
@@ -1010,11 +1022,11 @@ def configure_connection(conn: DBConnection) -> None:
     conn.execute("PRAGMA busy_timeout = 5000")
     try:
         conn.execute("PRAGMA journal_mode = WAL")
-    except sqlite3.DatabaseError:
+    except _DB_ERROR_TYPES:
         pass
     try:
         conn.execute("PRAGMA trusted_schema = OFF")
-    except sqlite3.DatabaseError:
+    except _DB_ERROR_TYPES:
         pass
     # Install ATTACH DATABASE hardening
     _install_attach_hardening(conn)
@@ -1037,14 +1049,14 @@ def open_db() -> Iterator[tuple[DBConnection, sqlite3.Cursor]]:
     finally:
         try:
             cur.close()
-        except sqlite3.Error:
+        except _DB_ERROR_TYPES:
             pass
 
         _pool_release_connection(conn)
 
 
 def _is_transient_db_error(exc: BaseException) -> bool:
-    if not isinstance(exc, (sqlite3.OperationalError, sqlite3.DatabaseError)):
+    if not isinstance(exc, _DB_ERROR_TYPES):
         return False
     msg = str(exc).lower()
     return "locked" in msg or "busy" in msg
@@ -1123,7 +1135,7 @@ def run_db(
 def rotate_db_key(*, old_key: str | None, new_key: str | None, dual_window_seconds: float = 900.0) -> None:
     """Rotate SQLCipher DB key and activate a short dual-key compatibility window."""
 
-    resolved_old = (old_key or os.environ.get(DB_ENCRYPTION_KEY_ENV, "")).strip()
+    resolved_old = (old_key or os.environ.get(DB_ENCRYPTION_KEY_ENV) or "").strip()
     resolved_new = (new_key or "").strip()
 
     if not resolved_old:
@@ -1133,27 +1145,25 @@ def rotate_db_key(*, old_key: str | None, new_key: str | None, dual_window_secon
     if hmac.compare_digest(resolved_old, resolved_new):
         raise FatalDBError("New key must differ from old key.")
 
-    try:
-        from pysqlcipher3 import dbapi2 as sqlcipher  # type: ignore
-    except ModuleNotFoundError as exc:
-        raise FatalDBError("SQLCipher driver pysqlcipher3 is required for key rotation.") from exc
+    sqlcipher = _load_sqlcipher_driver()
 
     conn: DBConnection | None = None
     try:
-        sqlcipher_any = cast(Any, sqlcipher)
-        conn = cast(DBConnection, sqlcipher_any.connect(DB_PATH))
-        _install_attach_hardening(conn)
+        active_conn: DBConnection = sqlcipher.connect(DB_PATH)
+        conn = active_conn
+        _verify_sqlcipher_driver(active_conn)
+        _install_attach_hardening(active_conn)
 
         _attach_trusted_ctx.trusted = True
         try:
-            _sqlcipher_apply_key(conn, resolved_old)
-            conn.execute("SELECT count(*) FROM sqlite_master")
-            _sqlcipher_apply_rekey(conn, resolved_new)
-            conn.execute("SELECT count(*) FROM sqlite_master")
+            _sqlcipher_apply_key(active_conn, resolved_old)
+            active_conn.execute("SELECT count(*) FROM sqlite_master")
+            _sqlcipher_apply_rekey(active_conn, resolved_new)
+            active_conn.execute("SELECT count(*) FROM sqlite_master")
         finally:
             _attach_trusted_ctx.trusted = False
 
-        log_key_provenance(conn, resolved_old, resolved_new)
+        log_key_provenance(active_conn, resolved_old, resolved_new)
         os.environ[DB_ENCRYPTION_KEY_ENV] = resolved_new
 
         window = make_dual_key_window(resolved_old, resolved_new, max(1.0, float(dual_window_seconds)))

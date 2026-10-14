@@ -2,16 +2,52 @@ from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any
+import hashlib
+import json
+import uuid
 
+from flask import g, has_app_context
 from ngo_homesuite.db.audit_log import log_event
+from ngo_homesuite.audit.security_events import SecurityAuditService, SecurityEventType
 
 # Service layer for bank reconciliation operations
 
 class BankReconciliationService:
-    def reconcile(self, bank_statement, ledger, actor=None):
-        log_event('ngo_data.db', actor or 'system', 'reconcile', 'bank_reconciliation', {'bank_statement': str(bank_statement), 'ledger': str(ledger)})
+    def reconcile(self, bank_statement, ledger, actor=None, *, organization_id=None):
+        reconciliation_id = uuid.uuid4().hex
+        tenant_id = organization_id
+        if tenant_id is not None and (type(tenant_id) is not int or tenant_id <= 0):
+            raise ValueError("Reconciliation organization_id must be a positive integer")
+        if has_app_context():
+            active_tenant = getattr(g, "organization_id", None)
+            if active_tenant is not None:
+                if tenant_id is not None and int(tenant_id) != int(active_tenant):
+                    raise PermissionError("Reconciliation tenant does not match active tenant")
+                tenant_id = int(active_tenant)
+        def record(result, bank_evidence, ledger_evidence):
+            salt = uuid.uuid4().hex
+            def digest(value):
+                canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+                return hashlib.sha256((salt + ":" + canonical).encode("utf-8")).hexdigest()
+            metadata = {
+                "reconciliation_id": reconciliation_id, "organization_id": tenant_id,
+                "mode": result["mode"], "status": result["status"],
+                "matched_count": result["matched_count"],
+                "unmatched_bank_count": result["unmatched_bank_count"],
+                "unmatched_ledger_count": result["unmatched_ledger_count"],
+                "integrity_algorithm": "salted-sha256-v1", "integrity_salt": salt,
+                "bank_digest": digest(bank_evidence), "ledger_digest": digest(ledger_evidence),
+            }
+            if has_app_context() and tenant_id is not None:
+                SecurityAuditService.log_event(
+                    SecurityEventType.RECONCILIATION_COMPLETED, "reconcile",
+                    resource_type="bank_reconciliation", resource_org_id=tenant_id, payload=metadata,
+                )
+            else:
+                log_event('ngo_data.db', actor or 'system', 'reconcile', 'bank_reconciliation', metadata)
+            return result
         if isinstance(bank_statement, str) or isinstance(ledger, str):
-            return {
+            return record({
                 "mode": "reference_only",
                 "status": "queued",
                 "bank_statement_ref": str(bank_statement),
@@ -19,7 +55,7 @@ class BankReconciliationService:
                 "matched_count": 0,
                 "unmatched_bank_count": 0,
                 "unmatched_ledger_count": 0,
-            }
+            }, bank_statement, ledger)
 
         bank_entries = self._normalize_entries(bank_statement)
         ledger_entries = self._normalize_entries(ledger)
@@ -32,7 +68,7 @@ class BankReconciliationService:
         unmatched_bank_total = self._sum_amounts(unmatched_bank)
         unmatched_ledger_total = self._sum_amounts(unmatched_ledger)
 
-        return {
+        return record({
             "mode": "structured",
             "status": "balanced" if not unmatched_bank and not unmatched_ledger else "mismatch",
             "matched_count": len(matched_entries),
@@ -43,7 +79,7 @@ class BankReconciliationService:
             "unmatched_ledger_total": unmatched_ledger_total,
             "unmatched_bank": [self._render_entry(entry) for entry in unmatched_bank],
             "unmatched_ledger": [self._render_entry(entry) for entry in unmatched_ledger],
-        }
+        }, bank_entries, ledger_entries)
 
     @staticmethod
     def _to_amount(value: Any) -> Decimal:

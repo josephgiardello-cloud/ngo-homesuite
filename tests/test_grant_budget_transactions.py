@@ -1,10 +1,13 @@
 """Tests for B-2: Budget Transactions & Commitment Tracking."""
-import pytest
 import uuid
-from ngo_homesuite.models.core import db, User, Organization
-from ngo_homesuite.grants.models import Grant, GrantBudgetLine, GrantBudgetTransaction
-from ngo_homesuite.flask_config import TestingConfig
+
+import pyotp
+import pytest
+
 from ngo_homesuite.app_factory import create_app
+from ngo_homesuite.flask_config import TestingConfig
+from ngo_homesuite.grants.models import Grant, GrantBudgetLine, GrantBudgetTransaction
+from ngo_homesuite.models.core import Organization, User, db
 
 
 def _unique_token() -> str:
@@ -59,6 +62,8 @@ def admin_user(app, org):
             is_active=True,
         )
         u.set_password("test_password")
+        u.ensure_mfa_secret()
+        u.mfa_enabled = True
         db.session.add(u)
         db.session.commit()
         user_id = u.id
@@ -201,7 +206,7 @@ class TestBudgetTransactionRoutes:
         # Login
         rv = client.post(
             "/auth/login",
-            data={"username": admin_user.username, "password": "test_password"},
+            data={"username": admin_user.username, "password": "test_password", "otp_code": pyotp.TOTP(admin_user.ensure_mfa_secret()).now()},
             follow_redirects=True,
         )
         assert rv.status_code == 200
@@ -222,7 +227,7 @@ class TestBudgetTransactionRoutes:
         # Login
         rv = client.post(
             "/auth/login",
-            data={"username": admin_user.username, "password": "test_password"},
+            data={"username": admin_user.username, "password": "test_password", "otp_code": pyotp.TOTP(admin_user.ensure_mfa_secret()).now()},
             follow_redirects=True,
         )
         assert rv.status_code == 200
@@ -241,7 +246,7 @@ class TestBudgetTransactionRoutes:
         # Login
         rv = client.post(
             "/auth/login",
-            data={"username": admin_user.username, "password": "test_password"},
+            data={"username": admin_user.username, "password": "test_password", "otp_code": pyotp.TOTP(admin_user.ensure_mfa_secret()).now()},
             follow_redirects=True,
         )
         assert rv.status_code == 200
@@ -259,7 +264,7 @@ class TestBudgetTransactionRoutes:
         # Login
         rv = client.post(
             "/auth/login",
-            data={"username": admin_user.username, "password": "test_password"},
+            data={"username": admin_user.username, "password": "test_password", "otp_code": pyotp.TOTP(admin_user.ensure_mfa_secret()).now()},
             follow_redirects=True,
         )
         assert rv.status_code == 200
@@ -279,7 +284,7 @@ class TestBudgetTransactionRoutes:
         # Login
         rv = client.post(
             "/auth/login",
-            data={"username": admin_user.username, "password": "test_password"},
+            data={"username": admin_user.username, "password": "test_password", "otp_code": pyotp.TOTP(admin_user.ensure_mfa_secret()).now()},
             follow_redirects=True,
         )
         assert rv.status_code == 200
@@ -297,7 +302,7 @@ class TestBudgetTransactionRoutes:
         # Login
         rv = client.post(
             "/auth/login",
-            data={"username": admin_user.username, "password": "test_password"},
+            data={"username": admin_user.username, "password": "test_password", "otp_code": pyotp.TOTP(admin_user.ensure_mfa_secret()).now()},
             follow_redirects=True,
         )
         assert rv.status_code == 200
@@ -321,7 +326,7 @@ class TestBudgetTransactionRoutes:
         # Login
         rv = client.post(
             "/auth/login",
-            data={"username": admin_user.username, "password": "test_password"},
+            data={"username": admin_user.username, "password": "test_password", "otp_code": pyotp.TOTP(admin_user.ensure_mfa_secret()).now()},
             follow_redirects=True,
         )
         assert rv.status_code == 200
@@ -344,7 +349,7 @@ class TestBudgetTransactionRoutes:
         # Login
         rv = client.post(
             "/auth/login",
-            data={"username": admin_user.username, "password": "test_password"},
+            data={"username": admin_user.username, "password": "test_password", "otp_code": pyotp.TOTP(admin_user.ensure_mfa_secret()).now()},
             follow_redirects=True,
         )
         assert rv.status_code == 200
@@ -372,7 +377,7 @@ class TestBudgetTransactionRoutes:
         # Login
         rv = client.post(
             "/auth/login",
-            data={"username": admin_user.username, "password": "test_password"},
+            data={"username": admin_user.username, "password": "test_password", "otp_code": pyotp.TOTP(admin_user.ensure_mfa_secret()).now()},
             follow_redirects=True,
         )
         assert rv.status_code == 200
@@ -390,7 +395,7 @@ class TestBudgetTransactionRoutes:
         # Login
         rv = client.post(
             "/auth/login",
-            data={"username": admin_user.username, "password": "test_password"},
+            data={"username": admin_user.username, "password": "test_password", "otp_code": pyotp.TOTP(admin_user.ensure_mfa_secret()).now()},
             follow_redirects=True,
         )
         assert rv.status_code == 200
@@ -407,7 +412,7 @@ class TestBudgetTransactionRoutes:
         # Login
         rv = client.post(
             "/auth/login",
-            data={"username": admin_user.username, "password": "test_password"},
+            data={"username": admin_user.username, "password": "test_password", "otp_code": pyotp.TOTP(admin_user.ensure_mfa_secret()).now()},
             follow_redirects=True,
         )
         assert rv.status_code == 200
@@ -433,7 +438,7 @@ class TestVarianceCalculation:
         # Login
         rv = client.post(
             "/auth/login",
-            data={"username": admin_user.username, "password": "test_password"},
+            data={"username": admin_user.username, "password": "test_password", "otp_code": pyotp.TOTP(admin_user.ensure_mfa_secret()).now()},
             follow_redirects=True,
         )
         assert rv.status_code == 200
@@ -459,7 +464,7 @@ class TestVarianceCalculation:
         # Login
         rv = client.post(
             "/auth/login",
-            data={"username": admin_user.username, "password": "test_password"},
+            data={"username": admin_user.username, "password": "test_password", "otp_code": pyotp.TOTP(admin_user.ensure_mfa_secret()).now()},
             follow_redirects=True,
         )
         assert rv.status_code == 200
@@ -479,7 +484,7 @@ class TestVarianceCalculation:
         # Login
         rv = client.post(
             "/auth/login",
-            data={"username": admin_user.username, "password": "test_password"},
+            data={"username": admin_user.username, "password": "test_password", "otp_code": pyotp.TOTP(admin_user.ensure_mfa_secret()).now()},
             follow_redirects=True,
         )
         assert rv.status_code == 200

@@ -215,7 +215,7 @@ def test_run_reconciliation_propagates_queued_reference_status(registry):
 
 
 def test_run_reconciliation_reports_balanced_for_structured_result(registry, monkeypatch):
-    def _fake_reconcile(*, bank_statement, ledger, actor):
+    def _fake_reconcile(*, bank_statement, ledger, actor, organization_id):
         return {
             "mode": "structured",
             "status": "balanced",
@@ -235,4 +235,3 @@ def test_run_reconciliation_reports_balanced_for_structured_result(registry, mon
     assert payload["ok"] is True
     assert payload["status"] == "balanced"
     assert payload["result"]["matched_count"] == 2
-

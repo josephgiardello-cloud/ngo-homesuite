@@ -166,9 +166,11 @@ def test_rotate_db_key_success_updates_env_and_window(monkeypatch, tmp_path):
 
         def close(self):
             return None
+        def fetchone(self):
+            return ("4.6.1",)
 
-    fake_sqlcipher = types.SimpleNamespace(connect=lambda _path: _FakeConn())
-    monkeypatch.setitem(sys.modules, "pysqlcipher3", types.SimpleNamespace(dbapi2=fake_sqlcipher))
+    fake_sqlcipher = types.SimpleNamespace(connect=lambda _path: _FakeConn(), DatabaseError=sqlite3.DatabaseError)
+    monkeypatch.setattr(connection, "_load_sqlcipher_driver", lambda: fake_sqlcipher)
 
     monkeypatch.setattr(connection, "log_key_provenance", lambda _c, _o, _n: None)
     captured: dict[str, object] = {}

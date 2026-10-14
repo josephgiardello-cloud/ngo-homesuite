@@ -624,7 +624,7 @@ def _recurring_plan(app):
     )
 
 
-def test_recurring_job_audit_failure_retries_charge_and_schedule_atomically(
+def test_recurring_job_audit_failure_retries_pending_collection_atomically(
     financial_app,
 ):
     app = financial_app
@@ -668,13 +668,14 @@ def test_recurring_job_audit_failure_retries_charge_and_schedule_atomically(
             == 0
         )
         assert len(_ledger(app)) == 1
-        assert DonationReceipt.query.count() == 1
+        assert DonationReceipt.query.count() == 0
+        assert Donation.query.one().status == "pending"
         assert db.session.get(RecurringDonationPlan, plan_id).next_charge_date == date(
-            2026, 1, 31
+            2026, 1, 1
         )
 
 
-def test_simultaneous_recurring_jobs_cannot_double_charge(financial_app):
+def test_simultaneous_recurring_jobs_cannot_duplicate_pending_collection(financial_app):
     app = financial_app
     with app.app_context():
         _recurring_plan(app)
@@ -696,7 +697,9 @@ def test_simultaneous_recurring_jobs_cannot_double_charge(financial_app):
     with ThreadPoolExecutor(max_workers=2) as pool:
         assert sum(pool.map(run, range(2))) == 1
     with app.app_context():
-        assert len(_ledger(app)) == DonationReceipt.query.count() == 1
+        assert len(_ledger(app)) == 1
+        assert DonationReceipt.query.count() == 0
+        assert Donation.query.one().status == "pending"
 
 
 def test_reconciliation_anonymous_entries_cannot_mask_identified_amount_mismatch(

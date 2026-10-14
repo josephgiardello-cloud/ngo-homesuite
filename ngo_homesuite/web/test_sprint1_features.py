@@ -477,7 +477,7 @@ def test_donor_merge_relinks_donations(client, app):
         assert merged_donation.donor_id == primary_id
 
 
-def test_process_recurring_marks_failure_without_email(client, app):
+def test_manual_recurring_collection_does_not_require_email(client, app):
     _login_admin(client)
 
     with app.app_context():
@@ -505,12 +505,12 @@ def test_process_recurring_marks_failure_without_email(client, app):
 
     with app.app_context():
         refreshed = db.session.get(RecurringDonationPlan, plan_id)
-        assert refreshed.status == "failed"
-        assert refreshed.fail_count >= 1
-        assert refreshed.last_error
+        assert refreshed.status == "active"
+        assert refreshed.fail_count == 0
+        assert refreshed.next_charge_date == date.today()
 
 
-def test_process_recurring_creates_donation_and_receipt(client, app):
+def test_process_recurring_creates_pending_collection_without_receipt(client, app):
     _login_admin(client)
 
     with app.app_context():
@@ -558,10 +558,11 @@ def test_process_recurring_creates_donation_and_receipt(client, app):
             .first()
         )
         assert donation is not None
-        assert donation.status == "receipted"
+        assert donation.status == "pending"
+        assert refreshed.next_charge_date == date.today()
 
         receipt = DonationReceipt.query.filter_by(donation_id=donation.id).first()
-        assert receipt is not None
+        assert receipt is None
 
 
 def test_donor_detail_page_shows_profile_metrics(client, app):

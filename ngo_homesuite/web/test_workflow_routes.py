@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-import pytest
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 
-from ngo_homesuite.models.core import Donation, Organization, User, db
+import pyotp
+import pytest
+
+from ngo_homesuite.models.core import Donation, Donor, Organization, User, db
 
 
 @pytest.fixture(scope="module")
@@ -17,16 +19,28 @@ def client(app):
 
 
 def _login(client, username: str, password: str) -> None:
-    client.post("/auth/login", data={"username": username, "password": password})
+    with client.application.app_context():
+        user = User.query.filter_by(username=username).one()
+        code = pyotp.TOTP(user.ensure_mfa_secret()).now() if user.mfa_enabled else ""
+    response = client.post("/auth/login", data={"username": username, "password": password, "otp_code": code})
+    assert response.status_code == 302
+    with client.session_transaction() as session:
+        assert session.get("_user_id")
 
 
 def _ensure_user(app, username: str, email: str, role: str, password: str):
     with app.app_context():
         user = User.query.filter_by(username=username).first()
         if user is None:
-            user = User(username=username, email=email, role=role, is_active=True)
+            organization = Organization(name=username, slug=f"test-{username}", is_active=True)
+            db.session.add(organization)
+            db.session.flush()
+            user = User(username=username, email=email, role=role, is_active=True, organization_id=organization.id)
             user.set_password(password)
+            user.ensure_mfa_secret()
+            user.mfa_enabled = True
             db.session.add(user)
+            db.session.add(Donor(organization_id=organization.id, name="Workflow donor"))
             db.session.commit()
 
 
@@ -55,11 +69,9 @@ def test_workflow_api_runs(client, app):
     _login(client, "workflow_admin2", "workflow_admin2_pass_123")
 
     with app.app_context():
-        org = Organization.query.filter_by(is_active=True).first()
-        if org is None:
-            org = Organization(name="Workflow Org", slug="workflow-org", is_active=True)
-            db.session.add(org)
-            db.session.commit()
+        user = User.query.filter_by(username="workflow_admin2").one()
+        org = db.session.get(Organization, user.organization_id)
+        assert org is not None
 
         donation = Donation.query.filter_by(organization_id=org.id).order_by(Donation.id.asc()).first()
         if donation is None:

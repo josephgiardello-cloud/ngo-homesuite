@@ -17,10 +17,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy only requirement files first (layer caching optimization)
-COPY requirements.lock requirements.txt pyproject.toml /build/
+COPY requirements.txt requirements-core.txt requirements-db.txt requirements-ai.txt requirements-cloud.txt /build/
 
 # Install dependencies (this layer cached if requirements unchanged)
-RUN pip install --no-cache-dir --user -r requirements.lock
+RUN python -m venv /opt/venv && \
+    /opt/venv/bin/pip install --no-cache-dir -r requirements.txt pytest pytest-cov pytest-timeout pytest-xdist
 
 # ============================================================================
 # STAGE 2: Runtime (lean production image)
@@ -36,13 +37,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Python packages from builder (avoids re-compilation)
-COPY --from=builder /root/.local /root/.local
+COPY --from=builder /opt/venv /opt/venv
 
 # Copy application code
 COPY . .
 
 # Set Python path and environment
-ENV PATH=/root/.local/bin:$PATH \
+ENV PATH=/opt/venv/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     NGO_HOMESUITE_DB_MODE=plaintext \
@@ -60,11 +61,11 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=2 \
 # Default command: run tests with coverage reporting
 CMD ["pytest", \
      "ngo_homesuite/", \
+     "tests/", \
      "-v", \
      "--tb=short", \
      "--cov=ngo_homesuite", \
      "--cov-report=term-missing", \
      "--cov-report=xml", \
      "--cov-report=html", \
-     "-n", "auto"]  # parallel execution with pytest-xdist
-
+     "-n", "auto"]

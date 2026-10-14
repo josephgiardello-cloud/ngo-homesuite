@@ -79,6 +79,12 @@ class SecurityEventType(StrEnum):
     DONOR_IMPORTED = "workflow.donor_imported"
     DONATION_CREATED = "workflow.donation_created"
     DONATION_UPDATED = "workflow.donation_updated"
+    DONATION_PAYMENT_RECEIVED = "workflow.donation_payment_received"
+    DONATION_STATUS_CHANGED = "workflow.donation_status_changed"
+    DONATION_REFUNDED = "workflow.donation_refunded"
+    DONATION_RECEIPT_GENERATED = "workflow.donation_receipt_generated"
+    DONATION_DELETED = "workflow.donation_deleted"
+    RECONCILIATION_COMPLETED = "workflow.reconciliation_completed"
     CAMPAIGN_LAUNCHED = "workflow.campaign_launched"
     
     # Compliance events
@@ -89,6 +95,7 @@ class SecurityEventType(StrEnum):
     
     # System events
     SECURITY_POLICY_CHANGED = "system.security_policy_changed"
+    BACKGROUND_TENANT_CONTEXT = "system.background_tenant_context"
     API_KEY_ROTATED = "system.api_key_rotated"
     ENCRYPTION_KEY_ROTATED = "system.encryption_key_rotated"
     LEGACY_AUDIT_BRIDGED = "system.legacy_audit_bridged"
@@ -298,6 +305,13 @@ class SecurityAuditService:
         
         **SECURITY**: Only return events for requested org.
         """
+        if has_request_context() and (
+            not current_user.is_authenticated
+            or not current_user.is_active
+            or current_user.organization_id != org_id
+            or not current_user.has_role("admin")
+        ):
+            raise PermissionError("Audit access requires an administrator in the requested tenant")
         query = SecurityAuditEvent.query.filter_by(resource_org_id=org_id)
         
         if actor_user_id:
