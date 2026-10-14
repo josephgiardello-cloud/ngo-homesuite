@@ -1,6 +1,6 @@
 # Feature Maturity Status
 
-Last updated: 2026-06-04
+Last updated: 2026-10-14
 
 This document separates feature availability from production maturity. The README links here to avoid overstating readiness.
 
@@ -15,7 +15,13 @@ Maturity scale:
 | Area | Status | Maturity | Progress | Notes |
 |---|---|---|---|---|
 | Donors CRUD + profiles | Available | Operational | Web list/detail/create/edit/delete, dedupe/merge, donor insights in UI. |
-| Donations + receipts + recurring | Available | Operational | Public give flow, recurring plans, receipt PDFs, export paths. |
+| Donations + receipts + manual recurring collections | Available | Regression tested | Recurring plans prepare pending collections only, not provider charges. Tenant staff must attest external collection evidence, exact amount and currency before income/schedule changes commit with the audit. No automatic recurring receipt. |
+| Original-currency fund balances | Available | Regression tested | `FundService.get_fund_balance` returns `balances_by_currency`; mixed-currency legacy scalar totals are `None`, never a USD+EUR total. Original donation/expense records remain unchanged. No FX conversion is provided. |
+| Calendar recurring schedules | Available | Regression tested | Validated monthly/quarterly/yearly UTC date recurrence retains its original day through month ends and leap years. Missed runs prepare one unconfirmed occurrence; retries never skip or advance it. |
+| Financial audit privacy/types | Available | Regression tested | New request snapshots use salted canonical digests and minimum financial fields; updates record field names only. Collection/refund/status/receipt/delete event types are distinct. Reconciliation logs operation/tenant IDs, counts and input digests. Existing audit retention requires organization approval before production. |
+| Python 3.13 SQLCipher adapter | Available | Linux adapter tested | Maintained `sqlcipher3-binary` adapter, real encrypted hex/passphrase files, plaintext/wrong-key denial, reopen and rekey tests in an encrypted Linux x86_64 image. Not certification of every ORM path, Windows, legacy upgrades or in-flight rotation. |
+| Tenant boundaries and review inventory | Partial | Production blocker | 67 direct ORM scopes, four indirect ownership chains, strict worker SQL boundaries and 71 forced PostgreSQL RLS policies have synthetic persisted tests on PostgreSQL 16 and Linux SQLCipher. Request SQL guard remains opt-in; legacy connections, unreviewed surfaces and complete two-tenant production-path evidence remain blockers. See `docs/tenant_boundary_inventory.md`. |
+| Candidate evidence and audit governance | Partial | Production blocker | PR/reusable dual-engine proof with SHA-bound artifacts, full-history secret scanning, reviewed-disposition validation and retention approval gates are wired. Hosted passing evidence and required branch protections are not yet certified. Retention is pending organization/legal approval; no historical purge is authorized. |
 | Financial failure/concurrency proof | Available | SQLite paths verified | Keyed donation and Stripe retries, atomic donation/audit mutations, recurring-job deduplication, process-death recovery, and identity-aware reconciliation have persisted-state regression coverage. See `docs/release_process.md` for the exact contract and limitations (unkeyed public submissions, other database backends, FX aggregation, and email delivery are not certified). |
 | Unassigned-user tenant boundaries | Available | Regression tested | Public registration grants no tenant membership. Staff pages and API v1 deny missing assignments; scoped ORM reads return no rows and tenant writes are rejected. Donor-profile writes require staff/admin, while assigned viewers retain read access. CSRF-enabled two-tenant tests run in CI/release tenant gates. |
 | Peer Fundraising (P2P) API | Available | Operational | Tenant checks, audit events, aggregated leaderboard, pagination. |

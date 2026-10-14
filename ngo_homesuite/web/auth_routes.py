@@ -1103,10 +1103,10 @@ def _get_oauth_userinfo(provider_name: str, token: dict) -> tuple[str | None, st
 
 def _assert_google_oauth_env() -> None:
     """Fail fast when Google OAuth env vars are missing to avoid silent config drift."""
-    client_id = os.getenv("GOOGLE_CLIENT_ID")
-    client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
-    assert client_id, "Missing GOOGLE_CLIENT_ID"
-    assert client_secret, "Missing GOOGLE_CLIENT_SECRET"
+    client_id = current_app.config.get("GOOGLE_CLIENT_ID") or os.getenv("GOOGLE_CLIENT_ID")
+    client_secret = current_app.config.get("GOOGLE_CLIENT_SECRET") or os.getenv("GOOGLE_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        raise RuntimeError("Google OAuth client configuration is missing")
 
 
 @auth_bp.get('/oauth/<provider>')

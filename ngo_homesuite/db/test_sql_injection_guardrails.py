@@ -59,6 +59,12 @@ def _scan_file(path: Path) -> list[str]:
         return []
 
     tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+    sqlalchemy_selects = {
+        alias.asname or alias.name
+        for statement in ast.walk(tree)
+        if isinstance(statement, ast.ImportFrom) and statement.module == "sqlalchemy"
+        for alias in statement.names if alias.name == "select"
+    }
     findings: list[str] = []
 
     for node in ast.walk(tree):
@@ -70,6 +76,14 @@ def _scan_file(path: Path) -> list[str]:
             continue
 
         first = node.args[0]
+        expression = first
+        while isinstance(expression, ast.Call) and isinstance(expression.func, ast.Attribute):
+            expression = expression.func.value
+        if (
+            isinstance(expression, ast.Call) and isinstance(expression.func, ast.Name)
+            and expression.func.id in sqlalchemy_selects
+        ):
+            continue
 
         if isinstance(first, ast.Constant) and isinstance(first.value, str):
             continue

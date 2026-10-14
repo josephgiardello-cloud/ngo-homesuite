@@ -5,7 +5,7 @@
 # ============================================================================
 # STAGE 1: Builder (Python + SQLCipher build environment)
 # ============================================================================
-FROM python:3.13-slim AS builder
+FROM python:3.13-slim-bookworm AS builder
 
 WORKDIR /build
 
@@ -14,45 +14,44 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     git \
-    libsqlcipher-dev \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements files first (layer caching optimization)
-COPY requirements.lock requirements.txt pyproject.toml /build/
+COPY requirements.txt requirements-core.txt requirements-db.txt requirements-ai.txt requirements-cloud.txt /build/
 
 # Install Python dependencies with SQLCipher support
 # Note: Order matters - SQLCipher packages need build env
-RUN pip install --no-cache-dir --user -r requirements.lock && \
-    pip install --no-cache-dir --user sqlcipher pycryptodome
+RUN python -m venv /opt/venv && \
+    /opt/venv/bin/pip install --no-cache-dir -r requirements.txt pytest pytest-cov pytest-timeout pytest-xdist
+RUN /opt/venv/bin/pip install --no-cache-dir sqlcipher3-binary==0.6.0
 
 # ============================================================================
 # STAGE 2: Runtime (lean encrypted database testing image)
 # ============================================================================
-FROM python:3.13-slim
+FROM python:3.13-slim-bookworm
 
 WORKDIR /app
 
 # Install runtime dependencies (SQLCipher lib only, not dev tools)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libsqlcipher0 \
     libssl3 \
     git \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Python packages from builder (avoids re-compilation in runtime)
-COPY --from=builder /root/.local /root/.local
+COPY --from=builder /opt/venv /opt/venv
 
 # Copy application code
 COPY . .
 
 # Set Python path, environment, and encryption settings
-ENV PATH=/root/.local/bin:$PATH \
+ENV PATH=/opt/venv/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     NGO_HOMESUITE_DB_MODE=sqlcipher \
-    NGO_HOMESUITE_DB_KEY=test_encryption_key_32_chars_long_ \
+    NGO_HOMESUITE_REQUIRE_SQLCIPHER_TESTS=1 \
     FLASK_ENV=testing \
     SQLCIPHER_COMPAT=4
 
@@ -67,6 +66,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=2 \
 # Default command: run tests with encryption enabled and coverage reporting
 CMD ["pytest", \
      "ngo_homesuite/", \
+     "tests/", \
      "-v", \
      "--tb=short", \
      "--cov=ngo_homesuite", \
@@ -75,4 +75,3 @@ CMD ["pytest", \
      "--cov-report=html", \
      "-m", "not requires_plaintext", \
      "-n", "auto"]  # exclude plaintext-only tests, parallel execution
-

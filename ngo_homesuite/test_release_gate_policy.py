@@ -60,6 +60,8 @@ def test_release_candidates_enforce_existing_dependency_and_reliability_checks()
         "ngo_homesuite/persistence/test_workflow_repository_concurrency.py",
         "ngo_homesuite/tests/test_donation_fund_concurrency.py",
         "ngo_homesuite/tests/test_financial_failure_correctness.py",
+        "ngo_homesuite/tests/test_manual_recurring_and_currency.py",
+        "ngo_homesuite/tests/test_financial_audit_privacy.py",
     ):
         assert required in commands
     assert any(
@@ -83,3 +85,32 @@ def test_tenant_gates_include_unassigned_users_and_viewer_write_regressions() ->
         assert "ngo_homesuite/web/test_unassigned_tenant_boundaries.py" in _run_text(
             _workflow(workflow)["jobs"][job]
         )
+
+
+def test_release_blocks_missing_dispositions_and_pending_audit_approval() -> None:
+    commands = _run_text(_workflow("release.yml")["jobs"]["release-verify"])
+    assert "tools/verify_tenant_dispositions.py --inventory artifacts/candidate-tenant-inventory.json --strict" in commands
+    assert "tools/verify_audit_retention_policy.py --strict" in commands
+    assert _workflow("release.yml")["jobs"]["candidate-database-isolation"]["uses"] == "./.github/workflows/candidate-isolation.yml"
+
+
+def test_candidate_engine_proofs_are_sha_bound_and_require_real_encryption() -> None:
+    job = _workflow("candidate-isolation.yml")["jobs"]["database-isolation"]
+    assert job["strategy"]["matrix"]["engine"] == ["postgresql", "sqlite_sqlcipher"]
+    commands = _run_text(job)
+    assert "REQUIRE_POSTGRES_TENANT_PROOF=1" in commands
+    assert "TENANT_TEST_SQLCIPHER=1" in commands
+    assert "tools/write_candidate_evidence.py" in commands
+    upload = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact@"))
+    assert "${{ github.sha }}" in upload["with"]["name"]
+    assert upload["with"]["if-no-files-found"] == "error"
+
+
+def test_secret_lanes_scan_full_history_not_only_candidate_range() -> None:
+    for workflow, job in (("tests.yml", "security"), ("release.yml", "release-verify")):
+        steps = _workflow(workflow)["jobs"][job]["steps"]
+        checkout = next(step for step in steps if step.get("uses", "").startswith("actions/checkout@"))
+        assert checkout["with"]["fetch-depth"] == "0"
+        assert any(step.get("uses") == "./.github/actions/full-history-secret-scan" for step in steps)
+    action = yaml.safe_load((ROOT / ".github" / "actions" / "full-history-secret-scan" / "action.yml").read_text())
+    assert '--log-opts="--all"' in action["runs"]["steps"][0]["run"]

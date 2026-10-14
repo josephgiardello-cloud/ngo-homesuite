@@ -1,0 +1,7 @@
+# Reviewed historical CI-only synthetic encryption key; never approved for real data.
+111f3fb240022fe9cfe4db3dd581a01e1f864ec7:Dockerfile.ci-sqlcipher:generic-api-key:55
+# Reviewed historical config test fixtures, not live service credentials.
+350437d6d771b39c4224269e8bb2d54ded8d331d:ngo_homesuite/config/test_config_manager.py:generic-api-key:145
+350437d6d771b39c4224269e8bb2d54ded8d331d:ngo_homesuite/config/test_config_manager.py:generic-api-key:152
+350437d6d771b39c4224269e8bb2d54ded8d331d:ngo_homesuite/config/test_config_manager.py:generic-api-key:199
+350437d6d771b39c4224269e8bb2d54ded8d331d:ngo_homesuite/config/test_config_manager.py:generic-api-key:216

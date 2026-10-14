@@ -1141,11 +1141,15 @@ class MinionToolRegistry:
         actor = str(runtime_ctx.get("actor") or "minion")
         if not bank_statement_ref or not ledger_ref:
             return {"error": "bank_statement_ref and ledger_ref are required"}
+        org_id = self._org_filter(runtime_ctx)
+        if org_id is None:
+            raise PermissionError("Reconciliation requires an explicit tenant context")
 
         result = self.bank_reconciliation_service.reconcile(
             bank_statement=bank_statement_ref,
             ledger=ledger_ref,
             actor=actor,
+            organization_id=org_id,
         )
         if isinstance(result, dict):
             status = str(result.get("status") or "reconciliation_completed")
@@ -1429,4 +1433,3 @@ class MinionToolRegistry:
         project_root = runtime_ctx.get("project_root")
         section = AIInsightsService.predict_release_readiness(project_root=project_root)
         return {"title": section.title, "summary": section.summary, "items": section.items}
-

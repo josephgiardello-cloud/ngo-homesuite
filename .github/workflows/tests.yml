@@ -17,7 +17,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ['3.8', '3.9', '3.10', '3.11', '3.12', '3.13']
+        python-version: ['3.10', '3.11', '3.12', '3.13']
 
     steps:
     - uses: actions/checkout@v4
@@ -130,7 +130,7 @@ jobs:
       env:
         NGO_HOMESUITE_DB_KEY: ""
       run: |
-        pytest ngo_homesuite/tests/test_financial_failure_correctness.py ngo_homesuite/tests/test_bank_reconciliation_service.py ngo_homesuite/services/test_payment_service.py -v --maxfail=10
+        pytest ngo_homesuite/tests/test_financial_failure_correctness.py ngo_homesuite/tests/test_manual_recurring_and_currency.py ngo_homesuite/tests/test_financial_audit_privacy.py ngo_homesuite/tests/test_bank_reconciliation_service.py ngo_homesuite/services/test_payment_service.py -v --maxfail=10
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@ab904c41d6ece82784817410c45d8b8c02684457 # v3
@@ -179,11 +179,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
     - name: Secret scan (Gitleaks)
       uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Full fetched-history secret scan
+      uses: ./.github/actions/full-history-secret-scan
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -254,7 +259,10 @@ jobs:
       env:
         NGO_HOMESUITE_DB_KEY: ""
       run: |
-        pytest ngo_homesuite/web/test_cross_tenant_boundaries.py ngo_homesuite/web/test_unassigned_tenant_boundaries.py ngo_homesuite/web/test_v2_route_contracts.py ngo_homesuite/web/test_rbac_tenant_route_audit.py ngo_homesuite/api/test_v1_runtime.py -v --maxfail=10
+        pytest ngo_homesuite/tests/test_tenant_registry.py ngo_homesuite/tests/test_tenant_inventory.py ngo_homesuite/web/test_cross_tenant_boundaries.py ngo_homesuite/web/test_unassigned_tenant_boundaries.py ngo_homesuite/web/test_v2_route_contracts.py ngo_homesuite/web/test_rbac_tenant_route_audit.py ngo_homesuite/api/test_v1_runtime.py -v --maxfail=10
+
+    - name: Validate disposition ledger without claiming completed review
+      run: python tools/verify_tenant_dispositions.py
 
   docker-matrix-ci:
     name: Docker Matrix CI [${{ matrix.db-mode }}]
@@ -273,22 +281,18 @@ jobs:
       run: |
         if [ "${{ matrix.db-mode }}" = "plaintext" ]; then
           docker build -f Dockerfile.ci -t ngo-homesuite:test-plaintext .
-          docker run --rm ngo-homesuite:test-plaintext
+          docker run --name test-run-${{ matrix.db-mode }}-${{ github.run_id }} ngo-homesuite:test-plaintext
         else
           docker build -f Dockerfile.ci-sqlcipher -t ngo-homesuite:test-sqlcipher .
-          docker run --rm ngo-homesuite:test-sqlcipher
+          export NGO_HOMESUITE_DB_KEY="hex:$(python -c 'import secrets; print(secrets.token_hex(32))')"
+          docker run --name test-run-${{ matrix.db-mode }}-${{ github.run_id }} -e NGO_HOMESUITE_DB_KEY ngo-homesuite:test-sqlcipher
         fi
 
     - name: Extract coverage from Docker
       if: always()
       run: |
-        if [ "${{ matrix.db-mode }}" = "plaintext" ]; then
-          docker create --name extract ngo-homesuite:test-plaintext
-        else
-          docker create --name extract ngo-homesuite:test-sqlcipher
-        fi
-        docker cp extract:/app/coverage.xml ./coverage-${{ matrix.db-mode }}.xml || true
-        docker rm extract
+        docker cp test-run-${{ matrix.db-mode }}-${{ github.run_id }}:/app/coverage.xml ./coverage-${{ matrix.db-mode }}.xml
+        docker rm test-run-${{ matrix.db-mode }}-${{ github.run_id }}
 
     - name: Upload Docker test coverage
       if: always()

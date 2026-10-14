@@ -253,6 +253,22 @@ class TestSecurityAuditEventLogging:
 class TestRLSEnforcementInAuditQueries:
     """Test that RLS is enforced in audit queries."""
 
+    def test_query_events_denies_anonymous_and_viewer(self, app, org1, admin_user1):
+        from flask_login import login_user
+
+        with app.app_context():
+            with app.test_request_context():
+                with pytest.raises(PermissionError, match="administrator"):
+                    SecurityAuditService.query_events(org_id=org1.id)
+                login_user(admin_user1)
+                original_role = admin_user1.role
+                admin_user1.role = "viewer"
+                try:
+                    with pytest.raises(PermissionError, match="administrator"):
+                        SecurityAuditService.query_events(org_id=org1.id)
+                finally:
+                    admin_user1.role = original_role
+
     def test_query_events_org_boundary_enforcement(self, app, org1, org2, admin_user1, admin_user2):
         """
         **Scenario**: Query audit events respects organization boundary.
@@ -301,6 +317,10 @@ class TestRLSEnforcementInAuditQueries:
                 )
                 
                 # Query Org 1 events
+                with pytest.raises(PermissionError, match="administrator"):
+                    SecurityAuditService.query_events(org_id=org1.id, limit=100)
+                logout_user()
+                login_user(admin_user1)
                 org1_events = SecurityAuditService.query_events(org_id=org1.id, limit=100)
                 
                 # Verify only Org 1 events returned

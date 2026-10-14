@@ -23,6 +23,7 @@ from ngo_homesuite.models.core import (
     db,
 )
 from ngo_homesuite.services.donor_signal_service import get_donor_signal
+from ngo_homesuite.services.donation_service import COLLECTED_DONATION_STATUSES
 
 
 class ReportingService:
@@ -85,6 +86,7 @@ class ReportingService:
         def _sum_donations(start: datetime, end: datetime | None = None) -> float:
             query = select(func.coalesce(func.sum(Donation.amount), 0.0)).where(
                 Donation.organization_id == organization_id,
+                Donation.status.in_(COLLECTED_DONATION_STATUSES),
                 Donation.donation_date >= start,
             )
             if end is not None:
@@ -135,6 +137,7 @@ class ReportingService:
                     select(Donation.donation_date, Donation.amount)
                     .where(
                         Donation.organization_id == organization_id,
+                        Donation.status.in_(COLLECTED_DONATION_STATUSES),
                         Donation.donation_date >= start,
                         Donation.donation_date < end,
                     )
@@ -214,7 +217,9 @@ class ReportingService:
             select(func.count(Donor.id)).where(Donor.organization_id == organization_id)
         ) or 0
         total_donations = db.session.scalar(
-            select(func.coalesce(func.sum(Donation.amount), 0.0)).where(Donation.organization_id == organization_id)
+            select(func.coalesce(func.sum(Donation.amount), 0.0)).where(
+                Donation.organization_id == organization_id, Donation.status.in_(COLLECTED_DONATION_STATUSES),
+            )
         ) or 0.0
         total_budget = db.session.scalar(
             select(func.coalesce(func.sum(Project.budget), 0.0)).where(Project.organization_id == organization_id)
@@ -226,7 +231,9 @@ class ReportingService:
             select(func.count(Fund.id)).where(Fund.organization_id == organization_id, Fund.is_active.is_(True))
         ) or 0
         donation_transaction_count = int(
-            db.session.scalar(select(func.count(Donation.id)).where(Donation.organization_id == organization_id)) or 0
+            db.session.scalar(select(func.count(Donation.id)).where(
+                Donation.organization_id == organization_id, Donation.status.in_(COLLECTED_DONATION_STATUSES),
+            )) or 0
         )
         avg_gift_amount = float(total_donations) / donation_transaction_count if donation_transaction_count > 0 else 0.0
         recurring_active_plans = int(
@@ -482,6 +489,7 @@ class ReportingService:
                 select(Donation.donor_id)
                 .where(
                     Donation.organization_id == organization_id,
+                    Donation.status.in_(COLLECTED_DONATION_STATUSES),
                     Donation.donor_id.is_not(None),
                     Donation.donation_date >= focus_start,
                     Donation.donation_date < focus_end,
@@ -496,6 +504,7 @@ class ReportingService:
                 select(Donation.donor_id)
                 .where(
                     Donation.organization_id == organization_id,
+                    Donation.status.in_(COLLECTED_DONATION_STATUSES),
                     Donation.donor_id.is_not(None),
                     Donation.donation_date >= lifecycle_prev_start,
                     Donation.donation_date < lifecycle_prev_end,
@@ -510,6 +519,7 @@ class ReportingService:
                 select(Donation.donor_id, func.min(Donation.donation_date))
                 .where(
                     Donation.organization_id == organization_id,
+                    Donation.status.in_(COLLECTED_DONATION_STATUSES),
                     Donation.donor_id.in_(list(current_donor_ids)),
                 )
                 .group_by(Donation.donor_id)
@@ -543,6 +553,7 @@ class ReportingService:
             .where(
                 Donation.organization_id == organization_id,
                 Donation.donation_date >= focus_start,
+                Donation.status.in_(COLLECTED_DONATION_STATUSES),
                 Donation.donation_date < focus_end,
             )
             .group_by(Donation.purpose)
@@ -635,6 +646,7 @@ class ReportingService:
             select(Donation.donor_id, func.min(Donation.donation_date))
             .where(
                 Donation.organization_id == organization_id,
+                Donation.status.in_(COLLECTED_DONATION_STATUSES),
                 Donation.donor_id.is_not(None),
             )
             .group_by(Donation.donor_id)
@@ -649,6 +661,7 @@ class ReportingService:
             select(Donation.donor_id, func.strftime("%Y-%m", Donation.donation_date))
             .where(
                 Donation.organization_id == organization_id,
+                Donation.status.in_(COLLECTED_DONATION_STATUSES),
                 Donation.donor_id.is_not(None),
                 Donation.donation_date >= cohort_start,
                 Donation.donation_date < now,
@@ -901,6 +914,7 @@ class ReportingService:
             .where(
                 Donor.organization_id == organization_id,
                 Donation.organization_id == organization_id,
+                Donation.status.in_(COLLECTED_DONATION_STATUSES),
                 Donation.donation_date >= window_start,
                 Donation.donation_date < window_end,
             )
@@ -1495,6 +1509,7 @@ class ReportingService:
         total_amount = db.session.scalar(
             select(func.coalesce(func.sum(Donation.amount), 0.0)).where(
                 Donation.organization_id == organization_id,
+                Donation.status.in_(COLLECTED_DONATION_STATUSES),
                 Donation.donor_id == donor.id,
             )
         ) or 0.0
@@ -1534,7 +1549,9 @@ class ReportingService:
 
     def financial_overview(self, organization_id: int) -> dict[str, Any]:
         total_donations = db.session.scalar(
-            select(func.coalesce(func.sum(Donation.amount), 0.0)).where(Donation.organization_id == organization_id)
+            select(func.coalesce(func.sum(Donation.amount), 0.0)).where(
+                Donation.organization_id == organization_id, Donation.status.in_(COLLECTED_DONATION_STATUSES),
+            )
         ) or 0.0
         total_expenses = db.session.scalar(
             select(func.coalesce(func.sum(Expense.amount), 0.0)).where(Expense.organization_id == organization_id)
@@ -1546,7 +1563,9 @@ class ReportingService:
 
         donations = cast(
             list[Donation],
-            db.session.scalars(select(Donation).where(Donation.organization_id == organization_id)).all(),
+            db.session.scalars(select(Donation).where(
+                Donation.organization_id == organization_id, Donation.status.in_(COLLECTED_DONATION_STATUSES),
+            )).all(),
         )
         expenses = cast(
             list[Expense],
@@ -1584,7 +1603,9 @@ class ReportingService:
     def donation_purpose_totals(self, organization_id: int) -> list[tuple[str, float]]:
         donations = cast(
             list[Donation],
-            db.session.scalars(select(Donation).where(Donation.organization_id == organization_id)).all(),
+            db.session.scalars(select(Donation).where(
+                Donation.organization_id == organization_id, Donation.status.in_(COLLECTED_DONATION_STATUSES),
+            )).all(),
         )
         totals: dict[str, float] = defaultdict(float)
         for donation in donations:
@@ -1607,7 +1628,9 @@ class ReportingService:
             return []
         donations = cast(
             list[Donation],
-            db.session.scalars(select(Donation).where(Donation.organization_id == organization_id)).all(),
+            db.session.scalars(select(Donation).where(
+                Donation.organization_id == organization_id, Donation.status.in_(COLLECTED_DONATION_STATUSES),
+            )).all(),
         )
         totals: dict[str, float] = defaultdict(float)
         for donation in donations:

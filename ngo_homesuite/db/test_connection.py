@@ -29,11 +29,15 @@ def temp_db_file():
 
 
 @pytest.mark.sqlcipher
-def test_connect_db_and_schema_hash(temp_db_file):
+def test_connect_db_and_schema_hash(temp_db_file, monkeypatch):
     # Should create and connect to a new DB, set up schema hash
-    pytest.importorskip("pysqlcipher3")
+    try:
+        driver = connection._load_sqlcipher_driver()
+    except connection.FatalDBError:
+        pytest.skip("No SQLCipher driver installed")
+    monkeypatch.setenv(connection.DB_ENCRYPTION_KEY_ENV, TEST_KEY)
     conn = connection.connect_db_at(temp_db_file)
-    assert isinstance(conn, sqlite3.Connection)
+    assert isinstance(conn, driver.Connection)
     # Should create metadata table and set schema hash
     connection._ensure_metadata_table(conn)
     connection.update_metadata_hash(conn)

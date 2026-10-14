@@ -7,6 +7,7 @@ when a fund has associated donations or expenses.
 from __future__ import annotations
 
 from typing import Optional
+from decimal import Decimal
 
 from sqlalchemy import func, or_, select
 
@@ -14,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from ngo_homesuite.models.core import Donation, Expense, Fund, db
+from ngo_homesuite.services.donation_service import COLLECTED_DONATION_STATUSES
 
 
 class FundNotFound(Exception):
@@ -68,31 +70,47 @@ class FundService:
         }
 
     def get_fund_balance(self, fund_id: int, org_id: int) -> dict:
-        """Return total donations in, total expenses out, and net balance for a fund.
+        """Return separate original-currency balances, never an implicit FX total.
 
-        All amounts are in their stored currency (mixed-currency funds show the
-        raw sums â€” callers should aggregate by currency if FX matters).
+        Legacy scalar totals are available only for a zero/single-currency fund;
+        they are None for mixed currencies. No exchange rates are inferred.
         """
         self.get_fund(fund_id, org_id)  # raises FundNotFound if wrong org
 
-        total_in = db.session.scalar(
-            select(func.coalesce(func.sum(Donation.amount), 0.0)).where(
+        donations = db.session.execute(
+            select(Donation.currency, Donation.amount).where(
                 Donation.fund_id == fund_id,
                 Donation.organization_id == org_id,
-                Donation.status.in_(("received", "processed", "receipted")),
+                Donation.status.in_(COLLECTED_DONATION_STATUSES),
             )
-        ) or 0.0
-        total_out = db.session.scalar(
-            select(func.coalesce(func.sum(Expense.amount), 0.0)).where(
+        ).all()
+        expenses = db.session.execute(
+            select(Expense.currency, Expense.amount).where(
                 Expense.fund_id == fund_id,
                 Expense.organization_id == org_id,
             )
-        ) or 0.0
+        ).all()
+        totals: dict[str, dict[str, Decimal]] = {}
+        for rows, field in ((donations, "total_in"), (expenses, "total_out")):
+            for currency, amount in rows:
+                values = totals.setdefault(currency, {"total_in": Decimal(0), "total_out": Decimal(0)})
+                values[field] += Decimal(str(amount))
+        balances = {
+            currency: {
+                "total_in": float(values["total_in"].quantize(Decimal("0.01"))),
+                "total_out": float(values["total_out"].quantize(Decimal("0.01"))),
+                "net_balance": float((values["total_in"] - values["total_out"]).quantize(Decimal("0.01"))),
+            }
+            for currency, values in sorted(totals.items())
+        }
+        single = next(iter(balances.values())) if len(balances) == 1 else None
         return {
             "fund_id": fund_id,
-            "total_in": round(float(total_in), 2),
-            "total_out": round(float(total_out), 2),
-            "net_balance": round(float(total_in) - float(total_out), 2),
+            "currency": next(iter(balances)) if len(balances) == 1 else None,
+            "balances_by_currency": balances,
+            "total_in": single["total_in"] if single else (None if balances else 0.0),
+            "total_out": single["total_out"] if single else (None if balances else 0.0),
+            "net_balance": single["net_balance"] if single else (None if balances else 0.0),
         }
 
     def list_all_funds(

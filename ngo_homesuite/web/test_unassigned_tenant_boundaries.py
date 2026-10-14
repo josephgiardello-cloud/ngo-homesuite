@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from html.parser import HTMLParser
 
 import pytest
@@ -117,6 +118,54 @@ def _counts(app):
             Task.query.count(),
             SecurityAuditEvent.query.count(),
         )
+
+
+@pytest.mark.parametrize("actor", ["viewer_a", "staff_a"])
+def test_manual_collection_confirmation_cannot_cross_permission_or_tenant(boundary_app, actor):
+    app = boundary_app
+    ids = app.config["BOUNDARY_IDS"]
+    with app.app_context():
+        svc = DonationService()
+        plan = svc.create_recurring_plan(
+            ids["org_b"], ids["donor_b"], amount=10.25, currency="USD",
+            payment_method="cash", purpose=None, frequency="monthly", next_charge_date=date.today(),
+        )
+        svc.schedule_due_manual_collections(ids["org_b"])
+        donation = Donation.query.filter_by(reference_number=f"recurring:{plan.id}:{date.today().isoformat()}").one()
+        donation_id = donation.id
+    client, token = _client(app, actor)
+    response = client.post(f"/donations/recurring/collections/{donation_id}/confirm", data={
+        "csrf_token": token, "collection_reference": "bank-row", "amount": "10.25", "currency": "USD",
+    })
+    assert response.status_code == 403
+    with app.app_context():
+        assert db.session.get(Donation, donation_id).status == "pending"
+
+
+def test_staff_manual_confirmation_requires_csrf_and_external_evidence(boundary_app):
+    app = boundary_app
+    ids = app.config["BOUNDARY_IDS"]
+    with app.app_context():
+        svc = DonationService()
+        plan = svc.create_recurring_plan(
+            ids["org_a"], ids["donor_a"], amount=10.25, currency="USD",
+            payment_method="cash", purpose=None, frequency="monthly", next_charge_date=date.today(),
+        )
+        svc.schedule_due_manual_collections(ids["org_a"])
+        donation_id = Donation.query.filter_by(
+            reference_number=f"recurring:{plan.id}:{date.today().isoformat()}",
+        ).one().id
+    client, token = _client(app, "staff_a")
+    url = f"/donations/recurring/collections/{donation_id}/confirm"
+    body = {"collection_reference": "cash-book-row-73", "amount": "10.25", "currency": "USD"}
+    assert client.post(url, data=body).status_code == 400
+    missing_evidence = client.post(url, data={"csrf_token": token, "amount": "10.25", "currency": "USD"})
+    assert missing_evidence.status_code == 302
+    with app.app_context():
+        assert db.session.get(Donation, donation_id).status == "pending"
+    assert client.post(url, data={**body, "csrf_token": token}).status_code == 302
+    with app.app_context():
+        assert db.session.get(Donation, donation_id).status == "received"
 
 
 def _workflow(app):

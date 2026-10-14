@@ -11,7 +11,12 @@ Status lifecycle:
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime, timedelta, timezone
+import calendar
+import hashlib
+import hmac
+import json
+import secrets
+from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Optional, Any, TypeVar, cast
 
@@ -19,7 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
-from ngo_homesuite.models.core import Campaign, Donation, DonationReceipt, Donor, Fund, Project, RecurringDonationPlan, db
+from ngo_homesuite.models.core import Campaign, Donation, DonationReceipt, Donor, Fund, Project, RecurringDonationPlan, User, db
 from ngo_homesuite.audit.security_events import SecurityAuditEvent, SecurityAuditService, SecurityEventType
 from ngo_homesuite.observability import inc_donations
 
@@ -34,6 +39,38 @@ _VALID_TRANSITIONS: dict[str, set[str]] = {
 }
 
 _VALID_STATUSES = set(_VALID_TRANSITIONS)
+COLLECTED_DONATION_STATUSES = ("received", "processed", "receipted")
+
+
+def next_manual_collection_date(current: date, frequency: str, *, anchor: Optional[date] = None) -> date:
+    """Advance a UTC calendar date, clamping short months without losing the anchor day."""
+    months = {"monthly": 1, "quarterly": 3, "yearly": 12}
+    if frequency not in months:
+        raise ValueError("Unsupported manual collection frequency")
+    if type(current) is not date or (anchor is not None and type(anchor) is not date):
+        raise ValueError("Manual collection schedules require calendar dates, not datetimes")
+    year, month_zero = divmod(current.year * 12 + current.month - 1 + months[frequency], 12)
+    day = min((anchor or current).day, calendar.monthrange(year, month_zero + 1)[1])
+    return date(year, month_zero + 1, day)
+
+
+def _request_digest(
+    values: dict[str, Any], salt: str, *, version: int = 1,
+    organization_id: Optional[int] = None, reference_number: Optional[str] = None,
+) -> str:
+    if version == 2:
+        if type(organization_id) is not int or organization_id <= 0:
+            raise ValueError("Request digest requires a positive organization")
+        values = {
+            "purpose": "ngo-homesuite.donation-idempotency.v2",
+            "organization_id": organization_id,
+            "reference_number": reference_number,
+            "request": values,
+        }
+    elif version != 1:
+        raise ValueError("Unsupported request digest version")
+    canonical = json.dumps(values, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False)
+    return hashlib.sha256((salt + ":" + canonical).encode("utf-8")).hexdigest()
 
 _T = TypeVar("_T")
 
@@ -89,6 +126,23 @@ class DonationService:
             SecurityAuditEvent.action == "donation.create",
         )).first()
         payload: object = audit.payload if audit else None
+        if isinstance(payload, dict) and "request_hash" in payload:
+            version = payload.get("request_hash_version")
+            salt = payload.get("request_hash_salt")
+            digest = payload.get("request_hash")
+            if (
+                type(version) is not int or version not in (1, 2)
+                or not isinstance(salt, str) or len(salt) != (32 if version == 1 else 64)
+                or not isinstance(digest, str) or len(digest) != 64
+                or any(char not in "0123456789abcdef" for char in salt + digest)
+            ):
+                raise RuntimeError("Invalid donation idempotency audit metadata")
+            actual = _request_digest(
+                values, salt, version=version, organization_id=org_id, reference_number=reference,
+            )
+            if not hmac.compare_digest(actual, digest):
+                raise DonationReferenceConflict("Donation reference already belongs to a different request")
+            return existing
         original = payload.get("request") if isinstance(payload, dict) else None
         if original is None:
             # Legacy records predate request snapshots; compare their persisted immutable financial fields.
@@ -116,9 +170,20 @@ class DonationService:
             from ngo_homesuite.services import campaign_service  # noqa: F401
 
         db.session.flush()
+        event_type = {
+            "donation.create": SecurityEventType.DONATION_CREATED,
+            "donation.update": SecurityEventType.DONATION_UPDATED,
+            "donation.delete": SecurityEventType.DONATION_DELETED,
+            "donation.receipt": SecurityEventType.DONATION_RECEIPT_GENERATED,
+            "donation.payment_received": SecurityEventType.DONATION_PAYMENT_RECEIVED,
+            "donation.manual_collection_confirmed": SecurityEventType.DONATION_PAYMENT_RECEIVED,
+            "donation.status": (
+                SecurityEventType.DONATION_REFUNDED if payload.get("status") == "refunded"
+                else SecurityEventType.DONATION_STATUS_CHANGED
+            ),
+        }[action]
         SecurityAuditService.log_event(
-            SecurityEventType.DONATION_CREATED if action == "donation.create"
-            else SecurityEventType.DONATION_UPDATED,
+            event_type,
             action, resource_type="donation", resource_id=donation.id,
             resource_org_id=donation.organization_id, payload=payload, commit=False, actor_id=actor_id,
         )
@@ -228,6 +293,13 @@ class DonationService:
         if donor is None:
             raise ValueError(f"Donor {donor_id} not found in org {org_id}")
         amount = _money(amount)
+        if frequency not in ("monthly", "quarterly", "yearly"):
+            raise ValueError("Unsupported manual collection frequency")
+        if status not in ("active", "paused", "cancelled"):
+            raise ValueError("Unsupported manual collection plan status")
+        if len(currency) != 3 or not currency.isascii() or not currency.isalpha():
+            raise ValueError("Currency must be a three-letter code")
+        next_manual_collection_date(next_charge_date, frequency)
 
         plan = _model_create(
             RecurringDonationPlan,
@@ -257,7 +329,17 @@ class DonationService:
         *,
         run_date: Optional[date] = None,
     ) -> dict[str, int]:
-        today = run_date or date.today()
+        """Compatibility adapter: processed counts pending bookkeeping entries, not charges."""
+        result = self.schedule_due_manual_collections(org_id, run_date=run_date)
+        return {"processed": result["scheduled"], "failed": result["failed"]}
+
+    def schedule_due_manual_collections(
+        self, org_id: int, *, run_date: Optional[date] = None,
+    ) -> dict[str, int]:
+        """Schedule pending manual collections. Never charge, receipt, or advance a plan."""
+        today = run_date or datetime.now(timezone.utc).date()
+        if type(today) is not date:
+            raise ValueError("Manual collection run date must be a UTC calendar date")
         stmt = (
             select(RecurringDonationPlan)
             .where(
@@ -276,14 +358,30 @@ class DonationService:
                 donor = db.session.scalars(
                     select(Donor).where(Donor.id == plan.donor_id, Donor.organization_id == org_id).limit(1)
                 ).first()
-                if donor is None or (plan.payment_method in ("credit_card", "bank_transfer") and not donor.email):
+                if donor is None:
                     plan.status = "failed"
                     plan.fail_count = int(plan.fail_count or 0) + 1
-                    plan.last_error = "Missing donor contact info for payment retry workflow."
+                    plan.last_error = "Missing donor for manual collection."
                     plan.updated_at = _utcnow()
                     failed += 1
                     continue
 
+                reference = f"recurring:{plan.id}:{plan.next_charge_date.isoformat()}"
+                if db.session.scalars(select(Donation.id).where(
+                    Donation.organization_id == org_id, Donation.reference_number == reference,
+                )).first() is not None:
+                    continue
+                first_occurrence = db.session.scalars(select(SecurityAuditEvent).where(
+                    SecurityAuditEvent.resource_org_id == org_id,
+                    SecurityAuditEvent.action == "donation.create",
+                    SecurityAuditEvent.payload["recurring_plan_id"].as_integer() == plan.id,
+                ).order_by(SecurityAuditEvent.id)).first()
+                first_payload: object = first_occurrence.payload if first_occurrence else None
+                anchor_date = (
+                    first_payload.get("anchor_date", first_payload["scheduled_for"])
+                    if isinstance(first_payload, dict) else plan.next_charge_date.isoformat()
+                )
+                next_manual_collection_date(plan.next_charge_date, plan.frequency, anchor=date.fromisoformat(anchor_date))
                 donation = _model_create(
                     Donation,
                     organization_id=org_id,
@@ -295,35 +393,18 @@ class DonationService:
                     currency=plan.currency,
                     payment_method=plan.payment_method,
                     purpose=plan.purpose,
-                    status="receipted",
-                    reference_number=f"recurring:{plan.id}:{plan.next_charge_date.isoformat()}",
-                    notes=f"Recurring donation charge from plan #{plan.id}",
+                    status="pending",
+                    reference_number=reference,
+                    notes=f"Pending manual collection for plan #{plan.id}; no payment collected.",
                 )
                 db.session.add(donation)
-                db.session.flush()
-                receipt_number = f"RCP-{org_id}-{donation.id}-{uuid.uuid4().hex[:8].upper()}"
-                db.session.add(
-                    _model_create(
-                        DonationReceipt,
-                        donation_id=donation.id,
-                        receipt_number=receipt_number,
-                        status="generated",
-                        sent_to_email=donor.email,
-                    )
-                )
                 self._stage_financial_audit(
                     donation, "donation.create", None,
                     {"request": {"amount": donation.amount, "currency": donation.currency},
                      "recurring_plan_id": plan.id, "scheduled_for": plan.next_charge_date.isoformat(),
-                     "receipt_number": receipt_number, "status": donation.status},
+                     "anchor_date": anchor_date,
+                     "collection_mode": "manual", "status": donation.status},
                 )
-
-                interval = {"quarterly": 90, "yearly": 365}.get(plan.frequency, 30)
-                plan.next_charge_date += timedelta(days=interval)
-                plan.fail_count = 0
-                plan.last_error = None
-                plan.status = "active"
-                plan.updated_at = _utcnow()
                 processed += 1
             db.session.commit()
         except (StaleDataError, IntegrityError) as exc:
@@ -335,7 +416,107 @@ class DonationService:
             db.session.rollback()
             raise
 
-        return {"processed": processed, "failed": failed}
+        return {"scheduled": processed, "failed": failed}
+
+    def confirm_manual_collection(
+        self, donation_id: int, org_id: int, *, actor_id: int,
+        collection_reference: str, amount: float, currency: str,
+    ) -> Donation:
+        """Staff attestation of externally collected money; receipt policy remains separate."""
+        self._require_collection_staff(org_id, actor_id)
+        reference = collection_reference.strip()
+        if not reference or len(reference) > 100:
+            raise ValueError("Collection confirmation requires an evidence reference (1-100 characters)")
+        donation = self.get_donation(donation_id, org_id)
+        audit = db.session.scalars(select(SecurityAuditEvent).where(
+            SecurityAuditEvent.resource_org_id == org_id,
+            SecurityAuditEvent.resource_id == donation_id,
+            SecurityAuditEvent.action == "donation.create",
+        )).first()
+        payload: object = audit.payload if audit else None
+        if not isinstance(payload, dict) or payload.get("collection_mode") != "manual":
+            raise ValueError("Donation is not a scheduled manual collection")
+        confirmation = {
+            "collection_reference_hash": hashlib.sha256(reference.encode("utf-8")).hexdigest(),
+            "amount": _money(amount), "currency": currency.upper(),
+        }
+        if donation.amount != confirmation["amount"] or donation.currency != confirmation["currency"]:
+            raise ValueError("Collection confirmation amount/currency must match the scheduled donation")
+        previous = db.session.scalars(select(SecurityAuditEvent).where(
+            SecurityAuditEvent.resource_org_id == org_id,
+            SecurityAuditEvent.resource_id == donation_id,
+            SecurityAuditEvent.action == "donation.manual_collection_confirmed",
+        )).first()
+        if previous:
+            prior_payload: object = previous.payload
+            if prior_payload != confirmation:
+                raise DonationReferenceConflict("Collection confirmation conflicts with the original confirmation")
+            db.session.refresh(donation)
+            return donation
+
+        plan = db.session.scalars(select(RecurringDonationPlan).where(
+            RecurringDonationPlan.id == payload["recurring_plan_id"],
+            RecurringDonationPlan.organization_id == org_id,
+        ).with_for_update()).first()
+        if plan is None or plan.status != "active":
+            raise ValueError("Collection confirmation requires an active manual plan")
+        if plan.next_charge_date.isoformat() != payload["scheduled_for"]:
+            db.session.rollback()
+            raise DonationConcurrencyError("Collection confirmation conflicts with the plan schedule; retry")
+        if donation.status not in ("pending", "failed"):
+            raise ValueError("Collection confirmation requires a pending or failed collection")
+        donation.status = "received"
+        donation.donation_date = _utcnow()
+        plan.next_charge_date = next_manual_collection_date(
+            plan.next_charge_date, plan.frequency,
+            anchor=date.fromisoformat(payload.get("anchor_date", payload["scheduled_for"])),
+        )
+        plan.fail_count = 0
+        plan.last_error = None
+        try:
+            self._commit_financial_change(donation, "donation.manual_collection_confirmed", actor_id, confirmation)
+        except StaleDataError as exc:
+            raise DonationConcurrencyError("Concurrent collection confirmation; retry") from exc
+        return donation
+
+    @staticmethod
+    def _require_collection_staff(org_id: int, actor_id: int) -> None:
+        actor = db.session.get(User, actor_id)
+        if actor is None or actor.organization_id != org_id or not actor.is_active or not actor.has_role("admin", "staff"):
+            raise PermissionError("Manual collection changes require tenant staff")
+
+    def set_manual_collection_plan_status(
+        self, plan_id: int, org_id: int, status: str, *, actor_id: int,
+    ) -> RecurringDonationPlan:
+        self._require_collection_staff(org_id, actor_id)
+        if status not in ("active", "paused", "cancelled"):
+            raise ValueError("Unsupported manual collection plan status")
+        plan = db.session.scalars(select(RecurringDonationPlan).where(
+            RecurringDonationPlan.id == plan_id, RecurringDonationPlan.organization_id == org_id,
+        ).with_for_update()).first()
+        if plan is None:
+            raise DonationNotFound("Manual collection plan not found in this tenant")
+        if plan.status == status:
+            return plan
+        if plan.status == "cancelled":
+            raise ValueError("Cancelled manual collection plans cannot be restarted")
+        previous = plan.status
+        plan.status = status
+        try:
+            db.session.flush()
+            SecurityAuditService.log_event(
+                SecurityEventType.DONATION_UPDATED, "donation.manual_plan_status",
+                resource_type="recurring_donation_plan", resource_id=plan.id, resource_org_id=org_id,
+                actor_id=actor_id, payload={"previous_status": previous, "status": status}, commit=False,
+            )
+            db.session.commit()
+        except StaleDataError as exc:
+            db.session.rollback()
+            raise DonationConcurrencyError("Concurrent manual plan update; retry") from exc
+        except BaseException:
+            db.session.rollback()
+            raise
+        return plan
 
     # ------------------------------------------------------------------
     # Write
@@ -389,6 +570,8 @@ class DonationService:
             reference_number = reference_number.strip()
             if not reference_number or len(reference_number) > 100:
                 raise ValueError("Donation reference must contain 1 to 100 characters")
+            if reference_number.startswith("recurring:"):
+                raise ValueError("Recurring references are reserved for the manual collection scheduler")
 
         request_values = {
             "donor_name": donor_name.strip(), "amount": amount, "currency": currency,
@@ -440,7 +623,14 @@ class DonationService:
         )
         db.session.add(donation)
         try:
-            self._commit_financial_change(donation, "donation.create", actor_id, {"request": request_values})
+            salt = secrets.token_hex(32)
+            self._commit_financial_change(donation, "donation.create", actor_id, {
+                "request": {key: request_values[key] for key in ("amount", "currency", "donor_id", "campaign_id", "project_id", "fund_id")},
+                "request_hash": _request_digest(
+                    request_values, salt, version=2, organization_id=org_id, reference_number=reference_number,
+                ),
+                "request_hash_salt": salt, "request_hash_version": 2,
+            })
         except StaleDataError as exc:
             db.session.rollback()
             raise DonationConcurrencyError(
@@ -478,6 +668,10 @@ class DonationService:
             "purpose", "notes", "payment_method", "reference_number",
             "project_id", "fund_id",
         }
+        if (donation.reference_number or "").startswith("recurring:") and any(
+            key in fields for key in ("amount", "currency", "donor_name", "donor_id", "fund_id", "campaign_id", "project_id")
+        ):
+            raise ValueError("Scheduled collection financial identity is immutable")
         for key, model in (("project_id", Project), ("fund_id", Fund)):
             entity_id = fields.get(key)
             if entity_id is not None and db.session.scalars(select(model).where(
@@ -493,7 +687,7 @@ class DonationService:
             setattr(donation, key, value)
 
         try:
-            self._commit_financial_change(donation, "donation.update", actor_id, {"fields": fields})
+            self._commit_financial_change(donation, "donation.update", actor_id, {"changed_fields": sorted(fields)})
         except StaleDataError as exc:
             db.session.rollback()
             raise DonationConcurrencyError(
@@ -515,6 +709,8 @@ class DonationService:
             InvalidStatusTransition: if the transition is not allowed.
         """
         donation = self.get_donation(donation_id, org_id)
+        if new_status == "received" and (donation.reference_number or "").startswith("recurring:"):
+            raise ValueError("Scheduled manual collections require explicit collection confirmation")
         allowed = _VALID_TRANSITIONS.get(donation.status, set())
         if new_status not in allowed:
             raise InvalidStatusTransition(
@@ -541,6 +737,8 @@ class DonationService:
         ).with_for_update().execution_options(populate_existing=True)).first()
         if donation is None:
             raise DonationNotFound(f"Donation {donation_id} not found for org {org_id}")
+        if (donation.reference_number or "").startswith("recurring:"):
+            raise ValueError("Manual collections cannot be completed by a provider webhook")
         if Decimal(str(donation.amount)) != Decimal(str(_money(amount))) or donation.currency != currency.upper():
             raise ValueError("Payment amount or currency does not match pending donation")
         if donation.reference_number == reference and donation.status in (
@@ -574,6 +772,8 @@ class DonationService:
         Raises DonationNotFound or ValueError for non-deletable statuses.
         """
         donation = self.get_donation(donation_id, org_id)
+        if (donation.reference_number or "").startswith("recurring:"):
+            raise ValueError("Scheduled collection ledger entries cannot be deleted; use failed/refunded status")
         if donation.status not in ("pending", "failed"):
             raise ValueError(
                 f"Cannot delete donation {donation_id} with status {donation.status!r}. "

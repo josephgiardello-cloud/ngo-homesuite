@@ -6,37 +6,53 @@ This module creates and configures the Flask application with all extensions.
 
 import logging
 import os
-from logging.handlers import RotatingFileHandler
-from pathlib import Path
 import time
 import uuid
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 from flask import Flask, g, request, session, url_for
-from flask_login import LoginManager, current_user
-from flask_migrate import Migrate
-from flask_babel import Babel, lazy_gettext as _l
-from flask_wtf.csrf import CSRFProtect
+from flask_babel import Babel
+from flask_babel import lazy_gettext as _l
+from flask_ckeditor import CKEditor
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from flask_ckeditor import CKEditor
+from flask_login import LoginManager, current_user
+from flask_migrate import Migrate
+from flask_wtf.csrf import CSRFProtect
 from sqlalchemy import inspect as sa_inspect
 
-from ngo_homesuite.flask_config import get_config
-from ngo_homesuite.config import get_runtime_settings
-from ngo_homesuite.models.core import db, User, Organization, Donor, Donation, Project, Fund, Volunteer, Expense
-from ngo_homesuite.errors import init_error_handlers
 from ngo_homesuite.app.container import AppContainer
+from ngo_homesuite.audit.security_events import SecurityAuditEvent  # noqa: F401
+from ngo_homesuite.config import get_runtime_settings
 from ngo_homesuite.db.migrate import auto_migrate
 from ngo_homesuite.db.rls import register_rls_listeners
+from ngo_homesuite.errors import init_error_handlers
+from ngo_homesuite.flask_config import get_config
+from ngo_homesuite.models.core import (
+    Donation,
+    Donor,
+    Expense,
+    Fund,
+    Organization,
+    Project,
+    User,
+    Volunteer,
+    db,
+)
 from ngo_homesuite.observability import (
     InMemoryMetrics,
     configure_json_logging,
-    set_request_id,
-    observe_request_latency,
     inc_error,
+    observe_request_latency,
     render_latest_metrics,
+    set_request_id,
 )
-from ngo_homesuite.persistence.models.workflow_tables import WorkflowDefinitionRecord, WorkflowEventRecord, WorkflowInstanceRecord  # noqa: F401
+from ngo_homesuite.persistence.models.workflow_tables import (  # noqa: F401
+    WorkflowDefinitionRecord,
+    WorkflowEventRecord,
+    WorkflowInstanceRecord,
+)
 
 
 def create_app(config=None):
@@ -67,6 +83,7 @@ def create_app(config=None):
         config = get_config()
     app.config.from_object(config)
     process_role = str(app.config.get('APP_PROCESS_ROLE', os.getenv('APP_PROCESS_ROLE', 'web'))).strip().lower()
+    app.config['APP_PROCESS_ROLE'] = process_role
 
     app.config.setdefault('WTF_CSRF_CHECK_DEFAULT', False)
     app.config.setdefault('REPORTING_DASHBOARD_CACHE_TTL_SECONDS', 15)
@@ -86,8 +103,8 @@ def create_app(config=None):
 
     if app.config.get('SESSION_STORE_BACKEND') == 'redis' and app.config.get('REDIS_URL'):
         try:
-            from flask_session import Session  # type: ignore
             import redis  # type: ignore
+            from flask_session import Session  # type: ignore
 
             app.config['SESSION_TYPE'] = 'redis'
             app.config['SESSION_REDIS'] = redis.from_url(str(app.config.get('REDIS_URL')))
@@ -257,32 +274,40 @@ def create_app(config=None):
                 auto_migrate(db_uri.replace('sqlite:///', '', 1))
                 _report_legacy_sqlite_schema_gaps()
             db.create_all()
-        if bool(app.config.get('ENABLE_DEMO_SEED', False)):
+        if process_role != 'migrator' and bool(app.config.get('ENABLE_DEMO_SEED', False)):
             seed_demo_data(app)
+
+    if process_role == 'migrator':
+        app.logger.info('Migration-only application initialized without web services or schedulers')
+        return app
     
     # Register error handlers
     init_error_handlers(app)
     
     # Register blueprints
-    from ngo_homesuite.web.main_routes import main_bp
-    from ngo_homesuite.web.auth_routes import auth_bp
-    from ngo_homesuite.web.auth_routes import _2fa_enforcement_check, _init_oauth, _oauth_provider_diagnostics
-    from ngo_homesuite.web.ai_routes import ai_bp
-    from ngo_homesuite.web.grants_routes import grants_bp
-    from ngo_homesuite.web.membership_routes import membership_bp
-    from ngo_homesuite.web.tasks_routes import tasks_bp
-    from ngo_homesuite.web.program_routes import program_bp
-    from ngo_homesuite.web.smart_groups_routes import smart_groups_bp
-    from ngo_homesuite.web.p2p_routes import p2p_bp
-    from ngo_homesuite.web.events_routes import events_bp
-    from ngo_homesuite.web.integrations_routes import integrations_bp
-    from ngo_homesuite.web.reporting_routes import reporting_bp
-    from ngo_homesuite.web.admin_routes import admin_bp
-    from ngo_homesuite.web.admin_grants_routes import grant_admin_bp
-    from ngo_homesuite.web.budget_transactions_routes import budget_transactions_bp
-    from ngo_homesuite.web.volunteer_routes import volunteer_bp
     from ngo_homesuite.api.v1 import api_v1_bp
+    from ngo_homesuite.web.admin_grants_routes import grant_admin_bp
+    from ngo_homesuite.web.admin_routes import admin_bp
+    from ngo_homesuite.web.ai_routes import ai_bp
+    from ngo_homesuite.web.auth_routes import (
+        _2fa_enforcement_check,
+        _init_oauth,
+        _oauth_provider_diagnostics,
+        auth_bp,
+    )
+    from ngo_homesuite.web.budget_transactions_routes import budget_transactions_bp
+    from ngo_homesuite.web.events_routes import events_bp
+    from ngo_homesuite.web.grants_routes import grants_bp
+    from ngo_homesuite.web.integrations_routes import integrations_bp
+    from ngo_homesuite.web.main_routes import main_bp
+    from ngo_homesuite.web.membership_routes import membership_bp
+    from ngo_homesuite.web.p2p_routes import p2p_bp
+    from ngo_homesuite.web.program_routes import program_bp
+    from ngo_homesuite.web.reporting_routes import reporting_bp
+    from ngo_homesuite.web.smart_groups_routes import smart_groups_bp
+    from ngo_homesuite.web.tasks_routes import tasks_bp
     from ngo_homesuite.web.v2_routes import v2_bp
+    from ngo_homesuite.web.volunteer_routes import volunteer_bp
     tony_bp = None
     try:
         from ngo_homesuite.web.tony_routes import tony_bp
@@ -349,7 +374,9 @@ def create_app(config=None):
             app.logger.info('Event scheduler startup skipped for APP_PROCESS_ROLE=%s', process_role)
         else:
             try:
-                from ngo_homesuite.events.scheduler import start_event_reminder_scheduler
+                from ngo_homesuite.events.scheduler import (
+                    start_event_reminder_scheduler,
+                )
 
                 start_event_reminder_scheduler(app)
             except Exception as exc:

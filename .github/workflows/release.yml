@@ -17,6 +17,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -34,6 +36,9 @@ jobs:
         uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Full fetched-history secret scan
+        uses: ./.github/actions/full-history-secret-scan
 
       - name: Dependency drift and vulnerability gates
         run: |
@@ -63,17 +68,23 @@ jobs:
         env:
           NGO_HOMESUITE_DB_KEY: ""
         run: |
-          pytest ngo_homesuite/tests/test_financial_failure_correctness.py ngo_homesuite/tests/test_bank_reconciliation_service.py ngo_homesuite/services/test_payment_service.py -v --maxfail=10
+          pytest ngo_homesuite/tests/test_financial_failure_correctness.py ngo_homesuite/tests/test_manual_recurring_and_currency.py ngo_homesuite/tests/test_financial_audit_privacy.py ngo_homesuite/tests/test_bank_reconciliation_service.py ngo_homesuite/services/test_payment_service.py -v --maxfail=10
 
       - name: Run tenant boundary gate
         env:
           NGO_HOMESUITE_DB_KEY: ""
         run: |
-          pytest ngo_homesuite/web/test_cross_tenant_boundaries.py ngo_homesuite/web/test_unassigned_tenant_boundaries.py ngo_homesuite/web/test_v2_route_contracts.py ngo_homesuite/web/test_rbac_tenant_route_audit.py ngo_homesuite/api/test_v1_runtime.py -v --maxfail=10
+          pytest ngo_homesuite/tests/test_tenant_registry.py ngo_homesuite/tests/test_tenant_inventory.py ngo_homesuite/web/test_cross_tenant_boundaries.py ngo_homesuite/web/test_unassigned_tenant_boundaries.py ngo_homesuite/web/test_v2_route_contracts.py ngo_homesuite/web/test_rbac_tenant_route_audit.py ngo_homesuite/api/test_v1_runtime.py -v --maxfail=10
 
       - name: Validate release evidence bundle (strict)
         run: |
           python tools/verify_release_evidence_bundle.py --strict
+
+      - name: Require reviewed tenant dispositions and approved audit governance
+        run: |
+          python tools/inventory_tenant_boundaries.py --output artifacts/candidate-tenant-inventory.json
+          python tools/verify_tenant_dispositions.py --inventory artifacts/candidate-tenant-inventory.json --strict
+          python tools/verify_audit_retention_policy.py --strict
 
       - name: Validate OpenAPI document
         run: |
@@ -139,3 +150,6 @@ jobs:
           exit-code: 1
           ignore-unfixed: true
           severity: CRITICAL,HIGH
+
+  candidate-database-isolation:
+    uses: ./.github/workflows/candidate-isolation.yml

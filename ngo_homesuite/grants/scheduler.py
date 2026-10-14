@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 
 from flask import Flask
+from ngo_homesuite.db.tenant_jobs import run_tenant_job
 
 logger = logging.getLogger(__name__)
 
@@ -20,23 +21,24 @@ _scheduler = None  # module-level singleton (BackgroundScheduler | None)
 
 
 def _run_grant_search_refresh(app: Flask) -> None:
-    with app.app_context():
+    def dispatch():
         from ngo_homesuite.grants.services.grants_gov import run_active_saved_search_alerts
-
-        try:
-            result = run_active_saved_search_alerts()
-            logger.info(
-                "grant search refresh complete",
-                extra={
-                    "event_id": "grants.search.refresh",
-                    "extra_fields": {
-                        "profiles_run": result.get("profiles_run", 0),
-                        "created_alerts": result.get("created_alerts", 0),
-                    },
+        result = run_active_saved_search_alerts()
+        logger.info(
+            "grant search refresh complete",
+            extra={
+                "event_id": "grants.search.refresh",
+                "extra_fields": {
+                    "profiles_run": result.get("profiles_run", 0),
+                    "created_alerts": result.get("created_alerts", 0),
                 },
-            )
-        except Exception as exc:  # pragma: no cover
-            logger.error("grant search refresh failed: %s", exc, exc_info=True)
+            },
+        )
+    try:
+        run_tenant_job(app, name="grant-search-refresh", callback=dispatch)
+    except Exception:
+        logger.exception("grant search refresh failed")
+        raise
 
 
 def start_grant_search_scheduler(app: Flask) -> None:

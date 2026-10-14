@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 
+import pyotp
 import pytest
 
 from ngo_homesuite.compliance.evidence_pack import build_compliance_evidence
@@ -20,15 +21,27 @@ def client(app):
 
 
 def _login(client, username: str, password: str) -> None:
-    client.post("/auth/login", data={"username": username, "password": password})
+    with client.application.app_context():
+        user = User.query.filter_by(username=username).one()
+        code = pyotp.TOTP(user.ensure_mfa_secret()).now() if user.mfa_enabled else ""
+    response = client.post("/auth/login", data={"username": username, "password": password, "otp_code": code})
+    assert response.status_code == 302
+    with client.session_transaction() as session:
+        assert session.get("_user_id")
 
 
 def _ensure_user(app, username: str, email: str, role: str, password: str):
     with app.app_context():
         user = User.query.filter_by(username=username).first()
         if user is None:
-            user = User(username=username, email=email, role=role, is_active=True)
+            organization = Organization(name=username, slug=f"test-{username}", is_active=True)
+            db.session.add(organization)
+            db.session.flush()
+            user = User(username=username, email=email, role=role, is_active=True, organization_id=organization.id)
             user.set_password(password)
+            if role == "admin":
+                user.ensure_mfa_secret()
+                user.mfa_enabled = True
             db.session.add(user)
             db.session.commit()
 
@@ -48,6 +61,9 @@ def _ensure_user_in_org(app, username: str, email: str, role: str, password: str
             db.session.add(user)
         else:
             user.organization_id = org.id
+        if role == "admin":
+            user.ensure_mfa_secret()
+            user.mfa_enabled = True
         db.session.commit()
 
 

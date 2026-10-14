@@ -11,6 +11,7 @@ Validates:
 """
 
 import os
+import secrets
 import pytest
 from ngo_homesuite.config.config_manager import (
     AppConfig,
@@ -142,14 +143,15 @@ class TestEnvironmentLoadingWithMocking:
         **Assertions**: All secrets loaded (validation on init).
         """
         monkeypatch.setenv('SECRET_KEY', 'x' * 32)
-        monkeypatch.setenv('DB_ENCRYPTION_KEY', 'encryption_key_32_chars_long___')
+        encryption_key = secrets.token_hex(32)
+        monkeypatch.setenv('DB_ENCRYPTION_KEY', encryption_key)
         monkeypatch.setenv('STRIPE_SECRET_KEY', 'sk_test_123456')
         monkeypatch.setenv('DATABASE_URL', 'sqlite:///test.db')
         
         config = AppConfig(Environment.TESTING)
         
         assert config.secrets.secret_key == 'x' * 32
-        assert config.secrets.db_encryption_key == 'encryption_key_32_chars_long___'
+        assert config.secrets.db_encryption_key == encryption_key
         assert config.secrets.stripe_secret_key == 'sk_test_123456'
 
     def test_load_boolean_env_variables(self, monkeypatch):
@@ -196,7 +198,7 @@ class TestSecretMasking:
         
         **Assertions**: All secrets replaced with ***MASKED***.
         """
-        monkeypatch.setenv('SECRET_KEY', 'my_secret_key_12345678901234')
+        monkeypatch.setenv('SECRET_KEY', secrets.token_hex(32))
         monkeypatch.setenv('DATABASE_URL', 'sqlite:///test.db')
         monkeypatch.setenv('STRIPE_SECRET_KEY', 'sk_test_secret')
         
@@ -213,14 +215,15 @@ class TestSecretMasking:
         
         **Assertions**: Real values exposed (use with caution).
         """
-        monkeypatch.setenv('SECRET_KEY', 'my_secret_key_12345678901234')
+        secret_key = secrets.token_hex(32)
+        monkeypatch.setenv('SECRET_KEY', secret_key)
         monkeypatch.setenv('DATABASE_URL', 'sqlite:///test.db')
         
         config = AppConfig(Environment.TESTING)
         config_dict = config.to_dict(mask_secrets=False)
         
         # Secrets should be visible (debug only)
-        assert config_dict['secrets']['secret_key'] == 'my_secret_key_12345678901234'
+        assert config_dict['secrets']['secret_key'] == secret_key
 
 
 class TestFeatureFlags:
@@ -401,4 +404,3 @@ class TestConfigSerialization:
         config_dict = config.to_dict()
         
         assert config_dict['environment'] == 'production'
-

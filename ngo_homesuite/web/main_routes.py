@@ -24,7 +24,7 @@ from ngo_homesuite.models.core import (
 )
 from ngo_homesuite.services.beneficiary_service import create_beneficiary, get_beneficiary, list_beneficiaries, update_beneficiary
 from ngo_homesuite.services.program_impact_service import list_cases
-from ngo_homesuite.services.donation_service import DonationConcurrencyError, DonationNotFound, DonationService, InvalidStatusTransition
+from ngo_homesuite.services.donation_service import DonationConcurrencyError, DonationNotFound, DonationService, InvalidStatusTransition, next_manual_collection_date
 from ngo_homesuite.services.donor_service import DonorNotFound, DonorService
 from ngo_homesuite.services.expense_service import ExpenseService
 from ngo_homesuite.services.payment_service import PaymentService, StripeNotConfigured
@@ -550,7 +550,7 @@ class PublicDonationForm(FlaskForm):
         validators=[DataRequired()],
     )
     purpose = StringField('Purpose', validators=[WTOptional()])
-    make_recurring = BooleanField('Make this a recurring donation')
+    make_recurring = BooleanField('Schedule future manual collections (no automatic payments)')
     recurring_frequency = SelectField(
         'Recurring Frequency',
         choices=[('monthly', 'Monthly'), ('quarterly', 'Quarterly'), ('yearly', 'Yearly')],
@@ -588,7 +588,18 @@ class RecurringDonationForm(FlaskForm):
         choices=[('monthly', 'Monthly'), ('quarterly', 'Quarterly'), ('yearly', 'Yearly')],
         validators=[DataRequired()],
     )
-    submit = SubmitField('Create Recurring Plan')
+    submit = SubmitField('Create Manual Collection Plan')
+
+
+class ManualCollectionConfirmationForm(FlaskForm):
+    collection_reference = StringField('Collection evidence reference', validators=[DataRequired(), Length(max=100)])
+    amount = FloatField('Amount actually collected', validators=[DataRequired(), NumberRange(min=0.01)])
+    currency = SelectField('Currency actually collected', choices=[('USD', 'USD'), ('EUR', 'EUR'), ('GBP', 'GBP')])
+    submit = SubmitField('Confirm Money Collected')
+
+
+class ManualCollectionPlanStatusForm(FlaskForm):
+    status = SelectField('Plan status', choices=[('active', 'Active'), ('paused', 'Paused'), ('cancelled', 'Cancelled')])
 
 
 def _mask_tail(value: str | None, *, keep: int = 4) -> str | None:
@@ -1088,11 +1099,7 @@ def _apply_donor_import(org_id: int, preview_rows: list[dict[str, object]]) -> d
 
 
 def _next_charge_date(current: date, frequency: str) -> date:
-    if frequency == 'quarterly':
-        return current + timedelta(days=90)
-    if frequency == 'yearly':
-        return current + timedelta(days=365)
-    return current + timedelta(days=30)
+    return next_manual_collection_date(current, frequency)
 
 
 def _openapi_spec_path() -> Path:
@@ -1488,7 +1495,7 @@ def public_give():
                 payment_method=form.payment_method.data,
                 purpose=form.purpose.data or 'General Fund',
                 frequency=form.recurring_frequency.data or 'monthly',
-                next_charge_date=_next_charge_date(date.today(), form.recurring_frequency.data or 'monthly'),
+                next_charge_date=_next_charge_date(datetime.now(timezone.utc).date(), form.recurring_frequency.data or 'monthly'),
             )
 
         # Advance to 'processed' so generate_receipt() is satisfied, then issue.
@@ -3420,7 +3427,7 @@ def recurring_donations():
                 payment_method=form.payment_method.data,
                 purpose=form.purpose.data,
                 frequency=form.frequency.data,
-                next_charge_date=_next_charge_date(date.today(), form.frequency.data),
+                next_charge_date=_next_charge_date(datetime.now(timezone.utc).date(), form.frequency.data),
             )
         except ValueError as exc:
             flash(str(exc), 'error')
@@ -3430,27 +3437,81 @@ def recurring_donations():
             flash('Recurring plan changed while saving. Please try again.', 'error')
             plans = donation_service.list_recurring_plans(org.id)
             return render_template('recurring_donations.html', form=form, plans=plans, active_page='donations')
-        flash('Recurring donation plan created.', 'success')
+        flash('Manual collection plan created. No automatic payments will be taken.', 'success')
         return redirect(url_for('main.recurring_donations'))
 
     plans = donation_service.list_recurring_plans(org.id)
-    return render_template('recurring_donations.html', form=form, plans=plans, active_page='donations')
+    pending_collections = Donation.query.filter(
+        Donation.organization_id == org.id,
+        Donation.reference_number.like('recurring:%'),
+        Donation.status.in_(('pending', 'failed')),
+    ).all()
+    return render_template(
+        'recurring_donations.html', form=form, plans=plans, active_page='donations',
+        pending_collections=pending_collections, confirmation_form=ManualCollectionConfirmationForm(),
+    )
 
 
 @main_bp.route('/donations/recurring/process', methods=['POST'])
 @login_required
 @roles_required('admin', 'staff')
 def process_recurring_donations():
-    """Run due recurring plans and handle failures for missing payment contact data."""
+    """Prepare pending manual collections; never collect or receipt money."""
     org = _current_org()
     if not org:
         flash('No organization is available.', 'error')
         return redirect(url_for('main.dashboard'))
 
-    result = DonationService().process_due_recurring_plans(org.id, run_date=date.today())
-    processed = result.get('processed', 0)
-    failed = result.get('failed', 0)
-    flash(f'Recurring processing complete: {processed} processed, {failed} failed.', 'info')
+    result = DonationService().schedule_due_manual_collections(org.id)
+    flash(f"Manual collection preparation complete: {result['scheduled']} pending, {result['failed']} failed. No payments collected.", 'info')
+    return redirect(url_for('main.recurring_donations'))
+
+
+@main_bp.route('/donations/recurring/collections/<int:donation_id>/confirm', methods=['POST'])
+@login_required
+@roles_required('admin', 'staff')
+def confirm_manual_collection(donation_id: int):
+    org = _current_org()
+    if not org:
+        abort(403)
+    form = ManualCollectionConfirmationForm()
+    if not form.validate_on_submit():
+        flash('Confirmation requires a collection evidence reference and a valid amount/currency.', 'error')
+        return redirect(url_for('main.recurring_donations'))
+    try:
+        DonationService().confirm_manual_collection(
+            donation_id, org.id, actor_id=current_user.id,
+            collection_reference=form.collection_reference.data,
+            amount=form.amount.data, currency=form.currency.data,
+        )
+        flash('Collection confirmed. No receipt was automatically issued; use the separate receipt workflow.', 'success')
+    except (DonationNotFound, PermissionError):
+        abort(403)
+    except (ValueError, DonationConcurrencyError) as exc:
+        flash(str(exc), 'error')
+    return redirect(url_for('main.recurring_donations'))
+
+
+@main_bp.route('/donations/recurring/plans/<int:plan_id>/status', methods=['POST'])
+@login_required
+@roles_required('admin', 'staff')
+def manual_collection_plan_status(plan_id: int):
+    org = _current_org()
+    if not org:
+        abort(403)
+    form = ManualCollectionPlanStatusForm()
+    if not form.validate_on_submit():
+        flash('Invalid manual collection plan status.', 'error')
+        return redirect(url_for('main.recurring_donations'))
+    try:
+        DonationService().set_manual_collection_plan_status(
+            plan_id, org.id, form.status.data, actor_id=current_user.id,
+        )
+        flash('Manual collection plan status updated.', 'success')
+    except (DonationNotFound, PermissionError):
+        abort(403)
+    except (ValueError, DonationConcurrencyError) as exc:
+        flash(str(exc), 'error')
     return redirect(url_for('main.recurring_donations'))
 
 

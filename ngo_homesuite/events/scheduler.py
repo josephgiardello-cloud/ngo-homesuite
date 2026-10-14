@@ -6,6 +6,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from flask import Flask
 
 from ngo_homesuite.events.services import send_due_event_reminders
+from ngo_homesuite.db.tenant_jobs import run_tenant_job
 from ngo_homesuite.services.campaign_email_service import process_scheduled_campaign_email_batches
 
 logger = logging.getLogger(__name__)
@@ -13,7 +14,7 @@ _scheduler: BackgroundScheduler | None = None
 
 
 def _run_with_app(app: Flask, *, hours_before: int) -> None:
-    with app.app_context():
+    def dispatch():
         result = send_due_event_reminders(hours_before=hours_before)
         logger.info(
             "event reminders dispatched",
@@ -27,6 +28,7 @@ def _run_with_app(app: Flask, *, hours_before: int) -> None:
                 },
             },
         )
+    run_tenant_job(app, name=f"event-reminders-{hours_before}h", callback=dispatch)
 
 
 def _run_with_guard(job_name: str, callback) -> None:
@@ -46,7 +48,7 @@ def _run_with_guard(job_name: str, callback) -> None:
 
 
 def _run_scheduled_campaign_batches(app: Flask) -> None:
-    with app.app_context():
+    def dispatch():
         limit = int(app.config.get("CAMPAIGN_EMAIL_SCHEDULER_BATCH_LIMIT", 100) or 100)
         result = process_scheduled_campaign_email_batches(limit=limit)
         logger.info(
@@ -62,6 +64,7 @@ def _run_scheduled_campaign_batches(app: Flask) -> None:
                 },
             },
         )
+    run_tenant_job(app, name="campaign-email-scheduled-dispatch", callback=dispatch)
 
 
 def start_event_reminder_scheduler(app: Flask) -> None:
