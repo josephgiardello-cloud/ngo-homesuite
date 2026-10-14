@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>NGO HomeSuite</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+<header><h1>NGO HomeSuite</h1><p>Staff workspace</p></header>
+<main>
+  <p id="message" role="status" aria-live="polite"></p>
+  <section id="login-panel">
+    <h2>Sign in</h2>
+    <form id="login">
+      <label>Organization <input name="tenant" required autocomplete="organization"></label>
+      <label>Username <input name="username" required autocomplete="username"></label>
+      <label>Password <input name="password" type="password" required autocomplete="current-password"></label>
+      <button>Sign in</button>
+    </form>
+  </section>
+  <section id="workspace" hidden>
+    <p id="identity"></p><button id="logout">Sign out</button><button id="refresh">Refresh</button>
+    <div class="grid">
+      <section><h2>Donors</h2>
+        <form id="donor" class="writer">
+          <label>Donor name <input name="name" required maxlength="200"></label>
+          <label>Email <input name="email" type="email"></label>
+          <button>Add donor</button>
+        </form>
+        <div id="donors"></div>
+      </section>
+      <section><h2>Donations</h2>
+        <form id="donation" class="writer">
+          <label>Donor <select name="donor_id" id="donor-select" required></select></label>
+          <label>Donation amount <input name="amount" inputmode="decimal" required></label>
+          <label>Purpose <input name="purpose" maxlength="250"></label>
+          <label>Receipt / idempotency key <input name="idempotency_key" required maxlength="128"></label>
+          <button>Record donation</button>
+        </form>
+        <div id="donations"></div>
+        <form id="allocation" class="writer">
+          <h3>Replace allocations</h3>
+          <label>Donation ID <input name="donation_id" type="number" min="1" required></label>
+          <label>Category <select name="category"><option>general</option><option>project</option><option>payroll</option></select></label>
+          <label>Project ID (for project only) <input name="project_id" type="number" min="1"></label>
+          <label>Allocation amount <input name="amount" inputmode="decimal" required></label>
+          <button>Save allocation</button>
+        </form>
+      </section>
+      <section><h2>Projects</h2>
+        <form id="project" class="admin">
+          <label>Project name <input name="name" required maxlength="200"></label>
+          <label>Project budget <input name="budget" inputmode="decimal" required></label>
+          <button>Add project</button>
+        </form>
+        <div id="projects"></div>
+      </section>
+      <section><h2>Grants</h2>
+        <form id="grant" class="writer">
+          <label>Project <select name="project_id" id="project-select" required></select></label>
+          <label>Grant name <input name="name" required maxlength="200"></label>
+          <label>Grant amount <input name="amount" inputmode="decimal" required></label>
+          <button>Create grant draft</button>
+        </form>
+        <p>Approval reserves budget. Payment requires a different admin. Paid grants cannot be cancelled.</p>
+        <div id="grants"></div>
+      </section>
+      <section class="admin"><h2>Users</h2>
+        <form id="user">
+          <label>New username <input name="username" required maxlength="100" autocomplete="off"></label>
+          <label>New password <input name="password" type="password" minlength="10" required autocomplete="new-password"></label>
+          <label>Role <select name="role"><option>viewer</option><option>fundraiser</option><option>admin</option></select></label>
+          <button>Create user</button>
+        </form>
+      </section>
+      <section class="admin"><h2>Audit trail</h2><div id="audit"></div></section>
+    </div>
+  </section>
+</main>
+</body>
+</html>

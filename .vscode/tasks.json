@@ -1,0 +1,21 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Release candidate gates",
+      "type": "shell",
+      "command": ".\\.venv\\Scripts\\python.exe",
+      "args": ["tools\\release_gate.py"],
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "Staff API (configured tenants)",
+      "type": "shell",
+      "command": ".\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "uvicorn", "backend.app.server:app_factory", "--factory", "--host", "127.0.0.1", "--port", "8000"],
+      "isBackground": true,
+      "problemMatcher": []
+    }
+  ]
+}

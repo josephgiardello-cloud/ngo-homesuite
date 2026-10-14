@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+*.db
+*.db-shm
+*.db-wal
+*.sqlite*
+.pytest_cache/
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+backups/
+exports/
+tenants.json
+release-report.json
