@@ -10,6 +10,9 @@ jobs:
   test:
     name: Test on Python ${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
@@ -30,14 +33,14 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pytest pytest-cov
+        pip install pytest pytest-cov pytest-timeout
 
     - name: Install dependencies (Windows)
       if: runner.os == 'Windows'
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pytest pytest-cov
+        pip install pytest pytest-cov pytest-timeout
 
     - name: Migration preflight
       env:
@@ -115,7 +118,7 @@ jobs:
 
     - name: Run tests
       run: |
-        pytest ngo_homesuite/ -v --tb=short --cov=ngo_homesuite --cov-report=xml
+        pytest ngo_homesuite/ tests/ -v --tb=short --cov=ngo_homesuite --cov-report=xml
 
     - name: Workflow reliability failure-injection lane
       env:
@@ -185,7 +188,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install bandit pip-audit
+        pip install bandit pip-audit pytest pytest-cov pytest-timeout
 
     - name: Run Bandit security checks (high confidence/severity)
       run: |
@@ -217,7 +220,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pytest
+        pip install pytest pytest-cov pytest-timeout
 
     - name: Enforce SHA-pinned third-party actions
       run: |
@@ -239,7 +242,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pytest
+        pip install pytest pytest-cov pytest-timeout
 
     - name: Run cross-tenant boundary tests
       env:
@@ -332,7 +335,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pytest
+        pip install pytest pytest-cov pytest-timeout
 
     - name: Migration preflight (DB mode)
       run: |
@@ -358,7 +361,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pytest
+        pip install pytest pytest-cov pytest-timeout
 
     - name: Run critical path tests
       env:
@@ -382,7 +385,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install openapi-spec-validator openapi-python-client
+        pip install openapi-spec-validator openapi-python-client pytest pytest-cov pytest-timeout
 
     - name: Validate OpenAPI document
       run: |
@@ -545,4 +548,3 @@ jobs:
       with:
         name: scalability-regression-summary
         path: artifacts/scalability-regression-summary.json
-

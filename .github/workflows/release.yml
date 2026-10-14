@@ -4,7 +4,11 @@ on:
   push:
     tags:
       - "v*"
+      - "rc-*"
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   release-verify:
@@ -24,7 +28,18 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest openapi-spec-validator openapi-python-client gunicorn
+          pip install pytest pytest-cov pytest-timeout pip-audit openapi-spec-validator openapi-python-client gunicorn
+
+      - name: Secret scan (Gitleaks)
+        uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Dependency drift and vulnerability gates
+        run: |
+          python tools/check_pyproject_requirements_drift.py
+          python tools/check_dependency_drift.py
+          pip-audit -r requirements.txt
 
       - name: Migration preflight
         env:
@@ -36,7 +51,13 @@ jobs:
         env:
           NGO_HOMESUITE_DB_KEY: ""
         run: |
-          pytest ngo_homesuite/ -v --maxfail=10 --tb=short
+          pytest ngo_homesuite/ tests/ -v --maxfail=10 --tb=short
+
+      - name: Workflow reliability failure-injection lane
+        env:
+          NGO_HOMESUITE_DB_KEY: ""
+        run: |
+          pytest ngo_homesuite/tests/test_workflow_reliability_failure_injection.py ngo_homesuite/persistence/test_workflow_repository_concurrency.py ngo_homesuite/tests/test_donation_fund_concurrency.py -v --maxfail=10
 
       - name: Run tenant boundary gate
         env:
