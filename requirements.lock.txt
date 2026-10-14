@@ -84,7 +84,7 @@ pluggy==1.6.0
 portalocker==3.2.0
 prometheus_client==0.21.1
 proto-plus==1.27.0
-protobuf==6.33.2
+protobuf==7.35.0
 pyasn1==0.6.3
 pyasn1_modules==0.4.2
 pycparser==2.23
