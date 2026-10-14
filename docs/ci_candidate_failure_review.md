@@ -1,6 +1,6 @@
 # Candidate CI failure classification
 
-Candidate: `bf587256e4999c967797b0ce5b1ba5bb6103dc02`, draft PR #52.
+Historical candidate: `bf587256e4999c967797b0ce5b1ba5bb6103dc02`, PR #53 (now merged).
 Evidence: [Tests run 38613643520](https://github.com/josephgiardello-cloud/ngo-homesuite/actions/runs/38613643520).
 All 32 failed job logs were downloaded and classified. Credentials are not
 included in this report. This review is not a passing release certification.
@@ -79,7 +79,7 @@ The committed candidate must still run the hosted full-history scan.
 
 - CI matrix now matches the declared Python 3.10 minimum.
 - Compatible runtime requirements: LangChain 1.0.0, Ollama 0.6.1,
-  Chroma 0.6.3, botocore matching boto3 1.42.18, and NumPy >=2.2.0.
+  botocore matching boto3 1.42.18, and NumPy >=2.2.0.
   The complete manifest resolves on the tested Windows/Python 3.13 environment.
   Resolution alone does not certify every platform or retrieval index upgrade.
 - CI images install real bundled manifests and configured pytest plugins in
@@ -104,9 +104,17 @@ The committed candidate must still run the hosted full-history scan.
 
 ## Release remains blocked
 
-These changes are not yet a new pushed candidate. Rerunning the old SHA does
-not validate the working-tree fixes. Before release, commit/push the reviewed
-candidate and rerun the complete hosted workflow on its exact SHA, including
+The first follow-up candidate, `d27391b`, was committed, pushed and tested
+locally; fresh draft PR #54 was opened because PRs #52/#53 were already merged.
+Its PR checks were blocked by dependency merge conflicts with current main.
+The user approved merging main: retain its Chroma 1.5.9, requests/chardet and
+Black upgrades plus its reference lock file, while keeping pytest-asyncio 1.4.0
+because 0.25.2 was demonstrated incompatible with the declared pytest 9.
+The post-merge SHA requires fresh dependency resolution and test evidence;
+`d27391b` artifacts are not certification of a later commit.
+
+Rerunning the old SHA does not validate newer changes. Before release, run the
+complete hosted workflow on the exact reviewed candidate SHA, including
 dependency auditing, all platform tests, migrations, OpenAPI, DAST, container
 security, performance and full lint/type gates. Newly exposed failures must
 be fixed without turning failed checks into optional checks.
