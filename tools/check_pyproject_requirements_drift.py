@@ -1,126 +1,88 @@
-#!/usr/bin/env python
-"""
-CI guard to detect drift between pyproject.toml and requirements.txt.
+"""Check declared runtime dependencies against the complete requirements bundle."""
 
-Ensures lock file stays in sync with source of truth (pyproject.toml).
-Runs as CI step before tests to catch version/dependency divergence early.
-
-Usage:
-  python tools/check_pyproject_requirements_drift.py
-  
-Exit code 0 = no drift, 1 = drift detected (guidance provided).
-"""
+from __future__ import annotations
 
 import sys
 from pathlib import Path
-import re
 
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
 
-def extract_dependencies(file_path: Path) -> dict:
-    """Extract version specs from requirements-like file."""
-    deps = {}
-    with open(file_path) as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            # Parse "package==1.2.3" or "package>=1.2.3"
-            match = re.match(r"^([a-zA-Z0-9\-_.]+)\s*([=!<>~]+.+)?$", line)
-            if match:
-                pkg_name = match.group(1).lower()
-                version_spec = match.group(2) or ""
-                deps[pkg_name] = version_spec
-    return deps
-
-
-def extract_pyproject_deps(file_path: Path) -> dict:
-    """Extract dependencies from pyproject.toml [project] dependencies."""
-    deps = {}
-    with open(file_path) as f:
-        content = f.read()
-    
-    # Simple regex to find dependencies section
-    dep_match = re.search(
-        r'dependencies\s*=\s*\[(.*?)\]',
-        content,
-        re.DOTALL
-    )
-    if dep_match:
-        deps_text = dep_match.group(1)
-        for line in deps_text.split(','):
-            line = line.strip().strip('"').strip("'")
-            if line:
-                match = re.match(r"^([a-zA-Z0-9\-_.]+)\s*(.+)?$", line)
-                if match:
-                    pkg_name = match.group(1).lower()
-                    version_spec = match.group(2) or ""
-                    deps[pkg_name] = version_spec
-    return deps
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib  # type: ignore[no-redef]
 
 
 def normalize_dep_name(name: str) -> str:
-    """Normalize package names (Flask-SQLAlchemy -> flask-sqlalchemy)."""
-    return name.lower().replace("_", "-")
+    return canonicalize_name(name)
+
+
+def _add_dependency(deps: dict[str, str], value: str) -> None:
+    requirement = Requirement(value)
+    name = normalize_dep_name(requirement.name)
+    normalized = name + str(requirement)[len(requirement.name):]
+    if name in deps and deps[name] != normalized:
+        raise ValueError(f"Conflicting requirements for {name}: {deps[name]} and {normalized}")
+    deps[name] = normalized
+
+
+def extract_dependencies(file_path: Path) -> dict[str, str]:
+    deps: dict[str, str] = {}
+    active: set[Path] = set()
+
+    def read(path: Path) -> None:
+        path = path.resolve()
+        if path in active:
+            raise ValueError(f"Cyclic requirements include: {path}")
+        active.add(path)
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.split(" #", 1)[0].strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith(("-r ", "--requirement ")):
+                read(path.parent / line.split(maxsplit=1)[1])
+            elif line.startswith("--requirement="):
+                read(path.parent / line.split("=", 1)[1])
+            else:
+                _add_dependency(deps, line)
+        active.remove(path)
+
+    read(file_path)
+    return deps
+
+
+def extract_pyproject_deps(file_path: Path) -> dict[str, str]:
+    project = tomllib.loads(file_path.read_text(encoding="utf-8"))["project"]
+    deps: dict[str, str] = {}
+    for value in project.get("dependencies", []):
+        _add_dependency(deps, value)
+    return deps
 
 
 def check_drift(pyproject_path: Path, requirements_path: Path) -> bool:
-    """
-    Check for drift between pyproject.toml and requirements.txt.
-    
-    Returns True if drift detected, False otherwise.
-    """
-    pyproject_deps = extract_pyproject_deps(pyproject_path)
-    requirements_deps = extract_dependencies(requirements_path)
-    
-    # Normalize keys
-    pyproject_deps = {normalize_dep_name(k): v for k, v in pyproject_deps.items()}
-    requirements_deps = {normalize_dep_name(k): v for k, v in requirements_deps.items()}
-    
-    drift_found = False
-    
-    # Check for packages in pyproject but missing in requirements
-    missing_in_req = set(pyproject_deps.keys()) - set(requirements_deps.keys())
-    if missing_in_req:
-        print(f"âŒ DRIFT: Packages in pyproject.toml but NOT in requirements.txt:")
-        for pkg in sorted(missing_in_req):
-            print(f"   - {pkg}{pyproject_deps[pkg]}")
-        drift_found = True
-    
-    # Check for packages in requirements but missing in pyproject
-    extra_in_req = set(requirements_deps.keys()) - set(pyproject_deps.keys())
-    if extra_in_req:
-        print(f"âŒ DRIFT: Packages in requirements.txt but NOT in pyproject.toml:")
-        for pkg in sorted(extra_in_req):
-            print(f"   - {pkg}{requirements_deps[pkg]}")
-        drift_found = True
-    
-    if not drift_found:
-        print("âœ… No drift detected between pyproject.toml and requirements.txt")
+    declared = extract_pyproject_deps(pyproject_path)
+    bundled = extract_dependencies(requirements_path)
+    missing = sorted(declared.keys() - bundled.keys())
+    extra = sorted(bundled.keys() - declared.keys())
+    mismatched = sorted(name for name in declared.keys() & bundled.keys() if declared[name] != bundled[name])
+    for name in missing:
+        print(f"Missing from requirements bundle: {declared[name]}")
+    for name in extra:
+        print(f"Missing from pyproject dependencies: {bundled[name]}")
+    for name in mismatched:
+        print(f"Version/specifier drift: pyproject={declared[name]} requirements={bundled[name]}")
+    drift = bool(missing or extra or mismatched)
+    if drift:
+        print("Update pyproject.toml and the included requirements profiles together.")
     else:
-        print("\nGuidance to fix:")
-        print("  1. Update pyproject.toml [project] dependencies")
-        print("  2. Run: pip-compile -o requirements.txt pyproject.toml")
-        print("  3. Commit both files together")
-    
-    return drift_found
+        print("No drift detected between pyproject.toml and the requirements bundle")
+    return drift
 
 
-def main():
-    """Check drift between pyproject.toml and requirements.txt."""
-    repo_root = Path(__file__).parent.parent
-    pyproject = repo_root / "pyproject.toml"
-    requirements = repo_root / "requirements.txt"
-    
-    if not pyproject.exists():
-        print(f"âŒ Error: {pyproject} not found")
-        return 1
-    
-    if not requirements.exists():
-        print(f"âŒ Error: {requirements} not found")
-        return 1
-    
-    drift_found = check_drift(pyproject, requirements)
-    return 1 if drift_found else 0
+def main() -> int:
+    root = Path(__file__).resolve().parents[1]
+    return int(check_drift(root / "pyproject.toml", root / "requirements.txt"))
 
 
 if __name__ == "__main__":
