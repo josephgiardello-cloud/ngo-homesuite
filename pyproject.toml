@@ -59,7 +59,7 @@ dependencies = [
   "langchain==0.3.27",
   "langchain-ollama==1.1.0",
   "langchain-community==0.4.1",
-  "chromadb==0.5.5",
+  "chromadb==1.5.9",
   "pypdf==5.9.0",
   "python-dateutil==2.9.0.post0",
   "reportlab==4.5.1",
