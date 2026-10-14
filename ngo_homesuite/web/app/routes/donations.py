@@ -8,7 +8,7 @@ from __future__ import annotations
 from flask import Blueprint, jsonify, request
 from flask_login import current_user, login_required
 
-from ngo_homesuite.services.donation_service import DonationConcurrencyError, DonationNotFound, DonationService
+from ngo_homesuite.services.donation_service import DonationConcurrencyError, DonationNotFound, DonationReferenceConflict, DonationService
 from ngo_homesuite.web.rbac import roles_required
 
 donations_bp = Blueprint("donations", __name__, url_prefix="/donations")
@@ -52,6 +52,8 @@ def create_donation():
             notes=data.get("notes"),
             actor_id=current_user.id,
         )
+    except DonationReferenceConflict as exc:
+        return jsonify({"error": str(exc)}), 409
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     except DonationConcurrencyError as exc:

@@ -59,11 +59,17 @@ jobs:
         run: |
           pytest ngo_homesuite/tests/test_workflow_reliability_failure_injection.py ngo_homesuite/persistence/test_workflow_repository_concurrency.py ngo_homesuite/tests/test_donation_fund_concurrency.py -v --maxfail=10
 
+      - name: Financial concurrency and crash-recovery proof
+        env:
+          NGO_HOMESUITE_DB_KEY: ""
+        run: |
+          pytest ngo_homesuite/tests/test_financial_failure_correctness.py ngo_homesuite/tests/test_bank_reconciliation_service.py ngo_homesuite/services/test_payment_service.py -v --maxfail=10
+
       - name: Run tenant boundary gate
         env:
           NGO_HOMESUITE_DB_KEY: ""
         run: |
-          pytest ngo_homesuite/web/test_cross_tenant_boundaries.py ngo_homesuite/web/test_v2_route_contracts.py ngo_homesuite/web/test_rbac_tenant_route_audit.py ngo_homesuite/api/test_v1_runtime.py -v --maxfail=10
+          pytest ngo_homesuite/web/test_cross_tenant_boundaries.py ngo_homesuite/web/test_unassigned_tenant_boundaries.py ngo_homesuite/web/test_v2_route_contracts.py ngo_homesuite/web/test_rbac_tenant_route_audit.py ngo_homesuite/api/test_v1_runtime.py -v --maxfail=10
 
       - name: Validate release evidence bundle (strict)
         run: |

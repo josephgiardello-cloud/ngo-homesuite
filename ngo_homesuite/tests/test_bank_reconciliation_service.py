@@ -72,8 +72,8 @@ def test_reconcile_amount_fallback_matches_duplicates_deterministically(svc):
         {"tx_id": "TX-C", "amount": "10.00"},
     ]
     ledger = [
-        {"tx_id": "TX-X", "amount": "25.00"},
-        {"tx_id": "TX-Y", "amount": "25.00"},
+        {"amount": "25.00"},
+        {"amount": "25.00"},
         {"tx_id": "TX-Z", "amount": "99.00"},
     ]
 

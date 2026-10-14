@@ -16,6 +16,8 @@ Maturity scale:
 |---|---|---|---|---|
 | Donors CRUD + profiles | Available | Operational | Web list/detail/create/edit/delete, dedupe/merge, donor insights in UI. |
 | Donations + receipts + recurring | Available | Operational | Public give flow, recurring plans, receipt PDFs, export paths. |
+| Financial failure/concurrency proof | Available | SQLite paths verified | Keyed donation and Stripe retries, atomic donation/audit mutations, recurring-job deduplication, process-death recovery, and identity-aware reconciliation have persisted-state regression coverage. See `docs/release_process.md` for the exact contract and limitations (unkeyed public submissions, other database backends, FX aggregation, and email delivery are not certified). |
+| Unassigned-user tenant boundaries | Available | Regression tested | Public registration grants no tenant membership. Staff pages and API v1 deny missing assignments; scoped ORM reads return no rows and tenant writes are rejected. Donor-profile writes require staff/admin, while assigned viewers retain read access. CSRF-enabled two-tenant tests run in CI/release tenant gates. |
 | Peer Fundraising (P2P) API | Available | Operational | Tenant checks, audit events, aggregated leaderboard, pagination. |
 | Peer Fundraising (P2P) Web (public) | Available | Operational | Public page, thermometer, leaderboard, embeddable widget script, and DAST smoke probes in CI. |
 | P2P Staff workflow | Available | Operational | Dashboard create/publish/close flow plus service-level validation for title/goal/story edge cases; UX iteration still pending. |
@@ -44,4 +46,3 @@ Maturity scale:
 - Update this file whenever feature claims in README change.
 - Prefer stating `Foundational` over implying production maturity unless runbooks and failure tests exist.
 - Keep roadmap references in sync with this status file.
-

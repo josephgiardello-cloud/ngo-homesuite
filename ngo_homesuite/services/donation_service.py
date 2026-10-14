@@ -12,13 +12,15 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from typing import Optional, Any, TypeVar, cast
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
-from ngo_homesuite.models.core import Donation, DonationReceipt, Donor, RecurringDonationPlan, db
+from ngo_homesuite.models.core import Campaign, Donation, DonationReceipt, Donor, Fund, Project, RecurringDonationPlan, db
+from ngo_homesuite.audit.security_events import SecurityAuditEvent, SecurityAuditService, SecurityEventType
 from ngo_homesuite.observability import inc_donations
 
 
@@ -58,7 +60,69 @@ class DonationConcurrencyError(RuntimeError):
     """Raised when optimistic concurrency detects stale updates."""
 
 
+class DonationReferenceConflict(ValueError):
+    """A payment reference was reused with a different financial request."""
+
+
+def _money(value: object) -> float:
+    try:
+        amount = Decimal(str(value))
+    except InvalidOperation as exc:
+        raise ValueError("Donation amount must be finite money") from exc
+    if not amount.is_finite() or amount <= 0:
+        raise ValueError("Donation amount must be finite and positive")
+    if amount > Decimal("999999999.99") or amount * 100 != (amount * 100).to_integral_value():
+        raise ValueError("Donation amount must have at most two decimals and be within the supported limit")
+    return float(amount)
+
+
 class DonationService:
+    def _replay(self, org_id: int, reference: str, values: dict[str, Any]) -> Optional[Donation]:
+        existing = db.session.scalars(select(Donation).where(
+            Donation.organization_id == org_id, Donation.reference_number == reference,
+        )).first()
+        if existing is None:
+            return None
+        audit = db.session.scalars(select(SecurityAuditEvent).where(
+            SecurityAuditEvent.resource_org_id == org_id,
+            SecurityAuditEvent.resource_id == existing.id,
+            SecurityAuditEvent.action == "donation.create",
+        )).first()
+        payload: object = audit.payload if audit else None
+        original = payload.get("request") if isinstance(payload, dict) else None
+        if original is None:
+            # Legacy records predate request snapshots; compare their persisted immutable financial fields.
+            keys = ("donor_name", "amount", "currency", "donor_id", "campaign_id", "project_id", "fund_id")
+            original = {key: getattr(existing, key) for key in keys}
+            values = {key: values[key] for key in keys}
+        if original != values:
+            raise DonationReferenceConflict("Donation reference already belongs to a different request")
+        return existing
+
+    def _commit_financial_change(
+        self, donation: Donation, action: str, actor_id: Optional[int], payload: dict[str, Any],
+    ) -> None:
+        try:
+            self._stage_financial_audit(donation, action, actor_id, payload)
+            db.session.commit()
+        except BaseException:
+            db.session.rollback()
+            raise
+
+    def _stage_financial_audit(
+        self, donation: Donation, action: str, actor_id: Optional[int], payload: dict[str, Any],
+    ) -> None:
+        if donation.campaign_id is not None:
+            from ngo_homesuite.services import campaign_service  # noqa: F401
+
+        db.session.flush()
+        SecurityAuditService.log_event(
+            SecurityEventType.DONATION_CREATED if action == "donation.create"
+            else SecurityEventType.DONATION_UPDATED,
+            action, resource_type="donation", resource_id=donation.id,
+            resource_org_id=donation.organization_id, payload=payload, commit=False, actor_id=actor_id,
+        )
+
     # ------------------------------------------------------------------
     # Read
     # ------------------------------------------------------------------
@@ -163,8 +227,7 @@ class DonationService:
         ).first()
         if donor is None:
             raise ValueError(f"Donor {donor_id} not found in org {org_id}")
-        if amount <= 0:
-            raise ValueError("Recurring amount must be positive")
+        amount = _money(amount)
 
         plan = _model_create(
             RecurringDonationPlan,
@@ -208,46 +271,36 @@ class DonationService:
 
         processed = 0
         failed = 0
-        campaign_ids_to_recalc: set[int] = set()
+        try:
+            for plan in plans:
+                donor = db.session.scalars(
+                    select(Donor).where(Donor.id == plan.donor_id, Donor.organization_id == org_id).limit(1)
+                ).first()
+                if donor is None or (plan.payment_method in ("credit_card", "bank_transfer") and not donor.email):
+                    plan.status = "failed"
+                    plan.fail_count = int(plan.fail_count or 0) + 1
+                    plan.last_error = "Missing donor contact info for payment retry workflow."
+                    plan.updated_at = _utcnow()
+                    failed += 1
+                    continue
 
-        for plan in plans:
-            donor = db.session.scalars(
-                select(Donor).where(Donor.id == plan.donor_id, Donor.organization_id == org_id).limit(1)
-            ).first()
-            if donor is None or (plan.payment_method in ("credit_card", "bank_transfer") and not donor.email):
-                plan.status = "failed"
-                plan.fail_count = int(plan.fail_count or 0) + 1
-                plan.last_error = "Missing donor contact info for payment retry workflow."
-                plan.updated_at = _utcnow()
-                failed += 1
-                continue
-
-            donation = _model_create(
-                Donation,
-                organization_id=org_id,
-                donor_id=donor.id,
-                donor_name=donor.name,
-                donor_email=donor.email,
-                donor_phone=donor.phone,
-                amount=plan.amount,
-                currency=plan.currency,
-                payment_method=plan.payment_method,
-                purpose=plan.purpose,
-                status="received",
-                notes=f"Recurring donation charge from plan #{plan.id}",
-            )
-            db.session.add(donation)
-            db.session.flush()
-            if donation.campaign_id is not None:
-                campaign_ids_to_recalc.add(int(donation.campaign_id))
-
-            # Keep recurring charges on the same lifecycle as manual/public donations.
-            donation.status = "processed"
-
-            receipt = db.session.scalars(
-                select(DonationReceipt).where(DonationReceipt.donation_id == donation.id).limit(1)
-            ).first()
-            if receipt is None:
+                donation = _model_create(
+                    Donation,
+                    organization_id=org_id,
+                    donor_id=donor.id,
+                    donor_name=donor.name,
+                    donor_email=donor.email,
+                    donor_phone=donor.phone,
+                    amount=_money(plan.amount),
+                    currency=plan.currency,
+                    payment_method=plan.payment_method,
+                    purpose=plan.purpose,
+                    status="receipted",
+                    reference_number=f"recurring:{plan.id}:{plan.next_charge_date.isoformat()}",
+                    notes=f"Recurring donation charge from plan #{plan.id}",
+                )
+                db.session.add(donation)
+                db.session.flush()
                 receipt_number = f"RCP-{org_id}-{donation.id}-{uuid.uuid4().hex[:8].upper()}"
                 db.session.add(
                     _model_create(
@@ -258,35 +311,29 @@ class DonationService:
                         sent_to_email=donor.email,
                     )
                 )
-            donation.status = "receipted"
+                self._stage_financial_audit(
+                    donation, "donation.create", None,
+                    {"request": {"amount": donation.amount, "currency": donation.currency},
+                     "recurring_plan_id": plan.id, "scheduled_for": plan.next_charge_date.isoformat(),
+                     "receipt_number": receipt_number, "status": donation.status},
+                )
 
-            if plan.frequency == "quarterly":
-                plan.next_charge_date = plan.next_charge_date + timedelta(days=90)
-            elif plan.frequency == "yearly":
-                plan.next_charge_date = plan.next_charge_date + timedelta(days=365)
-            else:
-                plan.next_charge_date = plan.next_charge_date + timedelta(days=30)
-            plan.fail_count = 0
-            plan.last_error = None
-            plan.status = "active"
-            plan.updated_at = _utcnow()
-            processed += 1
-
-        try:
+                interval = {"quarterly": 90, "yearly": 365}.get(plan.frequency, 30)
+                plan.next_charge_date += timedelta(days=interval)
+                plan.fail_count = 0
+                plan.last_error = None
+                plan.status = "active"
+                plan.updated_at = _utcnow()
+                processed += 1
             db.session.commit()
-        except StaleDataError as exc:
+        except (StaleDataError, IntegrityError) as exc:
             db.session.rollback()
             raise DonationConcurrencyError(
                 f"Concurrent update detected while processing recurring plans for org {org_id}; please retry."
             ) from exc
-
-        # Recalculate campaign totals for campaigns touched by this recurring run.
-        for campaign_id in campaign_ids_to_recalc:
-            try:
-                from ngo_homesuite.services.campaign_service import calculate_campaign_total
-                calculate_campaign_total(int(campaign_id), int(org_id))
-            except Exception:
-                pass
+        except BaseException:
+            db.session.rollback()
+            raise
 
         return {"processed": processed, "failed": failed}
 
@@ -326,10 +373,10 @@ class DonationService:
 
         Raises:
             ValueError: on invalid inputs (negative amount, bad currency, bad status).
-            IntegrityError (re-raised): if reference_number already exists.
+            DonationReferenceConflict: if a reference is reused with changed inputs.
+            Identical reference retries return the original record without another audit.
         """
-        if amount <= 0:
-            raise ValueError(f"Donation amount must be positive, got {amount}")
+        amount = _money(amount)
         if not donor_name or not donor_name.strip():
             raise ValueError("donor_name is required")
         currency = currency.upper()
@@ -338,13 +385,32 @@ class DonationService:
         if status not in _VALID_STATUSES:
             raise ValueError(f"Invalid initial status {status!r}. Valid: {sorted(_VALID_STATUSES)}")
 
-        # If donor_id supplied, validate it belongs to this org
-        if donor_id is not None:
-            donor = db.session.scalars(
-                select(Donor).where(Donor.id == donor_id, Donor.organization_id == org_id).limit(1)
-            ).first()
-            if donor is None:
-                raise ValueError(f"Donor {donor_id} not found in org {org_id}")
+        if reference_number is not None:
+            reference_number = reference_number.strip()
+            if not reference_number or len(reference_number) > 100:
+                raise ValueError("Donation reference must contain 1 to 100 characters")
+
+        request_values = {
+            "donor_name": donor_name.strip(), "amount": amount, "currency": currency,
+            "donor_email": donor_email, "donor_phone": donor_phone, "donor_id": donor_id,
+            "campaign_id": campaign_id, "project_id": project_id, "fund_id": fund_id,
+            "payment_method": payment_method, "channel": channel, "purpose": purpose,
+            "is_anonymous": bool(is_anonymous), "public_display_name": public_display_name,
+            "tribute_type": tribute_type, "tribute_honoree_name": tribute_honoree_name,
+            "tribute_honoree_contact": tribute_honoree_contact, "soft_credit_name": soft_credit_name,
+            "notes": notes, "status": status,
+            "donation_date": donation_date.isoformat() if donation_date else None,
+        }
+        if reference_number:
+            existing = self._replay(org_id, reference_number, request_values)
+            if existing is not None:
+                return existing
+
+        for model, entity_id in ((Donor, donor_id), (Campaign, campaign_id), (Project, project_id), (Fund, fund_id)):
+            if entity_id is not None and db.session.scalars(select(model).where(
+                model.id == entity_id, model.organization_id == org_id,
+            )).first() is None:
+                raise ValueError(f"{model.__name__} {entity_id} not found in org {org_id}")
 
         donation = _model_create(
             Donation,
@@ -374,7 +440,7 @@ class DonationService:
         )
         db.session.add(donation)
         try:
-            db.session.commit()
+            self._commit_financial_change(donation, "donation.create", actor_id, {"request": request_values})
         except StaleDataError as exc:
             db.session.rollback()
             raise DonationConcurrencyError(
@@ -382,17 +448,13 @@ class DonationService:
             ) from exc
         except IntegrityError:
             db.session.rollback()
+            if reference_number:
+                existing = self._replay(org_id, reference_number, request_values)
+                if existing is not None:
+                    return existing
             raise
 
         inc_donations(1.0)
-        if campaign_id is not None:
-            try:
-                from ngo_homesuite.services.campaign_service import calculate_campaign_total
-
-                calculate_campaign_total(int(campaign_id), int(org_id))
-            except Exception:
-                # Best-effort recalculation: donation write must not fail because of aggregation drift.
-                pass
         return donation
 
     def update_donation(
@@ -405,7 +467,8 @@ class DonationService:
         """Update mutable fields on a donation (not status â€” use update_status for that).
 
         Allowed fields: donor_name, donor_email, donor_phone, purpose, notes,
-                        payment_method, reference_number, project_id, fund_id.
+                        payment_method, project_id, fund_id.
+        A supplied reference_number must match the immutable existing reference.
         Raises DonationNotFound if not found or wrong org.
         """
         donation = self.get_donation(donation_id, org_id)
@@ -415,13 +478,22 @@ class DonationService:
             "purpose", "notes", "payment_method", "reference_number",
             "project_id", "fund_id",
         }
-        for key, value in fields.items():
+        for key, model in (("project_id", Project), ("fund_id", Fund)):
+            entity_id = fields.get(key)
+            if entity_id is not None and db.session.scalars(select(model).where(
+                model.id == entity_id, model.organization_id == org_id,
+            )).first() is None:
+                raise ValueError(f"{model.__name__} {entity_id} not found in org {org_id}")
+        if "reference_number" in fields and fields["reference_number"] != donation.reference_number:
+            raise DonationReferenceConflict("Donation reference cannot be changed after creation")
+        for key in fields:
             if key not in mutable:
                 raise ValueError(f"Field {key!r} is not updatable via this method")
+        for key, value in fields.items():
             setattr(donation, key, value)
 
         try:
-            db.session.commit()
+            self._commit_financial_change(donation, "donation.update", actor_id, {"fields": fields})
         except StaleDataError as exc:
             db.session.rollback()
             raise DonationConcurrencyError(
@@ -451,19 +523,42 @@ class DonationService:
             )
         donation.status = new_status
         try:
-            db.session.commit()
+            self._commit_financial_change(
+                donation, "donation.status", actor_id, {"status": new_status},
+            )
         except StaleDataError as exc:
             db.session.rollback()
             raise DonationConcurrencyError(
                 f"Concurrent update detected for donation {donation_id}; please reload and retry."
             ) from exc
-        # Recalculate campaign total whenever a refund is applied.
-        if new_status == "refunded" and donation.campaign_id is not None:
-            try:
-                from ngo_homesuite.services.campaign_service import calculate_campaign_total
-                calculate_campaign_total(int(donation.campaign_id), int(donation.organization_id))
-            except Exception:
-                pass
+        return donation
+
+    def finalize_payment(
+        self, donation_id: int, org_id: int, reference: str, amount: float, currency: str,
+    ) -> Donation:
+        donation = db.session.scalars(select(Donation).where(
+            Donation.id == donation_id, Donation.organization_id == org_id,
+        ).with_for_update().execution_options(populate_existing=True)).first()
+        if donation is None:
+            raise DonationNotFound(f"Donation {donation_id} not found for org {org_id}")
+        if Decimal(str(donation.amount)) != Decimal(str(_money(amount))) or donation.currency != currency.upper():
+            raise ValueError("Payment amount or currency does not match pending donation")
+        if donation.reference_number == reference and donation.status in (
+            "received", "processed", "receipted", "refunded",
+        ):
+            return donation
+        if donation.status != "pending" or donation.reference_number not in (None, reference):
+            raise DonationReferenceConflict("Payment reference or status conflicts with pending donation")
+        donation.status = "received"
+        donation.reference_number = reference
+        donation.payment_method = "stripe"
+        try:
+            self._commit_financial_change(
+                donation, "donation.payment_received", None,
+                {"reference_number": reference, "amount": amount, "currency": currency},
+            )
+        except StaleDataError as exc:
+            raise DonationConcurrencyError("Concurrent payment update; retry the webhook") from exc
         return donation
 
     def delete_donation(
@@ -486,7 +581,9 @@ class DonationService:
             )
         db.session.delete(donation)
         try:
-            db.session.commit()
+            self._commit_financial_change(
+                donation, "donation.delete", actor_id, {"status": donation.status},
+            )
         except StaleDataError as exc:
             db.session.rollback()
             raise DonationConcurrencyError(
@@ -536,7 +633,9 @@ class DonationService:
             donation.status = "receipted"
 
         try:
-            db.session.commit()
+            self._commit_financial_change(
+                donation, "donation.receipt", None, {"receipt_number": receipt_number},
+            )
         except StaleDataError as exc:
             db.session.rollback()
             raise DonationConcurrencyError(

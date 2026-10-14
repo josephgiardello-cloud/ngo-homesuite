@@ -261,6 +261,12 @@ class PaymentService:
         if not reference_number:
             raise WebhookProcessingError("Cannot determine reference_number from Stripe session.")
 
+        amount_cents = session_obj.get("amount_total")
+        if isinstance(amount_cents, bool) or not isinstance(amount_cents, int) or amount_cents <= 0:
+            raise WebhookProcessingError(f"Invalid amount_total in session: {amount_cents!r}")
+        currency = str(session_obj.get("currency") or "usd").upper()
+        amount = _cents_to_amount(amount_cents, currency)
+
         # If checkout metadata points to an existing pending donation, complete it in-place.
         raw_donation_id = metadata.get("donation_id")
         if raw_donation_id:
@@ -269,48 +275,15 @@ class PaymentService:
             except (ValueError, TypeError) as exc:
                 raise WebhookProcessingError(f"Invalid donation_id in metadata: {raw_donation_id!r}") from exc
 
-            existing_pending = db.session.scalars(
-                select(Donation).where(
-                    Donation.id == donation_id,
-                    Donation.organization_id == org_id,
-                ).limit(1)
-            ).first()
-            if existing_pending is not None:
-                existing_pending.status = "received"
-                existing_pending.reference_number = str(reference_number)
-                existing_pending.payment_method = "stripe"
-                try:
-                    db.session.commit()
-                except Exception as exc:
-                    db.session.rollback()
-                    raise WebhookProcessingError(
-                        f"Failed to finalize pending donation {donation_id}: {exc}"
-                    ) from exc
-                _send_receipt_email(existing_pending)
-                return existing_pending
-
-        # Check for existing donation (idempotency)
-        existing = db.session.scalars(
-            select(Donation).where(
-                Donation.reference_number == reference_number,
-                Donation.organization_id == org_id,
-            ).limit(1)
-        ).first()
-        if existing:
-            logger.info(
-                "Duplicate checkout.session.completed â€” donation already exists",
-                extra={"reference_number": reference_number, "donation_id": existing.id},
-            )
-            return existing
-
-        # Extract amounts
-        amount_cents = session_obj.get("amount_total")
-        if not isinstance(amount_cents, int) or amount_cents <= 0:
-            raise WebhookProcessingError(
-                f"Invalid amount_total in session: {amount_cents!r}"
-            )
-        currency = str(session_obj.get("currency") or "usd").upper()
-        amount = _cents_to_amount(amount_cents, currency)
+            try:
+                donation = _donation_service.finalize_payment(
+                    donation_id, org_id, str(reference_number), amount, currency,
+                )
+            except (ValueError, DonationNotFound, DonationConcurrencyError, IntegrityError) as exc:
+                raise WebhookProcessingError(f"Failed to finalize pending donation: {exc}") from exc
+            if donation.status != "refunded":
+                _send_receipt_email(donation)
+            return donation
 
         # Extract optional donor info
         donor_name = session_obj.get("customer_details", {}).get("name") or metadata.get("donor_name") or "Anonymous"
@@ -343,28 +316,10 @@ class PaymentService:
                 campaign_id=campaign_id,
                 payment_method="stripe",
                 reference_number=reference_number,
-                purpose=f"Online donation via Stripe ({session_id})",
+                    purpose="Online donation via Stripe",
                 status="received",
             )
-        except IntegrityError:
-            # Race condition: another worker already inserted with same reference_number
-            db.session.rollback()
-            donation = db.session.scalars(
-                select(Donation).where(
-                    Donation.reference_number == reference_number,
-                    Donation.organization_id == org_id,
-                ).limit(1)
-            ).first()
-            if donation is None:
-                raise WebhookProcessingError(
-                    f"IntegrityError inserting donation with reference {reference_number!r} "
-                    "but no existing record found â€” data may be inconsistent."
-                )
-            logger.info(
-                "Race-condition idempotency: donation already inserted",
-                extra={"reference_number": reference_number, "donation_id": donation.id},
-            )
-        except (ValueError, DonationConcurrencyError) as exc:
+        except (ValueError, DonationConcurrencyError, IntegrityError) as exc:
             raise WebhookProcessingError(
                 f"Failed to create donation from Stripe webhook: {exc}"
             ) from exc

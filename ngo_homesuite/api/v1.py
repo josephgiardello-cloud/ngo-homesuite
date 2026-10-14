@@ -53,9 +53,15 @@ def _map_role(role: str) -> str:
 def _enforce_user_org_access(request_org_id: str) -> None:
     user_org_id = getattr(current_user, "organization_id", None)
     if user_org_id is None:
-        return
+        raise PermissionError("User has no tenant organization assignment")
     if str(user_org_id) != str(request_org_id):
         raise PermissionError("User is not allowed to access another tenant org_id")
+
+
+@api_v1_bp.before_request
+def require_tenant_assignment():
+    if current_user.is_authenticated and current_user.organization_id is None:
+        return {"error": "User has no tenant organization assignment"}, 403
 
 
 @api_v1_bp.get("/workflows")
@@ -161,10 +167,11 @@ def apply_workflow_event(instance_id: str):
 @login_required
 def get_workflow_trace(instance_id: str):
     user_org_id = getattr(current_user, "organization_id", None)
-    if user_org_id is not None:
-        scoped_instance = _container().workflow_repository.get(instance_id, org_id=str(user_org_id))
-        if scoped_instance is None:
-            return {"error": "Trace not found."}, 404
+    if user_org_id is None:
+        return {"error": "User has no tenant organization assignment"}, 403
+    scoped_instance = _container().workflow_repository.get(instance_id, org_id=str(user_org_id))
+    if scoped_instance is None:
+        return {"error": "Trace not found."}, 404
 
     trace = _container().tracer.get(instance_id)
     if trace is None:
