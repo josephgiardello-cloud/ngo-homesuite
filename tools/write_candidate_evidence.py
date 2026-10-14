@@ -27,12 +27,12 @@ def main() -> int:
     sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     if subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"], text=True).strip():
         raise ValueError("Candidate evidence cannot certify a modified tracked worktree")
-    candidate = os.environ.get("GITHUB_SHA", sha)
+    candidate = os.environ.get("CANDIDATE_COMMIT_SHA", os.environ.get("GITHUB_SHA", sha))
     if not re.fullmatch(r"[0-9a-f]{40}", candidate) or candidate != sha:
         raise ValueError("Evidence candidate SHA differs from checked-out commit")
     reports = [test_report_summary(args.directory / name) for name in ("tenant.xml", "encryption.xml")]
     payload = {
-        "schema_version": 1, "commit_sha": sha, "engine": args.engine,
+        "schema_version": 1, "commit_sha": sha, "trigger_sha": os.environ.get("GITHUB_SHA"), "engine": args.engine,
         "run_url": (
             f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
             if os.environ.get("GITHUB_REPOSITORY") and os.environ.get("GITHUB_RUN_ID") else None

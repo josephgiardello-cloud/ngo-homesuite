@@ -73,7 +73,11 @@ No live provider credential was identified. Historical deployment of the CI
 fixture key is not assessed: if it protected real data, operators must rotate
 that key and assess affected copies. This local scan covers fetched reachable
 history, not deleted/unreachable refs, ignored environments, or future commits.
-The committed candidate must still run the hosted full-history scan.
+The committed candidate must still run the hosted full-history scan. The initial
+`--all` command did not explicitly include merge-resolution diffs. The corrected
+command is `--all --full-history --diff-merges=first-parent`: against `6ad8b24`,
+it scanned 338 commits (approximately 9.82 MB), with zero unclassified findings
+and no additional exceptions. This supersedes the earlier history-coverage claim.
 
 ## Corrections and local evidence
 
@@ -112,6 +116,51 @@ Black upgrades plus its reference lock file, while keeping pytest-asyncio 1.4.0
 because 0.25.2 was demonstrated incompatible with the declared pytest 9.
 The post-merge SHA requires fresh dependency resolution and test evidence;
 `d27391b` artifacts are not certification of a later commit.
+
+### Post-merge candidate `6ad8b24`
+
+The approved merge was committed and pushed as
+`6ad8b24bdb6be07db005bb27bcc3123f797cecb3`. Exact committed-source local results:
+1,098 passed, two PostgreSQL skips and five explicitly deselected SQLCipher cases;
+the separate PostgreSQL lane passed 31 without skips, and the Linux SQLCipher
+lanes passed 29 boundary cases plus 13 adapter/connection cases without skips.
+The encrypted image revision label matches the candidate. Dependencies resolve,
+both drift guards pass, and real Chroma 1.5.9 initialization was confirmed with
+outbound networking blocked. Retrieval upgrades and model inference are not certified.
+
+Both jobs in [hosted isolation run 38646573452](https://github.com/josephgiardello-cloud/ngo-homesuite/actions/runs/38646573452)
+passed, but their artifacts identify synthetic PR merge `419177cd`, not the
+branch candidate. The follow-up workflow explicitly checks out the PR head,
+binds the manifest to `CANDIDATE_COMMIT_SHA`, records the triggering merge SHA
+separately, and names artifacts after the tested head. Neither the old hosted
+artifacts nor the local `6ad8b24` reports certify the follow-up commit.
+
+The complete 26-job log archive for
+[Tests run 38646573343](https://github.com/josephgiardello-cloud/ngo-homesuite/actions/runs/38646573343)
+was downloaded and its ZIP integrity verified. All 24 failed jobs were classified:
+
+| Failed jobs | Count | Observed failure | What was not tested |
+|---|---:|---|---|
+| Python 3.10, Ubuntu/Windows/macOS | 3 | Import of Python 3.11-only `enum.StrEnum` | Application suite |
+| Python 3.11, Ubuntu/Windows/macOS | 3 | Minion donor CSV f-string uses backslashes unsupported before Python 3.12 | Application suite |
+| Python 3.12/3.13, Ubuntu/Windows/macOS | 6 | Required OpenAPI paths absent from the runtime URL map | Application suite |
+| Tenant Boundary Gate | 1 | Same Minion syntax error during inventory-test collection | Tenant gate |
+| Critical Paths | 1 | Same syntax error prevents route fixtures starting | Complete critical-path lane |
+| OpenAPI Contract + Client Generation | 1 | Same syntax error prevents API-docs fixtures starting | Client generation |
+| Code Quality | 1 | Same syntax error plus six undefined-name errors | Clean full-project lint |
+| Docker Matrix CI, both modes | 2 | Images build, but an inline comment invalidates JSON-form CMD; shell executes `[pytest,` | Default image test command and coverage |
+| DB Policy (encrypted-policy) | 1 | Plain sqlite3 migration runner explicitly rejects encrypted migrations | Encrypted migration preflight |
+| Performance Smoke, Scalability Benchmark, DAST Smoke | 3 | Target service is unreachable/connection refused | Performance thresholds or DAST results |
+| Security Checks | 1 | Bandit reports four high-severity findings and skips Minion due to syntax error; both secret-scan steps pass | Dependency audit and later dynamic checks |
+| Container Security | 1 | Trivy installer exits 1 before scanning; image build succeeds | Image vulnerability assessment |
+
+Dependency-installation failures are resolved in this run; downstream checks are
+now exposing runtime, compatibility, scanner and operational failures instead.
+Passing secret scans do not certify the skipped Bandit file or dependency audit.
+The malformed Docker commands are corrected without disabling their test or
+coverage requirements; the remaining baseline defects require separate fixes
+and fresh hosted evidence. The tenant disposition and retention gates remain
+deliberately blocked, with no invented approvals or historical record changes.
 
 Rerunning the old SHA does not validate newer changes. Before release, run the
 complete hosted workflow on the exact reviewed candidate SHA, including

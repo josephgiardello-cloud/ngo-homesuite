@@ -14,4 +14,4 @@ runs:
         curl --fail --location "$base/gitleaks_8.24.3_checksums.txt" -o "$scanner_dir/checksums.txt"
         (cd "$scanner_dir"; grep ' gitleaks_8.24.3_linux_x64.tar.gz$' checksums.txt | sha256sum --check --strict)
         tar -xzf "$scanner_dir/gitleaks_8.24.3_linux_x64.tar.gz" -C "$scanner_dir" gitleaks
-        "$scanner_dir/gitleaks" git . --log-opts="--all" --redact --verbose
+        "$scanner_dir/gitleaks" git . --log-opts="--all --full-history --diff-merges=first-parent" --redact --verbose

@@ -74,4 +74,4 @@ CMD ["pytest", \
      "--cov-report=xml", \
      "--cov-report=html", \
      "-m", "not requires_plaintext", \
-     "-n", "auto"]  # exclude plaintext-only tests, parallel execution
+     "-n", "auto"]

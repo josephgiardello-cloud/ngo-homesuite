@@ -68,4 +68,4 @@ CMD ["pytest", \
      "--cov-report=term-missing", \
      "--cov-report=xml", \
      "--cov-report=html", \
-     "-n", "auto"]  # parallel execution with pytest-xdist
+     "-n", "auto"]
