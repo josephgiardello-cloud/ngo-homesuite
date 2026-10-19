@@ -1,6 +1,6 @@
 # Optional relational database drivers for production backends
 # PostgreSQL
-psycopg[binary]==3.2.9
+psycopg[binary]==3.3.6
 psycopg2-binary==2.9.12
 
 # MySQL / MariaDB
