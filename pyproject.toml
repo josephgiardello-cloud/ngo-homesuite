@@ -37,7 +37,7 @@ dependencies = [
   "Pydantic==2.13.4",
   "PyYAML==6.0.3",
   "defusedxml==0.7.1",
-  "SQLAlchemy==2.0.36",
+  "SQLAlchemy==2.0.54",
   "alembic==1.14.0",
   "greenlet==3.5.1",
   "WTForms==3.1.2",
