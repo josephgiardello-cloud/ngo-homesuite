@@ -14,7 +14,7 @@ PyYAML==6.0.3
 defusedxml==0.7.1
 
 # Database
-SQLAlchemy==2.0.36
+SQLAlchemy==2.0.54
 alembic==1.14.0
 greenlet==3.5.1
 
